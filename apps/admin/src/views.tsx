@@ -570,7 +570,7 @@ export function Setup() {
                 <h1>Connect your stack</h1>
                 <p className="muted">
                   Choose a database, storage, email, or sign-in provider. Everything is optional. Connect now, or
-                  anytime from Connectors in the sidebar. Already migrating a site? It's at the bottom.
+                  anytime from Connectors in the sidebar.
                 </p>
               </div>
               <ConnectorGrid
@@ -1246,10 +1246,7 @@ export function ConnectorsView() {
       <motion.header className="dash-hero" variants={itemVariants} initial="initial" animate="animate">
         <p className="dash-eyebrow">Connectors</p>
         <h1 className="dash-title">Connect your stack</h1>
-        <p className="dash-sub">
-          Databases, storage, email, and sign-in. Connected ones are live; add more anytime, or migrate an existing site
-          at the bottom.
-        </p>
+        <p className="dash-sub">Databases, storage, email, and sign-in. Connected ones are live; add more anytime.</p>
       </motion.header>
       {isLoading ? (
         <div className="center muted">Loading connectors…</div>

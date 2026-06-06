@@ -144,21 +144,9 @@ const GithubLogo = () => (
   </svg>
 )
 
-const WandLogo = () => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-    <path d="M5 19 16 8" stroke="#C8A96A" strokeWidth="1.8" strokeLinecap="round" />
-    <path
-      d="m14.5 3.5 1.4 1.4M19.5 8.5l1.4 1.4M4 8l1 1M9.5 3.5l1 1"
-      stroke="#C8A96A"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-    />
-  </svg>
-)
-
 // ── catalog ───────────────────────────────────────────────────────────────────
 
-type Category = 'Database' | 'Storage' | 'Email' | 'Authentication' | 'Cache' | 'Migrate'
+type Category = 'Database' | 'Storage' | 'Email' | 'Authentication' | 'Cache'
 
 interface ConnectorDef {
   id: string
@@ -175,27 +163,6 @@ interface ConnectorDef {
   snippet?: string
   prompt?: string
 }
-
-// The single, super-detailed migration prompt the user can hand to their AI.
-const MIGRATION_PROMPT = `I have an existing static website (plain HTML/CSS, or a framework export) that I want to migrate into KernelCMS 1:1, keeping its exact look and turning each part of the page into editable content sections.
-
-Context: KernelCMS is a config-as-code headless CMS. Content is modeled in kernel.config.ts as collections with fields. A page is best modeled as a collection with a "blocks" field (a page builder): each block is a reusable section type (hero, features, gallery, faq, cta, richText, …) with its own fields. The frontend renders the blocks array in order.
-
-Please do this step by step and confirm each step before moving on:
-
-1. AUDIT my site. List every distinct visual section (hero, nav, feature grid, testimonials, pricing, FAQ, footer, …) and, for each, the editable fields it contains (headings, body text, images, links, button labels/URLs, list items). Keep the EXACT copy and image references from my current site. Do not rewrite or invent content.
-
-2. DESIGN the content model. Propose a "pages" collection with a "blocks" field whose block types map 1:1 to my sections. Give me the kernel.config.ts for it: snake_case field names, required where appropriate, "richText" for prose, "upload" (with a "media" collection) for images, "relationship" where things link. Do not add sections that aren't on my site.
-
-3. PRESERVE styling exactly. I want pixel-identical output. Generate one frontend component per block type that reproduces my existing HTML/CSS verbatim (copy my classes/markup/styles; do NOT restyle). The CMS only supplies the content; the markup and CSS stay mine. Keep my approach (Tailwind / CSS modules / plain CSS).
-
-4. SEED the content. Convert my current page's actual content into a seed (or import JSON) so the migrated page renders identically on first run. Map every existing string and image into the right block fields.
-
-5. WIRE it up. Show how my frontend fetches the page from KernelCMS (REST: GET /api/pages?where[slug][equals]=home&depth=2, or the typed client) and renders the blocks array in order, picking the component by blockType.
-
-6. VERIFY 1:1. Give me a checklist to diff the migrated page against the original: same sections, same order, same copy, same images, same links, same responsive behavior. Flag anything that can't be represented and propose the closest editable model.
-
-Constraints: keep it editable in small sections (one block = one section), keep my styling untouched, and don't drop or rewrite any of my existing content. Ask me for my current HTML/source whenever you need it.`
 
 const CONNECTORS: ConnectorDef[] = [
   {
@@ -356,25 +323,15 @@ oauth: [
 ],`,
     prompt: `I'm using KernelCMS and want GitHub sign-in. Walk me through registering a GitHub OAuth App (callback URL for my KernelCMS server), put GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in .env, and add githubOAuth({ clientId, clientSecret }) from 'kernelcms' to the oauth array in kernel.config.ts.`,
   },
-  {
-    id: 'migrate-static',
-    name: 'Migrate an existing site',
-    category: 'Migrate',
-    Icon: WandLogo,
-    blurb: 'Turn a static website into editable sections, 1:1, keeping its exact styling.',
-    state: () => 'available',
-    prompt: MIGRATION_PROMPT,
-  },
 ]
 
-const CATEGORY_ORDER: Category[] = ['Database', 'Cache', 'Storage', 'Email', 'Authentication', 'Migrate']
+const CATEGORY_ORDER: Category[] = ['Database', 'Cache', 'Storage', 'Email', 'Authentication']
 const CATEGORY_LABEL: Record<Category, string> = {
   Database: 'database',
   Cache: 'cache',
   Storage: 'storage',
   Email: 'email provider',
   Authentication: 'sign-in provider',
-  Migrate: 'tool',
 }
 
 // ── components ────────────────────────────────────────────────────────────────
@@ -476,8 +433,6 @@ function ConnectorCard({
 }) {
   const state = c.state(status)
   const connected = state === 'connected'
-  const isMigrate = c.category === 'Migrate'
-  const toggleable = !isMigrate
   const envBlock = c.env?.map((e) => `${e.key}=${e.example}`).join('\n')
   const hasManual = Boolean(c.localNote || envBlock || c.snippet || c.prompt)
   // During first-run, connectors with env vars can be configured right here: the
@@ -542,24 +497,12 @@ function ConnectorCard({
             <span className="cx-blurb">{c.blurb}</span>
           </span>
         </button>
-        {toggleable ? (
-          <Switch
-            checked={enabled}
-            disabled={connected}
-            label={connected ? `${c.name} is active` : `Enable ${c.name}`}
-            onChange={toggle}
-          />
-        ) : (
-          <button
-            type="button"
-            className="cx-expand"
-            onClick={() => setExpanded((o) => !o)}
-            aria-expanded={expanded}
-            aria-label={`Show ${c.name}`}
-          >
-            <Chevron />
-          </button>
-        )}
+        <Switch
+          checked={enabled}
+          disabled={connected}
+          label={connected ? `${c.name} is active` : `Enable ${c.name}`}
+          onChange={toggle}
+        />
       </div>
 
       <AnimatePresence initial={false}>
@@ -603,36 +546,33 @@ function ConnectorCard({
                 </div>
               )}
 
-              {/* Migrate has only a guide — show it inline. Everything else tucks the
-                  verbose config behind a compact "Manual setup" disclosure. */}
-              {isMigrate
-                ? hasManual && <ManualSetup c={c} envBlock={envBlock} />
-                : hasManual && (
-                    <div className="cx-manual">
-                      <button
-                        type="button"
-                        className={`cx-manual-toggle${manual ? ' open' : ''}`}
-                        onClick={() => setManual((m) => !m)}
-                        aria-expanded={manual}
+              {/* The verbose config tucks behind a compact "Manual setup" disclosure. */}
+              {hasManual && (
+                <div className="cx-manual">
+                  <button
+                    type="button"
+                    className={`cx-manual-toggle${manual ? ' open' : ''}`}
+                    onClick={() => setManual((m) => !m)}
+                    aria-expanded={manual}
+                  >
+                    <Chevron />
+                    Manual setup
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {manual && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: EASE_OUT }}
+                        style={{ overflow: 'hidden' }}
                       >
-                        <Chevron />
-                        Manual setup
-                      </button>
-                      <AnimatePresence initial={false}>
-                        {manual && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.2, ease: EASE_OUT }}
-                            style={{ overflow: 'hidden' }}
-                          >
-                            <ManualSetup c={c} envBlock={envBlock} />
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  )}
+                        <ManualSetup c={c} envBlock={envBlock} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
             </div>
           </motion.div>
         )}

@@ -69,8 +69,6 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
   await expect(page.getByRole('switch', { name: /Enable MySQL/ })).toBeVisible()
   await expect(page.getByRole('switch', { name: /Enable MongoDB/ })).toBeVisible()
   await expect(page.getByRole('switch', { name: /Enable Redis/ })).toBeVisible()
-  // The static-site migration helper is present in the catalog.
-  await expect(page.getByRole('button', { name: /Migrate an existing site/ }).first()).toBeVisible()
   await page.getByRole('button', { name: /Create your account/ }).click()
 
   // Step 2 — create the owner account.
@@ -87,14 +85,15 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
   await expect(page.locator('.sidebar .logo-word')).toHaveText('KernelCMS')
 })
 
-test('connectors panel: sidebar entry shows the catalog and migration helper', async ({ page }) => {
+test('connectors panel: sidebar entry shows the catalog', async ({ page }) => {
   await ensureSignedIn(page)
   await page.getByRole('link', { name: 'Connectors' }).click()
   await expect(page.getByRole('heading', { name: /Connect your stack/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /PostgreSQL/ })).toBeVisible()
-  // The migration helper expands to a copyable prompt.
+  // A connector expands to reveal its Manual setup with a copyable prompt.
+  await page.getByRole('button', { name: /PostgreSQL/ }).click()
   await page
-    .getByRole('button', { name: /Migrate an existing site/ })
+    .getByRole('button', { name: /Manual setup/ })
     .first()
     .click()
   await expect(page.getByRole('button', { name: 'Copy prompt' }).first()).toBeVisible()
