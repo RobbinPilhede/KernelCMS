@@ -209,6 +209,17 @@ export interface AdminStatus {
 
 export const adminStatus = (): Promise<AdminStatus> => req('GET', '/_admin/status')
 
+export interface ConnectorStatus {
+  db: string
+  storage: { configured: boolean; kind: string | null }
+  email: { configured: boolean; kind: string | null }
+  oauth: string[]
+  image: boolean
+  graphql: boolean
+}
+
+export const getConnectors = (): Promise<ConnectorStatus> => req('GET', '/_admin/connectors')
+
 export async function setupAdmin(email: string, password: string): Promise<{ token: string; user: Doc }> {
   const result = await req<{ token: string; user: Doc }>('POST', '/_admin/setup', { email, password })
   setToken(result.token)

@@ -67,8 +67,8 @@ export type { Diagnostic, DiagnosticLevel, DoctorReport, DoctorOptions } from '.
 export { importData } from './import'
 export type { ImportPayload, ImportReport, ImportError, ImportOptions } from './import'
 
-export { systemInfo, formatSystemInfo, setupRuntime, KERNEL_VERSION } from './info'
-export type { SystemInfo, CollectionInfo, SetupRuntime } from './info'
+export { systemInfo, formatSystemInfo, setupRuntime, connectorStatus, KERNEL_VERSION } from './info'
+export type { SystemInfo, CollectionInfo, SetupRuntime, ConnectorStatus } from './info'
 
 export * from './errors'
 export type * from './types'

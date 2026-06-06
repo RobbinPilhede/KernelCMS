@@ -31,6 +31,39 @@ export interface SetupRuntime {
   version: string
 }
 
+/**
+ * Connector inventory for the admin "Connectors" panel: which database, storage,
+ * email, OAuth, and image adapters are wired up. Non-sensitive (kinds + booleans
+ * + provider names only). Surfaced to authenticated admins.
+ */
+export interface ConnectorStatus {
+  db: string
+  storage: { configured: boolean; kind: string | null }
+  email: { configured: boolean; kind: string | null }
+  oauth: string[]
+  image: boolean
+}
+
+export function connectorStatus(kernel: Kernel): ConnectorStatus {
+  const cfg = kernel.config
+  const nameOf = (a: unknown): string | null =>
+    a && typeof a === 'object' && typeof (a as { name?: unknown }).name === 'string'
+      ? (a as { name: string }).name
+      : null
+  let storageKind: string | null = null
+  if (cfg.storage) {
+    storageKind =
+      typeof (cfg.storage as { put?: unknown }).put === 'function' ? (nameOf(cfg.storage) ?? 'storage') : 'multiple'
+  }
+  return {
+    db: nameOf(cfg.db) ?? 'unknown',
+    storage: { configured: Boolean(cfg.storage), kind: storageKind },
+    email: { configured: Boolean(cfg.email), kind: cfg.email ? (nameOf(cfg.email) ?? 'email') : null },
+    oauth: (cfg.oauth ?? []).map((p) => p.name),
+    image: Boolean(cfg.image),
+  }
+}
+
 export function setupRuntime(kernel: Kernel): SetupRuntime {
   const cfg = kernel.config
   const dbName = (cfg.db as { name?: string }).name ?? 'unknown'

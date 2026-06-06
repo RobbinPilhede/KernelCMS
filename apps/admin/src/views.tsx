@@ -11,6 +11,7 @@ import {
   deleteDoc,
   deleteManyDocs,
   forgotPassword,
+  getConnectors,
   getDoc,
   getGlobal,
   listDocs,
@@ -35,6 +36,8 @@ import { useAuth } from './auth'
 import { useCollection, useGlobal, useSchema } from './schema'
 import { FieldInput, stripRowKeys, withRowKeys } from './fields'
 import { getCell, getWidgets } from './registry'
+import { ConnectorGrid, connectedCount } from './connectors'
+import type { ConnectorState } from './connectors'
 import { Logo } from './Logo'
 import { CommandPalette } from './CommandPalette'
 import { ConfirmHost, Toaster, confirmDialog, toast } from './feedback'
@@ -396,113 +399,6 @@ export function Login() {
 // First-run welcome wizard
 // ---------------------------------------------------------------------------
 
-/** Prepared prompts the operator can paste into their AI coding assistant (Claude,
- *  Cursor, Copilot, …) inside their project. The point: someone who isn't a backend
- *  expert can hand one of these to their agent and have the work done for them. */
-interface AiPrompt {
-  id: string
-  title: string
-  blurb: string
-  prompt: string
-}
-
-const AI_PROMPTS: AiPrompt[] = [
-  {
-    id: 'postgres',
-    title: 'Connect a PostgreSQL database',
-    blurb: 'Move from the local file database to a real one for production.',
-    prompt: `I'm using KernelCMS, a TypeScript headless CMS configured in a file called kernel.config.ts.
-Right now it uses the built-in SQLite database and I want to switch to PostgreSQL.
-
-Please walk me through it in plain language and tell me exactly what to paste where:
-1. If I don't already have a Postgres database, recommend a free option (Neon, Supabase,
-   or a local one with Docker) and give me click-by-click steps to create it.
-2. Save the connection string in a .env file as DATABASE_URL, and make sure .env is in
-   .gitignore so the secret is never committed.
-3. In kernel.config.ts, swap the SQLite adapter for the Postgres one:
-       import { postgresAdapter } from 'kernelcms/postgres'
-       // ...
-       db: postgresAdapter({ url: process.env.DATABASE_URL }),
-4. Run "npx kernel migrate" to create the tables, then "npx kernel dev" to start.
-Check each step worked before moving to the next, and explain what each command does.`,
-  },
-  {
-    id: 'secret',
-    title: 'Set a secure production secret',
-    blurb: 'Replace the development secret before you deploy.',
-    prompt: `I'm using KernelCMS. It signs login sessions with a secret, and right now it's using an
-insecure development default. Please:
-1. Generate a strong random secret for me.
-2. Add it to my .env file as KERNEL_SECRET, and make sure .env is gitignored.
-3. Confirm kernel.config.ts reads it, e.g. secret: process.env.KERNEL_SECRET.
-Don't repeat the secret value back in the chat beyond putting it in the .env file.`,
-  },
-  {
-    id: 'storage',
-    title: 'Store uploads in the cloud',
-    blurb: 'Send images and files to S3 or Cloudflare R2 instead of local disk.',
-    prompt: `I'm using KernelCMS and want uploaded files (images, documents) stored in object storage
-instead of on local disk. I'd like to use Cloudflare R2 (or AWS S3). Please:
-1. Give me step-by-step instructions to create a bucket and access keys.
-2. Add the keys to my .env file (and confirm .env is gitignored).
-3. Configure storage in kernel.config.ts using the S3/R2 adapter from "kernelcms/storage",
-   reading the keys from process.env.
-Explain everything simply and tell me exactly what to paste and where.`,
-  },
-]
-
-function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1800)
-    } catch {
-      setCopied(false)
-    }
-  }
-  return (
-    <button type="button" className={`wz-copy${copied ? ' copied' : ''}`} onClick={copy} aria-live="polite">
-      {copied ? 'Copied ✓' : label}
-    </button>
-  )
-}
-
-function PromptCard({ p }: { p: AiPrompt }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <motion.div className={`wz-prompt${open ? ' open' : ''}`} variants={itemVariants}>
-      <button type="button" className="wz-prompt-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span className="wz-prompt-text">
-          <span className="wz-prompt-title">{p.title}</span>
-          <span className="wz-prompt-blurb">{p.blurb}</span>
-        </span>
-        <span className="wz-chev" aria-hidden>
-          ›
-        </span>
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            className="wz-prompt-body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.24, ease: EASE_OUT }}
-          >
-            <div className="wz-prompt-inner">
-              <p className="wz-prompt-hint">Paste this to your AI assistant:</p>
-              <pre className="wz-code">{p.prompt}</pre>
-              <CopyButton text={p.prompt} label="Copy prompt" />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  )
-}
-
 interface RuntimeCard {
   tone: 'ok' | 'info' | 'warn'
   title: string
@@ -556,9 +452,20 @@ const stepVariants = {
   exit: { opacity: 0, y: -12, transition: { duration: 0.2, ease: EASE_OUT } },
 }
 
+/** Derive connector status from the first-run runtime (no OAuth info there yet). */
+function connectorStateFromRuntime(rt: SetupRuntime | null): ConnectorState {
+  return {
+    db: rt?.db ?? 'unknown',
+    storage: Boolean(rt?.storage),
+    email: Boolean(rt?.email),
+    oauth: [],
+    image: false,
+  }
+}
+
 export function Setup() {
   const { signUp, completeSetup, runtime } = useAuth()
-  const [step, setStep] = useState<0 | 1 | 2>(0)
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(0)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -581,7 +488,7 @@ export function Setup() {
     setError(null)
     try {
       await signUp(email, password)
-      setStep(2)
+      setStep(3)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed.')
     } finally {
@@ -603,7 +510,7 @@ export function Setup() {
       <LoginBackdrop />
       <div className="wz-card">
         <div className="wz-rail" aria-hidden>
-          {[0, 1, 2].map((i) => (
+          {[0, 1, 2, 3].map((i) => (
             <span key={i} className={`wz-dot${i === step ? ' active' : ''}${i < step ? ' done' : ''}`} />
           ))}
         </div>
@@ -637,7 +544,7 @@ export function Setup() {
                 ))}
               </motion.div>
               <button className="btn primary wz-next" type="button" onClick={() => setStep(1)}>
-                Create your account →
+                Connect your stack →
               </button>
               <div className="wz-foot">
                 <ThemeToggle />
@@ -646,6 +553,33 @@ export function Setup() {
           )}
 
           {step === 1 && (
+            <motion.div
+              key="connectors"
+              className="wz-step"
+              variants={stepVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <div className="wz-head">
+                <Logo />
+                <h1>Connect your stack</h1>
+                <p className="muted">
+                  Choose a database, storage, email, or sign-in provider. Everything is optional. Connect now, or
+                  anytime from Connectors in the sidebar. Already migrating a site? It's at the bottom.
+                </p>
+              </div>
+              <ConnectorGrid status={connectorStateFromRuntime(runtime)} />
+              <button className="btn primary wz-next" type="button" onClick={() => setStep(2)}>
+                Create your account →
+              </button>
+              <button type="button" className="link-btn" onClick={() => setStep(0)}>
+                ← Back
+              </button>
+            </motion.div>
+          )}
+
+          {step === 2 && (
             <motion.div
               key="account"
               className="wz-step"
@@ -697,14 +631,14 @@ export function Setup() {
                 <button className="btn primary" type="submit" disabled={busy}>
                   {busy ? 'Creating…' : 'Create account'}
                 </button>
-                <button type="button" className="link-btn" onClick={() => setStep(0)} disabled={busy}>
+                <button type="button" className="link-btn" onClick={() => setStep(1)} disabled={busy}>
                   ← Back
                 </button>
               </form>
             </motion.div>
           )}
 
-          {step === 2 && (
+          {step === 3 && (
             <motion.div
               key="next"
               className="wz-step"
@@ -717,15 +651,10 @@ export function Setup() {
                 <Logo />
                 <h1>You're all set</h1>
                 <p className="muted">
-                  A few optional next steps. Not sure how? Copy a prompt and paste it to your AI assistant (Claude,
-                  Cursor, Copilot, anything) inside your project, and it'll do the work for you.
+                  Your workspace is ready. Every connector, plus the static-site migration helper, lives under
+                  Connectors in the sidebar whenever you need it.
                 </p>
               </div>
-              <motion.div className="wz-prompts" variants={listContainer} initial="initial" animate="animate">
-                {AI_PROMPTS.map((p) => (
-                  <PromptCard key={p.id} p={p} />
-                ))}
-              </motion.div>
               <button className="btn primary wz-next" type="button" onClick={enterDashboard} disabled={busy}>
                 {busy ? 'Opening…' : 'Enter your dashboard →'}
               </button>
@@ -930,6 +859,16 @@ function DashboardIcon() {
   )
 }
 
+function ConnectorsIcon() {
+  return (
+    <svg {...ICON_SVG}>
+      <path d="M9 7V4M15 7V4M9 20v-3M15 20v-3" />
+      <rect x="6" y="7" width="12" height="6" rx="2" />
+      <path d="M8 13v1a4 4 0 0 0 8 0v-1" />
+    </svg>
+  )
+}
+
 function NavIcon({ collection, global }: { collection?: AdminCollection; global?: boolean }) {
   if (global) {
     return (
@@ -1112,6 +1051,16 @@ function Shell() {
   const collections = schema.collections.filter((c) => !c.hidden)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const isActive = (base: string) => pathname === base || pathname.startsWith(`${base}/`)
+  const { data: connectors } = useQuery({ queryKey: ['connectors'], queryFn: getConnectors })
+  const connectorCount = connectors
+    ? connectedCount({
+        db: connectors.db,
+        storage: connectors.storage.configured,
+        email: connectors.email.configured,
+        oauth: connectors.oauth,
+        image: connectors.image,
+      })
+    : 0
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -1146,6 +1095,13 @@ function Shell() {
           ))}
         </nav>
         <div className="sidebar-foot">
+          <Link to="/connectors" className={`sidebar-connectors${isActive('/connectors') ? ' active' : ''}`}>
+            <span className="nav-icon">
+              <ConnectorsIcon />
+            </span>
+            <span className="sc-label">Connectors</span>
+            {connectorCount > 0 && <span className="sc-count">{connectorCount}</span>}
+          </Link>
           <div className="sidebar-theme">
             <span>Theme</span>
             <ThemeToggle />
@@ -1258,6 +1214,40 @@ export function Dashboard() {
           </motion.div>
         ))}
       </motion.div>
+    </div>
+  )
+}
+
+/** Connectors panel: databases, storage, email, and sign-in providers, with
+ *  connected status and copy-paste setup. Reached from the sidebar. */
+export function ConnectorsView() {
+  const { data, isLoading, error } = useQuery({ queryKey: ['connectors'], queryFn: getConnectors })
+  const status: ConnectorState = data
+    ? {
+        db: data.db,
+        storage: data.storage.configured,
+        email: data.email.configured,
+        oauth: data.oauth,
+        image: data.image,
+      }
+    : { db: 'unknown', storage: false, email: false, oauth: [], image: false }
+  return (
+    <div className="page">
+      <motion.header className="dash-hero" variants={itemVariants} initial="initial" animate="animate">
+        <p className="dash-eyebrow">Connectors</p>
+        <h1 className="dash-title">Connect your stack</h1>
+        <p className="dash-sub">
+          Databases, storage, email, and sign-in. Connected ones are live; add more anytime, or migrate an existing site
+          at the bottom.
+        </p>
+      </motion.header>
+      {isLoading ? (
+        <div className="center muted">Loading connectors…</div>
+      ) : error ? (
+        <div className="alert">Could not load connectors.</div>
+      ) : (
+        <ConnectorGrid status={status} />
+      )}
     </div>
   )
 }

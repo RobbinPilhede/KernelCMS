@@ -3025,3 +3025,173 @@ a {
   background: var(--surface);
   padding: 16px;
 }
+
+/* ---------------------------------------------------------------------------
+ * Connectors (catalog grid + cards + brand tiles)
+ * ------------------------------------------------------------------------- */
+.cx-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.cx-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cx-group-title {
+  margin: 0 0 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cx-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+  transition: border-color var(--motion-base) var(--ease-out);
+}
+.cx-card.open {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
+}
+.cx-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 13px 15px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+}
+.cx-tile {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--cx-accent);
+  background: color-mix(in srgb, var(--cx-accent) 14%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--cx-accent) 26%, transparent);
+}
+.cx-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.cx-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.cx-blurb {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.cx-pill {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.cx-pill-connected {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+.cx-pill-available {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.cx-pill-adapter {
+  color: #b45309;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+}
+:root.dark .cx-pill-adapter {
+  color: #fbbf24;
+}
+.cx-chev {
+  flex: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--muted);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+.cx-card.open .cx-chev {
+  transform: rotate(90deg);
+}
+.cx-body {
+  overflow: hidden;
+}
+.cx-body-inner {
+  padding: 0 15px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cx-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cx-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+@media (max-width: 600px) {
+  .cx-pill {
+    display: none;
+  }
+}
+
+/* Sidebar Connectors entry (bottom-left) */
+.sidebar-connectors {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 9px;
+  color: var(--sidebar-fg);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 500;
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+.sidebar-connectors:hover {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-active-fg);
+}
+.sidebar-connectors.active {
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-active-fg);
+}
+.sidebar-connectors .sc-label {
+  flex: 1;
+}
+.sidebar-connectors .sc-count {
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}

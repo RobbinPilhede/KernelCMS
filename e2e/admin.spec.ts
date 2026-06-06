@@ -12,23 +12,22 @@ const PNG_BYTES = Buffer.from(
 
 async function ensureSignedIn(page: Page) {
   await page.goto('/admin')
-  // First run shows the welcome wizard (step 0 → "Create your account →"); a
+  // First run shows the welcome wizard (step 0 → "Connect your stack →"); a
   // returning visit shows the logo-only login screen ("Sign in"). Detect by the
   // step-0 button, falling back to login.
   if (
     await page
-      .getByRole('button', { name: /Create your account/ })
+      .getByRole('button', { name: /Connect your stack/ })
       .isVisible()
       .catch(() => false)
   ) {
-    // Step 0 → account form.
-    await page.getByRole('button', { name: /Create your account/ }).click()
+    await page.getByRole('button', { name: /Connect your stack/ }).click() // step 0 → connectors
+    await page.getByRole('button', { name: /Create your account/ }).click() // connectors → account
     await page.getByRole('textbox', { name: 'Email' }).fill('admin@e2e.test')
     const pwds = page.locator('input[type="password"]')
     await pwds.nth(0).fill('supersecret123')
     await pwds.nth(1).fill('supersecret123')
     await page.getByRole('button', { name: 'Create account' }).click()
-    // Step 2 → enter the dashboard.
     await page.getByRole('button', { name: /Enter your dashboard/ }).click()
   } else if (
     await page
@@ -43,30 +42,45 @@ async function ensureSignedIn(page: Page) {
   await expect(page.getByRole('link', { name: 'Pages', exact: true })).toBeVisible()
 }
 
-test('first-run welcome wizard explains the runtime, creates the admin, and offers AI prompts', async ({ page }) => {
+test('first-run wizard: runtime, connectors picker, account, dashboard', async ({ page }) => {
   await page.goto('/admin')
   // Step 0 — welcome + honest "how it's running" status.
   await expect(page.getByRole('heading', { name: /Welcome to KernelCMS/ })).toBeVisible()
   await expect(page.getByText(/Running on SQLite/)).toBeVisible()
+  await page.getByRole('button', { name: /Connect your stack/ }).click()
+
+  // Step 1 — Coolify-style connectors picker with brand tiles + setup details.
+  await expect(page.getByRole('heading', { name: /Connect your stack/ })).toBeVisible()
+  const postgres = page.getByRole('button', { name: /PostgreSQL/ })
+  await expect(postgres).toBeVisible()
+  await postgres.click()
+  await expect(page.getByRole('button', { name: /Copy config/ }).first()).toBeVisible()
+  // The static-site migration helper is present in the catalog.
+  await expect(page.getByRole('button', { name: /Migrate an existing site/ })).toBeVisible()
   await page.getByRole('button', { name: /Create your account/ }).click()
 
-  // Step 1 — create the owner account.
+  // Step 2 — create the owner account.
   await page.getByRole('textbox', { name: 'Email' }).fill('admin@e2e.test')
   const pwds = page.locator('input[type="password"]')
   await pwds.nth(0).fill('supersecret123')
   await pwds.nth(1).fill('supersecret123')
   await page.getByRole('button', { name: 'Create account' }).click()
 
-  // Step 2 — copy-paste AI prompts (the Postgres one is expandable + copyable).
+  // Step 3 — done.
   await expect(page.getByRole('heading', { name: /You're all set/ })).toBeVisible()
-  const postgres = page.getByRole('button', { name: /Connect a PostgreSQL database/ })
-  await expect(postgres).toBeVisible()
-  await postgres.click()
-  await expect(page.getByRole('button', { name: 'Copy prompt' }).first()).toBeVisible()
-
   await page.getByRole('button', { name: /Enter your dashboard/ }).click()
   await expect(page.getByRole('link', { name: 'Pages', exact: true })).toBeVisible()
   await expect(page.locator('.sidebar .logo-word')).toHaveText('KernelCMS')
+})
+
+test('connectors panel: sidebar entry shows the catalog and migration helper', async ({ page }) => {
+  await ensureSignedIn(page)
+  await page.getByRole('link', { name: 'Connectors' }).click()
+  await expect(page.getByRole('heading', { name: /Connect your stack/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /PostgreSQL/ })).toBeVisible()
+  // The migration helper expands to a copyable prompt.
+  await page.getByRole('button', { name: /Migrate an existing site/ }).click()
+  await expect(page.getByRole('button', { name: 'Copy prompt' }).first()).toBeVisible()
 })
 
 test('registered dashboard widget renders (window.KernelCMS.widgets)', async ({ page }) => {

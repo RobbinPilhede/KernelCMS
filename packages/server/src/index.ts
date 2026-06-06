@@ -15,6 +15,7 @@ import {
   UnauthorizedError,
   createLogger,
   describeConfig,
+  connectorStatus,
   isKernelError,
   matchEndpoint,
   parseEndpointInput,
@@ -343,6 +344,13 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
         })
       }
       return json({ needsSetup, authCollection: slug })
+    }
+
+    // GET /_admin/connectors -> connector inventory for the Connectors panel
+    // (authenticated admins only; non-sensitive kinds/booleans/provider names).
+    if (segments[1] === 'connectors' && segments.length === 2 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      return json({ ...connectorStatus(kernel), graphql: Boolean(options.graphql) })
     }
 
     // POST /_admin/setup -> create the FIRST admin, only while none exist.
