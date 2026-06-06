@@ -33,6 +33,7 @@ export { dbCache, redisCache } from './cache-backends'
 export type { DbCacheOptions, RedisCacheOptions } from './cache-backends'
 export { deliverWebhook, attachWebhooks } from './webhooks'
 export type { WebhookPayload } from './webhooks'
+export { memorySearch, attachSearch, extractSearchText } from './search'
 export {
   hashPassword,
   verifyPassword,
@@ -102,4 +103,8 @@ export type {
   CacheAdapterFactory,
   CacheSetOptions,
   CacheStats,
+  SearchAdapter,
+  SearchAdapterFactory,
+  SearchHit,
+  SearchResult,
 } from '@kernel/db'

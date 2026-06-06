@@ -1,4 +1,13 @@
-import type { CacheAdapter, DatabaseAdapter, KernelSchema, Logger, PaginatedResult, Row, Where } from '@kernel/db'
+import type {
+  CacheAdapter,
+  DatabaseAdapter,
+  KernelSchema,
+  Logger,
+  PaginatedResult,
+  Row,
+  SearchAdapter,
+  Where,
+} from '@kernel/db'
 import type { RichTextFeature, RichTextPreset } from '@kernel/richtext'
 import type { ImageProcessor, StorageAdapter } from '@kernel/storage'
 import type { KernelPlugin } from './plugins'
@@ -366,6 +375,9 @@ export interface CollectionConfig {
    *  uses the default TTL; pass `{ ttl }` (ms) to override. Reads are memoized at
    *  the database layer and invalidated on any write to this collection. */
   cache?: boolean | { ttl?: number }
+  /** Full-text search for this collection (requires `config.search`). Index the
+   *  listed text fields; query with `kernel.search({ collection, query })`. */
+  search?: { fields: string[] }
 }
 
 export interface ImageSize {
@@ -484,6 +496,9 @@ export interface KernelConfig {
   cache?: CacheAdapter
   /** Outbound webhooks: fire a signed HTTP POST when documents change. */
   webhooks?: WebhookConfig[]
+  /** Search adapter (e.g. `memorySearch()`). Collections with `search` enabled
+   *  are indexed on write and queried via `kernel.search`. */
+  search?: SearchAdapter
   /** Default cache TTL in ms applied to cached collections that don't set their own.
    *  0 (default) means entries live until invalidated by a write. */
   cacheDefaults?: { ttl?: number }
@@ -530,6 +545,10 @@ export interface SanitizedConfig {
   cacheDefaultTtl: number
   /** Configured outbound webhooks. */
   webhooks?: WebhookConfig[]
+  /** Configured search adapter. */
+  search?: SearchAdapter
+  /** Per-collection searchable field names. */
+  searchableFields: Record<string, string[]>
 }
 
 // ---------------------------------------------------------------------------
@@ -552,6 +571,13 @@ export interface PublishOptions extends OperationBase {
   id: string
   /** Schedule the publish for a future time; the doc stays a draft until then. */
   publishAt?: string | Date
+}
+
+export interface SearchDocsOptions extends OperationBase {
+  collection: string
+  query: string
+  /** Max documents to return (after access filtering). Default 25. */
+  limit?: number
 }
 
 export interface ProcessScheduledOptions {
@@ -687,6 +713,11 @@ export interface Kernel {
   readonly schema: KernelSchema
   /** Configured cache adapter, when set (see `config.cache`). */
   readonly cache?: CacheAdapter
+  /** Configured search adapter, when set (see `config.search`). */
+  readonly search?: SearchAdapter
+  /** Full-text search a collection, returning access-checked documents in
+   *  relevance order. Requires `config.search` and `collection.search`. */
+  searchDocs<T extends Doc = Doc>(opts: SearchDocsOptions): Promise<{ docs: T[] }>
   find<T extends Doc = Doc>(opts: FindOptions): Promise<PaginatedResult<T>>
   findByID<T extends Doc = Doc>(opts: FindByIDOptions): Promise<T | null>
   create<T extends Doc = Doc>(opts: CreateOptions): Promise<T>

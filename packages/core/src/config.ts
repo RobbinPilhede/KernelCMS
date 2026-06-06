@@ -338,6 +338,16 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     }
   }
 
+  // Resolve per-collection searchable fields (only when a search adapter is set).
+  const searchableFields: Record<string, string[]> = {}
+  if (config.search) {
+    for (const collection of collections) {
+      if (collection.slug === JOBS_SLUG || collection.slug === CACHE_SLUG) continue
+      const s = collection.search
+      if (s && Array.isArray(s.fields) && s.fields.length > 0) searchableFields[collection.slug] = s.fields
+    }
+  }
+
   return {
     serverURL: config.serverURL ?? 'http://localhost:3000',
     db: config.db,
@@ -353,6 +363,8 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     cacheableSlugs,
     cacheTtlBySlug,
     cacheDefaultTtl,
+    searchableFields,
+    ...(config.search ? { search: config.search } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),
     ...(email ? { email } : {}),

@@ -46,6 +46,8 @@ export interface ConnectorStatus {
   image: boolean
   /** Configured cache adapter kind ('memory' | 'database' | 'redis'), or null. */
   cache: { configured: boolean; kind: string | null }
+  /** Configured search adapter kind, or null. */
+  search: { configured: boolean; kind: string | null }
 }
 
 export function connectorStatus(kernel: Kernel): ConnectorStatus {
@@ -66,6 +68,7 @@ export function connectorStatus(kernel: Kernel): ConnectorStatus {
     oauth: (cfg.oauth ?? []).map((p) => p.name),
     image: Boolean(cfg.image),
     cache: { configured: Boolean(cfg.cache), kind: cfg.cache ? (nameOf(cfg.cache) ?? 'cache') : null },
+    search: { configured: Boolean(cfg.search), kind: cfg.search ? (nameOf(cfg.search) ?? 'search') : null },
   }
 }
 
@@ -107,6 +110,7 @@ export interface SystemInfo {
     storage: boolean
     localization: boolean
     cache: boolean
+    search: boolean
   }
 }
 
@@ -146,6 +150,7 @@ export function systemInfo(kernel: Kernel): SystemInfo {
       storage: Boolean(cfg.storage),
       localization: Boolean(cfg.localization),
       cache: Boolean(cfg.cache),
+      search: Boolean(cfg.search),
     },
   }
 }

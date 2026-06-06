@@ -1,11 +1,13 @@
 import type { DatabaseAdapter, Logger } from '@kernel/db'
-import type { Kernel, KernelConfig } from './types'
+import type { Doc, Kernel, KernelConfig } from './types'
 import { sanitizeConfig } from './config'
 import { compileSchema } from './schema'
 import { createOperations } from './operations'
 import { createCachedDb } from './cache'
 import { CACHE_SLUG, JOBS_SLUG } from './config'
+import { isKernelError } from './errors'
 import { attachWebhooks } from './webhooks'
+import { attachSearch } from './search'
 import { applyPlugins } from './plugins'
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const
@@ -43,6 +45,10 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   if (sanitized.webhooks && sanitized.webhooks.length > 0) {
     attachWebhooks(sanitized.collections, sanitized.webhooks, new Set([JOBS_SLUG, CACHE_SLUG]), logger)
   }
+  // Full-text search: attach index-sync hooks to searchable collections.
+  if (sanitized.search && Object.keys(sanitized.searchableFields).length > 0) {
+    attachSearch(sanitized.collections, sanitized.search, sanitized.searchableFields, logger)
+  }
   const schema = compileSchema(sanitized)
 
   await sanitized.db.init({ logger })
@@ -60,6 +66,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
       ttlBySlug: sanitized.cacheTtlBySlug,
     })
   }
+  if (sanitized.search) await sanitized.search.init({ logger, db: sanitized.db })
 
   const ops = createOperations({ config: sanitized, db: opDb })
 
@@ -67,7 +74,39 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     config: sanitized,
     db: sanitized.db,
     ...(sanitized.cache ? { cache: sanitized.cache } : {}),
+    ...(sanitized.search ? { search: sanitized.search } : {}),
     schema,
+    async searchDocs<T extends Doc = Doc>(opts: import('./types').SearchDocsOptions): Promise<{ docs: T[] }> {
+      const search = sanitized.search
+      if (!search) throw new Error('No search adapter configured (config.search).')
+      if (!sanitized.searchableFields[opts.collection]) {
+        throw new Error(`Collection "${opts.collection}" does not have search enabled.`)
+      }
+      const limit = Math.max(1, opts.limit ?? 25)
+      // Over-fetch hits so access filtering on load does not starve the result.
+      const { hits } = await search.search({ collection: opts.collection, query: opts.query, limit: limit * 4 })
+      const docs: T[] = []
+      for (const hit of hits) {
+        // Load through the access-checked read path. A hit the caller may not read
+        // either returns null or raises an access error — both are skipped, so the
+        // index never surfaces a forbidden document.
+        let doc: T | null = null
+        try {
+          doc = await ops.findByID<T>({
+            collection: opts.collection,
+            id: hit.id,
+            req: opts.req,
+            overrideAccess: opts.overrideAccess,
+            depth: opts.depth,
+          })
+        } catch (err) {
+          if (!isKernelError(err)) throw err
+        }
+        if (doc) docs.push(doc)
+        if (docs.length >= limit) break
+      }
+      return { docs }
+    },
     find: ops.find,
     findByID: ops.findByID,
     create: ops.create,
@@ -103,6 +142,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     },
     async destroy() {
       if (sanitized.cache) await sanitized.cache.destroy()
+      if (sanitized.search) await sanitized.search.destroy()
       await sanitized.db.destroy()
     },
   }

@@ -210,3 +210,37 @@ export interface CacheAdapter extends Adapter {
 }
 
 export type CacheAdapterFactory = () => CacheAdapter
+
+// ---------------------------------------------------------------------------
+// Search adapter contract
+// ---------------------------------------------------------------------------
+
+export interface SearchHit {
+  id: string
+  /** Relevance score; higher is more relevant. Backend-defined scale. */
+  score: number
+}
+
+export interface SearchResult {
+  hits: SearchHit[]
+}
+
+/**
+ * A full-text index over opt-in collections. KernelCMS keeps it in sync by
+ * indexing a document's configured text fields on write and removing it on
+ * delete. `kernel.search(...)` queries it, then loads each hit through the normal
+ * access-checked read path, so the index never bypasses access control.
+ */
+export interface SearchAdapter extends Adapter {
+  readonly kind: 'search'
+  /** Add or replace a document's indexed text. */
+  index(args: { collection: string; id: string; text: string }): Promise<void>
+  /** Remove a document from the index. */
+  remove(args: { collection: string; id: string }): Promise<void>
+  /** Return scored hits for a query within a collection. */
+  search(args: { collection: string; query: string; limit: number }): Promise<SearchResult>
+  /** Drop the index for one collection, or everything when no slug is given. */
+  clear(collection?: string): Promise<void>
+}
+
+export type SearchAdapterFactory = () => SearchAdapter
