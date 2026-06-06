@@ -292,6 +292,21 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     }
   }
 
+  // Resolve per-collection caching. Only meaningful when a cache adapter is set;
+  // the jobs queue is never cached (it changes constantly and must read fresh).
+  const cacheDefaultTtl = config.cacheDefaults?.ttl ?? 0
+  const cacheableSlugs: string[] = []
+  const cacheTtlBySlug: Record<string, number> = {}
+  if (config.cache) {
+    for (const collection of collections) {
+      if (collection.slug === JOBS_SLUG) continue
+      const c = collection.cache
+      if (!c) continue
+      cacheableSlugs.push(collection.slug)
+      if (typeof c === 'object' && typeof c.ttl === 'number') cacheTtlBySlug[collection.slug] = c.ttl
+    }
+  }
+
   return {
     serverURL: config.serverURL ?? 'http://localhost:3000',
     db: config.db,
@@ -304,9 +319,13 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     collectionsBySlug,
     globalsBySlug,
     attribution: config.attribution ?? true,
+    cacheableSlugs,
+    cacheTtlBySlug,
+    cacheDefaultTtl,
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),
     ...(email ? { email } : {}),
+    ...(config.cache ? { cache: config.cache } : {}),
     ...(config.jobs && config.jobs.length > 0 ? { jobs: config.jobs } : {}),
     ...(endpoints.length > 0 ? { endpoints } : {}),
     ...(config.oauth && config.oauth.length > 0 ? { oauth: config.oauth } : {}),

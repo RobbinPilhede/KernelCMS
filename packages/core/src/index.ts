@@ -27,6 +27,8 @@ export {
 } from './fields'
 export { createOperations } from './operations'
 export type { Operations, OperationCtx } from './operations'
+export { memoryCache, createCachedDb } from './cache'
+export type { MemoryCacheOptions, CachedDbOptions } from './cache'
 export {
   hashPassword,
   verifyPassword,
@@ -92,4 +94,8 @@ export type {
   Logger,
   Adapter,
   AdapterContext,
+  CacheAdapter,
+  CacheAdapterFactory,
+  CacheSetOptions,
+  CacheStats,
 } from '@kernel/db'

@@ -1,4 +1,4 @@
-import type { DatabaseAdapter, KernelSchema, Logger, PaginatedResult, Row, Where } from '@kernel/db'
+import type { CacheAdapter, DatabaseAdapter, KernelSchema, Logger, PaginatedResult, Row, Where } from '@kernel/db'
 import type { RichTextFeature, RichTextPreset } from '@kernel/richtext'
 import type { ImageProcessor, StorageAdapter } from '@kernel/storage'
 import type { KernelPlugin } from './plugins'
@@ -362,6 +362,10 @@ export interface CollectionConfig {
   /** Make this an upload collection. System fields (filename, mime_type, filesize,
    *  checksum, url, …) are injected and bytes are stored via the configured adapter. */
   upload?: boolean | UploadConfig
+  /** Read-through caching for this collection (requires `config.cache`). `true`
+   *  uses the default TTL; pass `{ ttl }` (ms) to override. Reads are memoized at
+   *  the database layer and invalidated on any write to this collection. */
+  cache?: boolean | { ttl?: number }
 }
 
 export interface ImageSize {
@@ -457,6 +461,12 @@ export interface KernelConfig {
   attribution?: boolean
   /** Config-transformer plugins, applied in dependency order before sanitize. */
   plugins?: KernelPlugin[]
+  /** Cache adapter (e.g. `memoryCache()`, `dbCache()`, `redisCache(...)`). When set,
+   *  collections with `cache` enabled are served read-through and invalidated on write. */
+  cache?: CacheAdapter
+  /** Default cache TTL in ms applied to cached collections that don't set their own.
+   *  0 (default) means entries live until invalidated by a write. */
+  cacheDefaults?: { ttl?: number }
 }
 
 export interface SanitizedLocalization {
@@ -490,6 +500,14 @@ export interface SanitizedConfig {
   oauth?: OAuthProvider[]
   /** Whether the admin shows the "Powered by KernelCMS" credit. */
   attribution: boolean
+  /** Resolved cache adapter, when configured. */
+  cache?: CacheAdapter
+  /** Collection slugs with caching enabled. */
+  cacheableSlugs: string[]
+  /** Per-slug cache TTL (ms); falls back to the default for slugs not present. */
+  cacheTtlBySlug: Record<string, number>
+  /** Default cache TTL (ms). */
+  cacheDefaultTtl: number
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +663,8 @@ export interface Kernel {
   readonly config: SanitizedConfig
   readonly db: DatabaseAdapter
   readonly schema: KernelSchema
+  /** Configured cache adapter, when set (see `config.cache`). */
+  readonly cache?: CacheAdapter
   find<T extends Doc = Doc>(opts: FindOptions): Promise<PaginatedResult<T>>
   findByID<T extends Doc = Doc>(opts: FindByIDOptions): Promise<T | null>
   create<T extends Doc = Doc>(opts: CreateOptions): Promise<T>

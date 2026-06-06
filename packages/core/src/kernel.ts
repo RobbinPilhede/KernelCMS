@@ -1,8 +1,9 @@
-import type { Logger } from '@kernel/db'
+import type { DatabaseAdapter, Logger } from '@kernel/db'
 import type { Kernel, KernelConfig } from './types'
 import { sanitizeConfig } from './config'
 import { compileSchema } from './schema'
 import { createOperations } from './operations'
+import { createCachedDb } from './cache'
 import { applyPlugins } from './plugins'
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const
@@ -40,11 +41,25 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   await sanitized.db.init({ logger })
   if (options.autoMigrate) await sanitized.db.migrate(schema)
 
-  const ops = createOperations({ config: sanitized, db: sanitized.db })
+  // Optional read-through cache. The operation core runs against `opDb`; when a
+  // cache adapter is configured and collections opt in, that is a cache-wrapping
+  // adapter, otherwise the raw db. Access control still runs on every call.
+  let opDb: DatabaseAdapter = sanitized.db
+  if (sanitized.cache && sanitized.cacheableSlugs.length > 0) {
+    await sanitized.cache.init({ logger })
+    opDb = createCachedDb(sanitized.db, sanitized.cache, {
+      cacheableSlugs: new Set(sanitized.cacheableSlugs),
+      ttlMs: sanitized.cacheDefaultTtl,
+      ttlBySlug: sanitized.cacheTtlBySlug,
+    })
+  }
+
+  const ops = createOperations({ config: sanitized, db: opDb })
 
   return {
     config: sanitized,
     db: sanitized.db,
+    ...(sanitized.cache ? { cache: sanitized.cache } : {}),
     schema,
     find: ops.find,
     findByID: ops.findByID,
@@ -80,6 +95,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
       await sanitized.db.migrate(schema)
     },
     async destroy() {
+      if (sanitized.cache) await sanitized.cache.destroy()
       await sanitized.db.destroy()
     },
   }

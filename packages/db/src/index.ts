@@ -161,3 +161,49 @@ export interface DatabaseAdapter extends Adapter {
 }
 
 export type DatabaseAdapterFactory = () => DatabaseAdapter
+
+// ---------------------------------------------------------------------------
+// Cache adapter contract
+// ---------------------------------------------------------------------------
+
+export interface CacheSetOptions {
+  /** Time to live in milliseconds. Omitted/0 means no expiry. */
+  ttlMs?: number
+  /** Tags for grouped invalidation (e.g. a collection slug). */
+  tags?: string[]
+}
+
+export interface CacheStats {
+  hits: number
+  misses: number
+  evictions: number
+  /** Approximate number of live entries, when the backend can report it. */
+  size?: number
+}
+
+/**
+ * A key/value cache with TTL and tag-based invalidation. KernelCMS uses it as a
+ * read-through layer in front of the database (see `createCachedDb`): reads are
+ * memoized, and any write to a collection invalidates that collection's tag.
+ *
+ * Correctness over hit rate: when in doubt an adapter should evict. Cache keys
+ * carry the access-merged query, so entries are never shared across viewers with
+ * different access scopes.
+ */
+export interface CacheAdapter extends Adapter {
+  readonly kind: 'cache'
+  /** Resolve a value, or `undefined` on miss/expiry. */
+  get<T = unknown>(key: string): Promise<T | undefined>
+  /** Store a value with optional TTL and tags. */
+  set(key: string, value: unknown, options?: CacheSetOptions): Promise<void>
+  /** Remove a single key. */
+  delete(key: string): Promise<void>
+  /** Remove every key associated with a tag. */
+  deleteByTag(tag: string): Promise<void>
+  /** Remove everything. */
+  clear(): Promise<void>
+  /** Best-effort counters for observability; backends may return zeros. */
+  stats(): CacheStats
+}
+
+export type CacheAdapterFactory = () => CacheAdapter
