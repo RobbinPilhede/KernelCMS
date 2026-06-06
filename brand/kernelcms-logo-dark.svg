@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 470 116" role="img" aria-labelledby="t d" fill="none">
+  <title id="t">KernelCMS</title>
+  <desc id="d">A rounded-triangle shell with a centered core dot, beside the KernelCMS wordmark.</desc>
+
+  <!-- Icon: kernel shell + core (light variant for dark backgrounds) -->
+  <g transform="translate(8 9)">
+    <path d="M43.3 28.3 Q50 16 56.7 28.3 L77.3 65.7 Q84 78 70 78 L30 78 Q16 78 22.7 65.7 L43.3 28.3 Z"
+          stroke="#FAFAFA" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="50" cy="55" r="4.6" fill="#FAFAFA"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="128" y="80"
+        font-family="'Futura PT','Futura','Century Gothic','Avenir Next','Poppins','Segoe UI',sans-serif"
+        font-size="60" font-weight="500" letter-spacing="0.5" fill="#FAFAFA">KernelCMS</text>
+</svg>

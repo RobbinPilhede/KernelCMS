@@ -1,8 +1,17 @@
-# KernelCMS
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/kernelcms-logo-dark.svg" />
+    <img alt="KernelCMS" src="brand/kernelcms-logo.svg" width="380" />
+  </picture>
+</p>
 
-[![CI](https://github.com/RobbinPilhede/KernelCMS/actions/workflows/ci.yml/badge.svg)](https://github.com/RobbinPilhede/KernelCMS/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://github.com/RobbinPilhede/KernelCMS/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/RobbinPilhede/KernelCMS/actions/workflows/ci.yml/badge.svg" />
+  </a>
+</p>
 
-**The lightweight, standalone, type-safe headless CMS that does not hijack your framework.**
+<p align="center"><strong>The lightweight, standalone, type-safe headless CMS that does not hijack your framework.</strong></p>
 
 KernelCMS is a config-as-code, end-to-end TypeScript headless CMS. You model your
 content in a single `kernel.config.ts`, and you get a typed content engine, a REST and
