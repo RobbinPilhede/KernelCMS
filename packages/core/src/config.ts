@@ -255,6 +255,23 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     email = consoleEmailFallback()
   }
 
+  // Validate custom endpoints: known method, rooted path, and no duplicate
+  // method+path (a duplicate is a real conflict, never last-write-wins).
+  const endpoints = config.endpoints ?? []
+  if (endpoints.length > 0) {
+    const seen = new Set<string>()
+    for (const ep of endpoints) {
+      assert(
+        ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(ep.method),
+        `endpoint "${ep.method} ${ep.path}" has an unsupported method`,
+      )
+      assert(ep.path.startsWith('/'), `endpoint path "${ep.path}" must start with "/"`)
+      const key = `${ep.method} ${ep.path}`
+      assert(!seen.has(key), `duplicate endpoint "${key}"`)
+      seen.add(key)
+    }
+  }
+
   return {
     serverURL: config.serverURL ?? 'http://localhost:3000',
     db: config.db,
@@ -271,6 +288,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     ...(config.image ? { image: config.image } : {}),
     ...(email ? { email } : {}),
     ...(config.jobs && config.jobs.length > 0 ? { jobs: config.jobs } : {}),
+    ...(endpoints.length > 0 ? { endpoints } : {}),
     ...(config.oauth && config.oauth.length > 0 ? { oauth: config.oauth } : {}),
   }
 }

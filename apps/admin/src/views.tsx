@@ -34,6 +34,7 @@ import type {
 import { useAuth } from './auth'
 import { useCollection, useGlobal, useSchema } from './schema'
 import { FieldInput, stripRowKeys, withRowKeys } from './fields'
+import { getCell, getWidgets } from './registry'
 import { Logo } from './Logo'
 import { CommandPalette } from './CommandPalette'
 import { ConfirmHost, Toaster, confirmDialog, toast } from './feedback'
@@ -1224,6 +1225,7 @@ export function Dashboard() {
   const { user } = useAuth()
   const collections = schema.collections.filter((c) => !c.hidden)
   const name = displayName(user?.email as string | undefined)
+  const widgets = getWidgets()
 
   return (
     <div className="page dashboard">
@@ -1232,6 +1234,22 @@ export function Dashboard() {
         <h1 className="dash-title">Welcome back{name && <>, {name}</>}</h1>
         <p className="dash-sub">Here's everything in your workspace. Pick a collection to start editing.</p>
       </motion.header>
+
+      {widgets.length > 0 && (
+        <motion.div
+          className="dash-widgets"
+          data-testid="dash-widgets"
+          variants={listContainer}
+          initial="initial"
+          animate="animate"
+        >
+          {widgets.map(({ key, render }) => (
+            <motion.div key={key} className="dash-widget" variants={itemVariants}>
+              {render({ user: (user as Record<string, unknown> | null) ?? null })}
+            </motion.div>
+          ))}
+        </motion.div>
+      )}
 
       <motion.div className="dash-grid" variants={listContainer} initial="initial" animate="animate">
         {collections.map((c) => (
@@ -1488,17 +1506,25 @@ export function ListView() {
 
   const columns = useMemo<ColumnDef<Doc>[]>(
     () =>
-      visibleCols.map((key) => ({
-        accessorKey: key,
-        header: key === '_status' ? 'Status' : prettify(key),
-        cell: (info) =>
-          key === '_status' ? (
-            <StatusPill status={(info.getValue() as 'draft' | 'published') ?? 'draft'} />
-          ) : (
-            formatCell(info.getValue())
-          ),
-      })),
-    [visibleCols],
+      visibleCols.map((key) => {
+        const field = collection?.fields.find((f) => f.name === key)
+        const CustomCell = getCell(field?.admin?.component)
+        return {
+          accessorKey: key,
+          header: key === '_status' ? 'Status' : prettify(key),
+          cell: (info) => {
+            if (key === '_status') {
+              return <StatusPill status={(info.getValue() as 'draft' | 'published') ?? 'draft'} />
+            }
+            // A registered cell (window.KernelCMS.cells[component]) wins.
+            if (CustomCell && field) {
+              return <CustomCell value={info.getValue()} row={info.row.original} field={field} />
+            }
+            return formatCell(info.getValue())
+          },
+        }
+      }),
+    [visibleCols, collection],
   )
 
   const tableData = useMemo(() => data?.docs ?? [], [data])

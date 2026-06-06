@@ -16,17 +16,29 @@ export interface FieldError {
   message: string
 }
 
+export interface ErrorMeta {
+  /** A translation key. When set, the boundary renders the localized message for
+   *  the request locale (interpolating `context`), falling back to `.message`. */
+  messageKey?: string
+  /** Interpolation values for the localized template, e.g. `{ retryAfter: 30 }`. */
+  context?: Record<string, unknown>
+}
+
 export class KernelError extends Error {
   readonly code: ErrorCode
   readonly status: number
   readonly details: unknown
+  readonly messageKey?: string
+  readonly context?: Record<string, unknown>
 
-  constructor(message: string, code: ErrorCode, status: number, details?: unknown) {
+  constructor(message: string, code: ErrorCode, status: number, details?: unknown, meta?: ErrorMeta) {
     super(message)
     this.name = 'KernelError'
     this.code = code
     this.status = status
     this.details = details
+    this.messageKey = meta?.messageKey
+    this.context = meta?.context
     Object.setPrototypeOf(this, new.target.prototype)
   }
 
@@ -106,4 +118,49 @@ export class TooManyRequestsError extends KernelError {
 
 export function isKernelError(err: unknown): err is KernelError {
   return err instanceof KernelError
+}
+
+// ---------------------------------------------------------------------------
+// Localized error messages
+//
+// A small registry mapping `locale -> messageKey -> template`. Errors carry a
+// `messageKey` + `context`; the message is rendered at the HTTP boundary for the
+// request's locale, so throw sites stay locale-agnostic. Plugins/modules and the
+// app contribute messages via `registerErrorMessages`. Templates interpolate
+// `{name}` placeholders from the error's `context`.
+// ---------------------------------------------------------------------------
+
+const messageRegistry = new Map<string, Map<string, string>>()
+
+/** Register (merge) localized error templates: `{ en: { 'x.locked': '…{n}…' } }`. */
+export function registerErrorMessages(messages: Record<string, Record<string, string>>): void {
+  for (const [locale, map] of Object.entries(messages)) {
+    const bucket = messageRegistry.get(locale) ?? new Map<string, string>()
+    for (const [key, template] of Object.entries(map)) bucket.set(key, template)
+    messageRegistry.set(locale, bucket)
+  }
+}
+
+/** Test/util hook: drop all registered templates. */
+export function clearErrorMessages(): void {
+  messageRegistry.clear()
+}
+
+function interpolate(template: string, context?: Record<string, unknown>): string {
+  return template.replace(/\{(\w+)\}/g, (_m, key: string) =>
+    context && key in context ? String(context[key]) : `{${key}}`,
+  )
+}
+
+/** Resolve a localized error message: exact locale, then its base (`en-US`→`en`),
+ *  then the supplied fallback, then the key itself. Placeholders are interpolated. */
+export function renderErrorMessage(
+  messageKey: string,
+  locale: string,
+  context?: Record<string, unknown>,
+  fallback?: string,
+): string {
+  const base = locale.split('-')[0]!
+  const template = messageRegistry.get(locale)?.get(messageKey) ?? messageRegistry.get(base)?.get(messageKey)
+  return interpolate(template ?? fallback ?? messageKey, context)
 }

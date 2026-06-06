@@ -13,11 +13,17 @@ import {
   NotFoundError,
   PayloadTooLargeError,
   UnauthorizedError,
+  createLogger,
   describeConfig,
   isKernelError,
+  matchEndpoint,
+  parseEndpointInput,
+  renderErrorMessage,
   setupRuntime,
 } from '@kernel/core'
+import type { EndpointConfig, RequestContext } from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
+import { buildOpenApiSpec, scalarHtml } from './openapi'
 import { ADMIN_HTML } from './admin-assets.generated'
 
 // One generated GraphQL executor per kernel, built lazily on first use.
@@ -48,6 +54,9 @@ export interface HandlerOptions {
   admin?: boolean | { path?: string; scripts?: string[] }
   /** Expose a generated GraphQL endpoint at `<api>/graphql` (POST). */
   graphql?: boolean
+  /** Serve an OpenAPI spec at `<api>/openapi` and a Scalar API reference at
+   *  `<api>/docs`. Defaults to true. */
+  openapi?: boolean
 }
 
 /** The auth collection the admin UI logs into: configured admin.user, else the first auth collection. */
@@ -133,7 +142,7 @@ export function createRequestHandler(kernel: Kernel, options: HandlerOptions = {
       const response = await route(kernel, options, request, apiBase)
       return finish(response, request)
     } catch (err) {
-      return finish(errorResponse(err), request)
+      return finish(errorResponse(err, request), request)
     }
   }
 }
@@ -281,6 +290,16 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return json(describeConfig(kernel.config))
   }
 
+  // /openapi -> machine-readable contract; /docs -> Scalar API reference UI.
+  if (options.openapi !== false && segments.length === 1 && method === 'GET') {
+    if (segments[0] === 'openapi') {
+      return json(buildOpenApiSpec(kernel, { apiBase, title: 'KernelCMS API' }))
+    }
+    if (segments[0] === 'docs') {
+      return html(scalarHtml(`${apiBase}/openapi`))
+    }
+  }
+
   // /graphql -> generated GraphQL endpoint (POST { query, variables, operationName })
   if (segments.length === 1 && segments[0] === 'graphql') {
     if (!options.graphql) return json({ error: { code: 'NOT_FOUND', message: 'GraphQL is not enabled.' } }, 404)
@@ -336,6 +355,15 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     }
 
     return json({ error: { code: 'NOT_FOUND', message: `No route for ${url.pathname}` } }, 404)
+  }
+
+  // Custom endpoints (config.endpoints) — matched before the generic collection
+  // CRUD so a module can extend or intentionally override the resource space.
+  // Access, validation, and errors all flow through the same pipeline as core.
+  const customEndpoints = kernel.config.endpoints ?? []
+  if (customEndpoints.length > 0) {
+    const match = matchEndpoint(customEndpoints, method, segments)
+    if (match) return runEndpoint(kernel, request, url, match.endpoint, match.params, { user, locale })
   }
 
   // /globals/:slug
@@ -580,6 +608,61 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   return json({ error: { code: 'NOT_FOUND', message: `No route for ${url.pathname}` } }, 404)
 }
 
+// A shared logger for custom endpoint handlers. P7 will replace this with a
+// request-scoped structured logger; for now it gives handlers a real Logger.
+const endpointLogger = createLogger()
+
+/**
+ * Run a matched custom endpoint through the shared pipeline: authorize (explicit
+ * rule, else authenticated-only), validate declared input (failures become a
+ * ValidationError), invoke the handler with a typed context, and serialize the
+ * result. Thrown KernelErrors propagate to the central error handler.
+ */
+async function runEndpoint(
+  kernel: Kernel,
+  request: Request,
+  url: URL,
+  endpoint: EndpointConfig,
+  params: Record<string, string>,
+  auth: { user: AuthUser | null; locale?: string },
+): Promise<Response> {
+  const { user } = auth
+  const defaultLocale = kernel.config.localization ? kernel.config.localization.defaultLocale : 'en'
+  const req: RequestContext = {
+    user,
+    locale: auth.locale ?? defaultLocale,
+    fallbackLocale: false,
+    context: {},
+  }
+
+  // Authorize: explicit access rule, else secure-by-default (authenticated only).
+  const allowed = endpoint.access ? await endpoint.access({ req, request }) : Boolean(user)
+  if (!allowed) throw user ? new ForbiddenError() : new UnauthorizedError()
+
+  // Read the JSON body only when the endpoint declares a body validator.
+  let body: unknown
+  if (endpoint.input?.body) {
+    try {
+      body = await request.json()
+    } catch {
+      throw new BadRequestError('Request body must be valid JSON.')
+    }
+  }
+  const query = Object.fromEntries(url.searchParams.entries())
+  const input = parseEndpointInput(endpoint, { params, query, body }) as {
+    params: unknown
+    query: unknown
+    body: unknown
+  }
+
+  const result = await endpoint.handler({
+    input,
+    ctx: { req, user, local: kernel, logger: endpointLogger, request },
+  })
+  if (result instanceof Response) return result
+  return json(result ?? null)
+}
+
 async function resolveAuth(
   kernel: Kernel,
   options: HandlerOptions,
@@ -728,9 +811,32 @@ function methodNotAllowed(): Response {
   return json({ error: { code: 'BAD_REQUEST', message: 'Method not allowed.' } }, 405)
 }
 
-function errorResponse(err: unknown): Response {
+/** Pick the response locale from `?locale` then `Accept-Language`, else 'en'. */
+function localeFromRequest(request?: Request): string {
+  if (!request) return 'en'
+  try {
+    const q = new URL(request.url).searchParams.get('locale')
+    if (q) return q
+  } catch {
+    // ignore malformed URL
+  }
+  const header = request.headers.get('accept-language')
+  if (header) {
+    const first = header.split(',')[0]?.trim()
+    if (first) return first
+  }
+  return 'en'
+}
+
+function errorResponse(err: unknown, request?: Request): Response {
   if (isKernelError(err)) {
-    const response = json(err.toJSON(), err.status)
+    const payload = err.toJSON()
+    // Render the localized message at the boundary when the error declares a key,
+    // so throw sites stay locale-agnostic. Falls back to the baked-in message.
+    if (err.messageKey) {
+      payload.error.message = renderErrorMessage(err.messageKey, localeFromRequest(request), err.context, err.message)
+    }
+    const response = json(payload, err.status)
     const retryAfter = (err as { retryAfter?: unknown }).retryAfter
     if (typeof retryAfter === 'number') response.headers.set('retry-after', String(retryAfter))
     return response

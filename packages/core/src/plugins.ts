@@ -6,7 +6,7 @@
  * resolve time, never last-write-wins. See docs/08-extensibility/00.
  */
 import type { Logger } from '@kernel/db'
-import type { CollectionConfig, GlobalConfig, KernelConfig } from './types'
+import type { CollectionConfig, EndpointConfig, GlobalConfig, JobDefinition, KernelConfig } from './types'
 
 export class PluginConflictError extends Error {
   constructor(message: string) {
@@ -36,6 +36,10 @@ export interface PluginExtensions {
   addCollections(...collections: CollectionConfig[]): KernelConfig
   /** Append new globals. A duplicate slug raises PluginConflictError. */
   addGlobals(...globals: GlobalConfig[]): KernelConfig
+  /** Append custom endpoints. A duplicate `method path` raises PluginConflictError. */
+  addEndpoints(...endpoints: EndpointConfig[]): KernelConfig
+  /** Append background-job handlers. A duplicate slug raises PluginConflictError. */
+  addJobs(...jobs: JobDefinition[]): KernelConfig
 }
 
 export interface PluginContext {
@@ -61,6 +65,41 @@ export interface KernelPlugin {
 /** Identity helper so plugin authors get full inference on their options. */
 export function definePlugin<TOptions = void>(factory: (options: TOptions) => KernelPlugin) {
   return factory
+}
+
+/**
+ * A module is a vertical slice: collections + globals + endpoints + jobs that
+ * ship and install as one unit. It compiles to a plugin, so it participates in
+ * the same dependency-ordered, conflict-checked fold — `dependsOn` another module
+ * by name, and any duplicate slug/path/job is a fatal conflict, never last-write.
+ */
+export interface ModuleConfig {
+  /** Stable, namespaced id (used for ordering, dedupe, diagnostics). */
+  name: string
+  version?: string
+  dependsOn?: readonly string[]
+  collections?: CollectionConfig[]
+  globals?: GlobalConfig[]
+  endpoints?: EndpointConfig[]
+  jobs?: JobDefinition[]
+}
+
+/** Compile a module into a plugin. Add via `config.plugins: [comments]`. */
+export function defineModule(mod: ModuleConfig): KernelPlugin {
+  return {
+    name: mod.name,
+    version: mod.version,
+    dependsOn: mod.dependsOn,
+    setup: (ctx) => {
+      let next = ctx.config
+      const who = `Module "${mod.name}"`
+      if (mod.collections?.length) next = mergeCollections(next, mod.collections, who)
+      if (mod.globals?.length) next = mergeGlobals(next, mod.globals, who)
+      if (mod.endpoints?.length) next = mergeEndpoints(next, mod.endpoints, who)
+      if (mod.jobs?.length) next = mergeJobs(next, mod.jobs, who)
+      return next
+    },
+  }
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000
@@ -96,6 +135,43 @@ export function orderPlugins(plugins: KernelPlugin[]): KernelPlugin[] {
   return ordered
 }
 
+// Pure merge helpers — the conflict-checked append logic, shared by the plugin
+// `extend` surface and by `defineModule` (which threads them to compose a whole
+// vertical slice in one setup pass).
+function mergeCollections(config: KernelConfig, collections: CollectionConfig[], who: string): KernelConfig {
+  const existing = new Set(config.collections.map((c) => c.slug))
+  for (const c of collections) {
+    if (existing.has(c.slug)) throw new PluginConflictError(`${who} adds collection "${c.slug}", which already exists.`)
+    existing.add(c.slug)
+  }
+  return { ...config, collections: [...config.collections, ...collections] }
+}
+function mergeGlobals(config: KernelConfig, globals: GlobalConfig[], who: string): KernelConfig {
+  const existing = new Set((config.globals ?? []).map((g) => g.slug))
+  for (const g of globals) {
+    if (existing.has(g.slug)) throw new PluginConflictError(`${who} adds global "${g.slug}", which already exists.`)
+    existing.add(g.slug)
+  }
+  return { ...config, globals: [...(config.globals ?? []), ...globals] }
+}
+function mergeEndpoints(config: KernelConfig, endpoints: EndpointConfig[], who: string): KernelConfig {
+  const existing = new Set((config.endpoints ?? []).map((e) => `${e.method} ${e.path}`))
+  for (const e of endpoints) {
+    const key = `${e.method} ${e.path}`
+    if (existing.has(key)) throw new PluginConflictError(`${who} adds endpoint "${key}", which already exists.`)
+    existing.add(key)
+  }
+  return { ...config, endpoints: [...(config.endpoints ?? []), ...endpoints] }
+}
+function mergeJobs(config: KernelConfig, jobs: JobDefinition[], who: string): KernelConfig {
+  const existing = new Set((config.jobs ?? []).map((j) => j.slug))
+  for (const j of jobs) {
+    if (existing.has(j.slug)) throw new PluginConflictError(`${who} adds job "${j.slug}", which already exists.`)
+    existing.add(j.slug)
+  }
+  return { ...config, jobs: [...(config.jobs ?? []), ...jobs] }
+}
+
 function buildExtensions(getConfig: () => KernelConfig, pluginName: string): PluginExtensions {
   return {
     collections(slugs, fn) {
@@ -108,28 +184,10 @@ function buildExtensions(getConfig: () => KernelConfig, pluginName: string): Plu
       }
       return { ...config, collections: config.collections.map((c) => (targets.has(c.slug) ? fn(c) : c)) }
     },
-    addCollections(...collections) {
-      const config = getConfig()
-      const existing = new Set(config.collections.map((c) => c.slug))
-      for (const c of collections) {
-        if (existing.has(c.slug)) {
-          throw new PluginConflictError(`Plugin "${pluginName}" adds collection "${c.slug}", which already exists.`)
-        }
-        existing.add(c.slug)
-      }
-      return { ...config, collections: [...config.collections, ...collections] }
-    },
-    addGlobals(...globals) {
-      const config = getConfig()
-      const existing = new Set((config.globals ?? []).map((g) => g.slug))
-      for (const g of globals) {
-        if (existing.has(g.slug)) {
-          throw new PluginConflictError(`Plugin "${pluginName}" adds global "${g.slug}", which already exists.`)
-        }
-        existing.add(g.slug)
-      }
-      return { ...config, globals: [...(config.globals ?? []), ...globals] }
-    },
+    addCollections: (...collections) => mergeCollections(getConfig(), collections, `Plugin "${pluginName}"`),
+    addGlobals: (...globals) => mergeGlobals(getConfig(), globals, `Plugin "${pluginName}"`),
+    addEndpoints: (...endpoints) => mergeEndpoints(getConfig(), endpoints, `Plugin "${pluginName}"`),
+    addJobs: (...jobs) => mergeJobs(getConfig(), jobs, `Plugin "${pluginName}"`),
   }
 }
 

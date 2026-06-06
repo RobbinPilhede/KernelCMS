@@ -1,6 +1,7 @@
 // Public surface of @kernel/core.
 
 export { defineConfig, sanitizeConfig, defaultLocaleOf } from './config'
+export { defineEndpoint, matchEndpoint, parseEndpointInput } from './endpoints'
 export { initKernel, createLogger } from './kernel'
 export type { InitOptions } from './kernel'
 export { compileSchema, tableForCollection, tableForGlobal, GLOBAL_ROW_ID } from './schema'
@@ -48,13 +49,14 @@ export type { AdminSchema, AdminCollection, AdminGlobal, AdminField, AdminBlock,
 
 export {
   definePlugin,
+  defineModule,
   applyPlugins,
   orderPlugins,
   PluginConflictError,
   PluginCycleError,
   PluginSetupError,
 } from './plugins'
-export type { KernelPlugin, PluginContext, PluginExtensions } from './plugins'
+export type { KernelPlugin, PluginContext, PluginExtensions, ModuleConfig } from './plugins'
 
 export { diffSchema, summarizePlan, EMPTY_SCHEMA } from './migrations'
 export type { MigrationPlan, MigrationOp, ChangeClass } from './migrations'

@@ -69,6 +69,20 @@ test('first-run welcome wizard explains the runtime, creates the admin, and offe
   await expect(page.locator('.sidebar .logo-word')).toHaveText('KernelCMS')
 })
 
+test('registered dashboard widget renders (window.KernelCMS.widgets)', async ({ page }) => {
+  // Register a widget before the admin bundle boots — the same surface the
+  // server's `admin.scripts` option uses, exercised directly here.
+  await page.addInitScript(() => {
+    ;(window as unknown as { KernelCMS: { widgets: Record<string, () => string> } }).KernelCMS = {
+      widgets: { hello: () => 'Custom widget loaded' },
+    }
+  })
+  await ensureSignedIn(page)
+  await page.getByRole('link', { name: 'Dashboard' }).click()
+  await expect(page.getByTestId('dash-widgets')).toBeVisible()
+  await expect(page.getByText('Custom widget loaded')).toBeVisible()
+})
+
 test('graphql endpoint creates and queries through the live server', async ({ request }) => {
   const headers = { Authorization: 'Bearer e2e-key' }
   const create = await request.post('/api/graphql', {

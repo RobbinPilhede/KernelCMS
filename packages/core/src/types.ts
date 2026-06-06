@@ -1,4 +1,4 @@
-import type { DatabaseAdapter, KernelSchema, PaginatedResult, Row, Where } from '@kernel/db'
+import type { DatabaseAdapter, KernelSchema, Logger, PaginatedResult, Row, Where } from '@kernel/db'
 import type { RichTextFeature, RichTextPreset } from '@kernel/richtext'
 import type { ImageProcessor, StorageAdapter } from '@kernel/storage'
 import type { KernelPlugin } from './plugins'
@@ -436,6 +436,11 @@ export interface KernelConfig {
    *  collection; enqueue work with `kernel.enqueue` and drain it with
    *  `kernel.runDueJobs` (call from a cron — `kernel jobs:run`). */
   jobs?: JobDefinition[]
+  /** Custom HTTP endpoints that extend the auto-generated REST surface. Each runs
+   *  through the same access + validation + error pipeline. Define with
+   *  `defineEndpoint(...)`; bundle several (plus collections/jobs) with
+   *  `defineModule(...)`. */
+  endpoints?: EndpointConfig[]
   /** OAuth sign-in providers (e.g. `googleOAuth(...)`). Complete sign-in with
    *  `kernel.loginWithOAuth`; the built-in server exposes start + callback routes. */
   oauth?: OAuthProvider[]
@@ -471,6 +476,8 @@ export interface SanitizedConfig {
   email?: EmailAdapter
   /** Registered background-job handlers. */
   jobs?: JobDefinition[]
+  /** Registered custom HTTP endpoints. */
+  endpoints?: EndpointConfig[]
   /** Registered OAuth providers. */
   oauth?: OAuthProvider[]
   /** Whether the admin shows the "Powered by KernelCMS" credit. */
@@ -700,6 +707,67 @@ export interface JobDefinition {
   handler: (ctx: JobRunContext) => Promise<unknown> | unknown
   /** Max attempts before the job is marked failed. Default 3. */
   maxAttempts?: number
+}
+
+// ---------------------------------------------------------------------------
+// Custom endpoints
+//
+// Typed, validated, access-controlled HTTP handlers that extend the auto-
+// generated REST surface. The building block of "build what you want": a
+// module/plugin ships its own endpoints alongside its collections, and they
+// flow through the same access, validation, and error pipeline as core routes.
+// ---------------------------------------------------------------------------
+
+/** A structural validator (Zod-compatible). Anything with `parse(value) => T`
+ *  works, so core needs no Zod dependency yet Zod schemas drop straight in. */
+export interface Parser<T> {
+  parse: (value: unknown) => T
+}
+
+export type EndpointMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
+
+/** Per-part input validators. Each is optional; the handler receives the parsed,
+ *  typed value for those provided (and `undefined` for those omitted). A parse
+ *  failure becomes a ValidationError carried by the standard error envelope. */
+export interface EndpointInput<P = unknown, Q = unknown, B = unknown> {
+  params?: Parser<P>
+  query?: Parser<Q>
+  body?: Parser<B>
+}
+
+export interface EndpointContext<TUser extends AuthUser = AuthUser> {
+  /** Request context (user, locale, per-request data). */
+  req: RequestContext<TUser>
+  /** The authenticated user, or null. Shorthand for `req.user`. */
+  user: TUser | null
+  /** The in-process Local API — run typed operations from the handler. */
+  local: Kernel
+  /** Request-scoped logger. */
+  logger: Logger
+  /** The raw web-standard Request, for headers / streaming / advanced cases. */
+  request: Request
+}
+
+export interface EndpointHandlerArgs<P = unknown, Q = unknown, B = unknown, TUser extends AuthUser = AuthUser> {
+  /** Parsed, typed input. Parts without a validator are `undefined`. */
+  input: { params: P; query: Q; body: B }
+  ctx: EndpointContext<TUser>
+}
+
+export interface EndpointConfig<P = unknown, Q = unknown, B = unknown, R = unknown, TUser extends AuthUser = AuthUser> {
+  method: EndpointMethod
+  /** Path relative to the API base, with `:param` segments, e.g. `/comments/:postId`. */
+  path: string
+  /** Input validators; omitted parts pass through as `undefined`. */
+  input?: EndpointInput<P, Q, B>
+  /** Authorization. Defaults to authenticated-only (secure by default). Return
+   *  `false` (or throw a KernelError) to deny. */
+  access?: (args: { req: RequestContext<TUser>; request: Request }) => boolean | Promise<boolean>
+  /** The handler. Return JSON-serializable data (sent as 200) or a `Response`. */
+  handler: (args: EndpointHandlerArgs<P, Q, B, TUser>) => R | Promise<R>
+  /** Optional summary + tags surfaced in generated OpenAPI docs. */
+  summary?: string
+  tags?: string[]
 }
 
 export interface EnqueueOptions {

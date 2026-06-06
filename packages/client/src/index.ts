@@ -59,6 +59,26 @@ function buildSearch(query: FindQuery | ByIdQuery | undefined): string {
   return qs ? `?${qs}` : ''
 }
 
+/** Serialize an arbitrary query map (objects/arrays become JSON) for an endpoint. */
+function buildQuery(query: Record<string, unknown> | undefined): string {
+  if (!query) return ''
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null) continue
+    params.set(key, typeof value === 'string' ? value : JSON.stringify(value))
+  }
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+}
+
+/** Call a custom endpoint (`config.endpoints`). `:param` placeholders in `path`
+ *  are filled from `params`; `query` is appended; `body` is JSON-encoded. */
+export interface EndpointCall {
+  params?: Record<string, string | number>
+  query?: Record<string, unknown>
+  body?: unknown
+}
+
 export interface KernelClient {
   find: <T extends Row = Row>(collection: string, query?: FindQuery) => Promise<PaginatedResult<T>>
   findByID: <T extends Row = Row>(collection: string, id: string, query?: ByIdQuery) => Promise<T>
@@ -67,6 +87,12 @@ export interface KernelClient {
   remove: <T extends Row = Row>(collection: string, id: string) => Promise<T>
   findGlobal: <T extends Row = Row>(slug: string, query?: ByIdQuery) => Promise<T>
   updateGlobal: <T extends Row = Row>(slug: string, data: Row) => Promise<T>
+  /** Call a custom endpoint by method + path template. */
+  endpoint: <TResponse = unknown>(
+    method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+    path: string,
+    call?: EndpointCall,
+  ) => Promise<TResponse>
   health: () => Promise<{ status: string; db: { status: string } }>
 }
 
@@ -75,7 +101,7 @@ export function createClient(options: ClientOptions): KernelClient {
   const apiRoute = options.apiRoute ?? '/api'
   const root = options.baseURL.replace(/\/$/, '') + apiRoute
 
-  async function request<T>(method: string, path: string, body?: Row): Promise<T> {
+  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = { 'content-type': 'application/json', ...options.headers }
     const bearer = options.token ?? options.apiKey
     if (bearer) headers.authorization = `Bearer ${bearer}`
@@ -103,6 +129,15 @@ export function createClient(options: ClientOptions): KernelClient {
     remove: (collection, id) => request('DELETE', `/${collection}/${id}`),
     findGlobal: (slug, query) => request('GET', `/globals/${slug}${buildSearch(query)}`),
     updateGlobal: (slug, data) => request('POST', `/globals/${slug}`, data),
+    endpoint: (method, path, call) => {
+      let resolved = path
+      if (call?.params) {
+        for (const [key, value] of Object.entries(call.params)) {
+          resolved = resolved.replace(`:${key}`, encodeURIComponent(String(value)))
+        }
+      }
+      return request(method, `${resolved}${buildQuery(call?.query)}`, call?.body)
+    },
     health: () => request('GET', '/health'),
   }
 }
