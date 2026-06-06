@@ -1,0 +1,54 @@
+name: Bug report
+description: Something is not working as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for filing a bug. Please fill in as much as you can.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, config snippet, or a repo link that reproduces it.
+      placeholder: |
+        1. Configure a collection like ...
+        2. Call ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: KernelCMS version
+      placeholder: e.g. 0.0.0 or a commit SHA
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Node version and OS
+      placeholder: e.g. Node 24.4.0 on macOS 15
+    validations:
+      required: true
+  - type: dropdown
+    id: adapters
+    attributes:
+      label: Database adapter
+      options:
+        - SQLite
+        - PostgreSQL
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      render: shell

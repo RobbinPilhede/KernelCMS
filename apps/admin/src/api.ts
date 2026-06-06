@@ -202,7 +202,11 @@ export async function setupAdmin(email: string, password: string): Promise<{ tok
   return result
 }
 
-export async function login(collection: string, email: string, password: string): Promise<{ token: string; user: Doc }> {
+export async function login(
+  collection: string,
+  email: string,
+  password: string,
+): Promise<{ token: string; user: Doc }> {
   const result = await req<{ token: string; user: Doc }>('POST', `/${collection}/login`, { email, password })
   setToken(result.token)
   return result
@@ -302,7 +306,11 @@ export interface VersionEntry {
   updatedAt: string
 }
 
-export const listVersions = (slug: string, id: string, params: { page?: number; limit?: number } = {}): Promise<Paginated<VersionEntry>> => {
+export const listVersions = (
+  slug: string,
+  id: string,
+  params: { page?: number; limit?: number } = {},
+): Promise<Paginated<VersionEntry>> => {
   const q = new URLSearchParams()
   if (params.page) q.set('page', String(params.page))
   q.set('limit', String(params.limit ?? 20))

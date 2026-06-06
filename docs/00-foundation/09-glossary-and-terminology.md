@@ -6,7 +6,7 @@ The terms are grouped by the layer they belong to: the content model (collection
 
 ## Content model: collections, globals, fields
 
-These three nouns define *what content exists*. They are declared in code in `kernel.config.ts` and are the single source of truth — the database schema, REST routes, GraphQL types, RPC functions, and admin UI are all derived from them. This is config-as-code, the same stance Payload takes and the opposite of Strapi, where the content model lives in a database-backed admin UI and your code reacts to it.
+These three nouns define _what content exists_. They are declared in code in `kernel.config.ts` and are the single source of truth — the database schema, REST routes, GraphQL types, RPC functions, and admin UI are all derived from them. This is config-as-code, the same stance Payload takes and the opposite of Strapi, where the content model lives in a database-backed admin UI and your code reacts to it.
 
 ### Collection
 
@@ -33,7 +33,7 @@ export const Posts = defineCollection({
 })
 ```
 
-A collection maps to one table in the SQL adapters (plus side tables for arrays, blocks, localized fields, and versions) or one collection in the MongoDB adapter. The list view in the admin is a TanStack Table bound to that collection; the edit view is a TanStack Form. Terminology note: Payload and KernelCMS both say "collection"; Sanity calls the equivalent a *document type*; Strapi calls it a *collection type*. They are the same concept.
+A collection maps to one table in the SQL adapters (plus side tables for arrays, blocks, localized fields, and versions) or one collection in the MongoDB adapter. The list view in the admin is a TanStack Table bound to that collection; the edit view is a TanStack Form. Terminology note: Payload and KernelCMS both say "collection"; Sanity calls the equivalent a _document type_; Strapi calls it a _collection type_. They are the same concept.
 
 ### Global
 
@@ -58,20 +58,20 @@ export const Navigation = defineGlobal({
 })
 ```
 
-Payload uses "global" identically. Sanity models singletons as a normal document with a fixed, well-known `_id` and a structure-builder convention — there is no first-class singleton primitive. Strapi calls these *single types*. KernelCMS makes the global a real first-class object so access control and the API shape are explicit rather than conventional.
+Payload uses "global" identically. Sanity models singletons as a normal document with a fixed, well-known `_id` and a structure-builder convention — there is no first-class singleton primitive. Strapi calls these _single types_. KernelCMS makes the global a real first-class object so access control and the API shape are explicit rather than conventional.
 
 ### Field
 
 A **field** is one typed unit of content inside a collection or global. Fields are the atoms of the content model. Every field has a `type`; most have a `name` (the key it serializes to). The full set of built-in types:
 
-| Category | Types |
-| --- | --- |
-| Scalars | `text`, `textarea`, `number`, `boolean`, `date`, `email`, `json`, `code`, `point` |
-| Choice | `select`, `radio`, `checkbox` |
-| References | `relationship`, `upload` |
-| Composite | `array`, `blocks`, `group`, `tabs`, `row` |
-| Rich content | `richText` |
-| Presentational | `ui` |
+| Category       | Types                                                                             |
+| -------------- | --------------------------------------------------------------------------------- |
+| Scalars        | `text`, `textarea`, `number`, `boolean`, `date`, `email`, `json`, `code`, `point` |
+| Choice         | `select`, `radio`, `checkbox`                                                     |
+| References     | `relationship`, `upload`                                                          |
+| Composite      | `array`, `blocks`, `group`, `tabs`, `row`                                         |
+| Rich content   | `richText`                                                                        |
+| Presentational | `ui`                                                                              |
 
 Composite fields nest other fields, so the model is a tree, not a flat row. `array` is an ordered list of a fixed sub-schema; `blocks` is an ordered list where each entry picks from a set of named block schemas (the backbone of page-builder layouts); `group` namespaces fields under one key; `tabs` and `row` are layout-only in the admin and don't change the data shape. `ui` renders a custom admin component (a banner, a computed read-out) and stores nothing. Fields carry their own validation (sync, async, cross-field), access control (`field.access.read` / `update`), localization (`localized: true`), default values, and admin hints. You can register **custom field types** through `@kernel/plugin-sdk` when the built-ins aren't enough.
 
@@ -119,14 +119,14 @@ A **hook** is a function you register that runs at a defined point in an operati
 
 Hooks fire at three scopes — operation, collection/global, and field — and at defined phases within the lifecycle:
 
-| Phase | Fires | Typical use |
-| --- | --- | --- |
-| `beforeValidate` | before field validation | normalize, coerce, set computed inputs |
-| `beforeChange` | after validation, before write | enforce invariants, derive fields |
-| `afterChange` | after a successful write | webhooks, cache bust, search reindex |
-| `beforeRead` | before a doc leaves the server | redact, shape per-user |
-| `afterRead` | after read, before response | join external data, format |
-| `beforeDelete` / `afterDelete` | around deletes | cascade, cleanup storage |
+| Phase                          | Fires                          | Typical use                            |
+| ------------------------------ | ------------------------------ | -------------------------------------- |
+| `beforeValidate`               | before field validation        | normalize, coerce, set computed inputs |
+| `beforeChange`                 | after validation, before write | enforce invariants, derive fields      |
+| `afterChange`                  | after a successful write       | webhooks, cache bust, search reindex   |
+| `beforeRead`                   | before a doc leaves the server | redact, shape per-user                 |
+| `afterRead`                    | after read, before response    | join external data, format             |
+| `beforeDelete` / `afterDelete` | around deletes                 | cascade, cleanup storage               |
 
 ```ts
 import { defineCollection } from '@kernel/core'
@@ -134,22 +134,22 @@ import { defineCollection } from '@kernel/core'
 export const Posts = defineCollection({
   slug: 'posts',
   hooks: {
-    beforeChange: [
-      ({ data }) => ({ ...data, slug: data.slug ?? slugify(data.title) }),
-    ],
+    beforeChange: [({ data }) => ({ ...data, slug: data.slug ?? slugify(data.title) })],
     afterChange: [
       async ({ doc, operation, req }) => {
         if (operation === 'create') await req.queue.enqueue('index-post', { id: doc.id })
       },
     ],
   },
-  fields: [/* ... */],
+  fields: [
+    /* ... */
+  ],
 })
 ```
 
 Hooks run identically whether the operation came in over REST, GraphQL, RPC, or the in-process Local API — the lifecycle is owned by the operation core in `@kernel/server`, not by any transport. That single-core guarantee is the point: there is no way to "go around" a hook by choosing a different API surface, which is a real failure mode in setups where each surface has its own pipeline.
 
-Payload's hook model is the closest analogue and the vocabulary is intentionally aligned. Sanity has no server-side document lifecycle hooks of this kind — its equivalent is GROQ-driven functions and webhooks, which run *after* the fact rather than *in* the write path. Strapi has lifecycle hooks but they sit at the ORM layer and don't span all API surfaces uniformly. See 04-operations/03-hooks.md.
+Payload's hook model is the closest analogue and the vocabulary is intentionally aligned. Sanity has no server-side document lifecycle hooks of this kind — its equivalent is GROQ-driven functions and webhooks, which run _after_ the fact rather than _in_ the write path. Strapi has lifecycle hooks but they sit at the ORM layer and don't span all API surfaces uniformly. See 04-operations/03-hooks.md.
 
 ## Draft and version
 
@@ -157,7 +157,7 @@ These two terms describe editorial state over time. They are related but distinc
 
 A **version** is an immutable snapshot of a document at a point in time. Every save can produce a version; autosave produces them continuously while editing. Version history lets editors compare, audit, and restore. Versions are stored in a side table (`_<slug>_versions`) or sub-collection and are governed per collection via `versions: { maxPerDocument, autosave }`.
 
-A **draft** is a *non-published* version. When drafts are enabled, every document has a publish status. Saving creates or updates the draft; **publishing** promotes the current draft to the live, public document. Public read operations return the published version by default; editors fetch the draft explicitly with `draft: true`.
+A **draft** is a _non-published_ version. When drafts are enabled, every document has a publish status. Saving creates or updates the draft; **publishing** promotes the current draft to the live, public document. Public read operations return the published version by default; editors fetch the draft explicitly with `draft: true`.
 
 ```
 edit ─▶ draft v5 ─┐
@@ -183,7 +183,7 @@ These are the two units of isolation, and they live at different altitudes.
 
 A **project** is one KernelCMS instance: one `kernel.config.ts`, one set of collections and globals, one database, one admin panel. When you self-host, you run a project. It is the boundary of a content model and its data. Most teams have one project per application (a marketing site, a docs site, a product catalog) and deploy each independently via Docker, Compose, or Kubernetes.
 
-A **tenant** is an isolated slice of data *within a deployment that serves many customers* — the multi-tenancy unit used primarily by KernelCMS Cloud. Cloud is multi-tenant hosting: many customers' projects run on shared infrastructure, and the tenant is what keeps customer A's documents, media, and users invisible to customer B. Isolation is enforced server-side at the operation core, below the API surface, so it cannot be bypassed by crafting a query.
+A **tenant** is an isolated slice of data _within a deployment that serves many customers_ — the multi-tenancy unit used primarily by KernelCMS Cloud. Cloud is multi-tenant hosting: many customers' projects run on shared infrastructure, and the tenant is what keeps customer A's documents, media, and users invisible to customer B. Isolation is enforced server-side at the operation core, below the API surface, so it cannot be bypassed by crafting a query.
 
 ```
 KernelCMS Cloud (multi-tenant deployment)
@@ -194,7 +194,7 @@ KernelCMS Cloud (multi-tenant deployment)
     └── projects: [docs, blog]
 ```
 
-The mental model: **a project is what you model and deploy; a tenant is who owns a project on shared infrastructure.** Self-hosting, you mostly think in projects and may never touch tenancy. On Cloud, tenancy is the billing, quota, and isolation boundary wrapped around your projects. Because content and config are portable, the same project moves between self-host and Cloud unchanged — only the surrounding tenancy and infra differ. Strapi and Payload are project-centric and treat multi-tenancy as an application-level concern you build yourself; Sanity's *project* + *dataset* model is the closest hosted analogue, where a dataset roughly maps to our project boundary and the Sanity project/organization maps to our tenant. See [09-cloud/02-multi-tenancy.md](../10-cloud-operations/03-multi-tenancy-and-isolation.md).
+The mental model: **a project is what you model and deploy; a tenant is who owns a project on shared infrastructure.** Self-hosting, you mostly think in projects and may never touch tenancy. On Cloud, tenancy is the billing, quota, and isolation boundary wrapped around your projects. Because content and config are portable, the same project moves between self-host and Cloud unchanged — only the surrounding tenancy and infra differ. Strapi and Payload are project-centric and treat multi-tenancy as an application-level concern you build yourself; Sanity's _project_ + _dataset_ model is the closest hosted analogue, where a dataset roughly maps to our project boundary and the Sanity project/organization maps to our tenant. See [09-cloud/02-multi-tenancy.md](../10-cloud-operations/03-multi-tenancy-and-isolation.md).
 
 ## Open questions
 

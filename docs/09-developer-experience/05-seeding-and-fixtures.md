@@ -121,23 +121,19 @@ export const draftPost = defineFixture('posts', {
 
 The loader topologically sorts fixtures by their `ref()` edges, so you never hand-order inserts. This is the sharp edge Strapi leaves exposed — its fixture/bootstrap scripts make you create the author before the post manually and track the returned IDs yourself.
 
-| Concern | Seed | Fixture |
-| --- | --- | --- |
-| Shape | imperative function | declarative data |
-| Primary use | dev DB, demos, load tests | tests, deterministic graphs |
-| References | you wire IDs | `ref()` resolved automatically |
-| Volume | hundreds–millions | a handful per test |
-| Determinism | RNG-seeded faker | fully static |
+| Concern     | Seed                      | Fixture                        |
+| ----------- | ------------------------- | ------------------------------ |
+| Shape       | imperative function       | declarative data               |
+| Primary use | dev DB, demos, load tests | tests, deterministic graphs    |
+| References  | you wire IDs              | `ref()` resolved automatically |
+| Volume      | hundreds–millions         | a handful per test             |
+| Determinism | RNG-seeded faker          | fully static                   |
 
 ```typescript
 // in a test
 import { loadFixtures } from '@kernel/core/testing'
 
-const { publishedPost, draftPost } = await loadFixtures([
-  'users.editor',
-  'posts.publishedPost',
-  'posts.draftPost',
-])
+const { publishedPost, draftPost } = await loadFixtures(['users.editor', 'posts.publishedPost', 'posts.draftPost'])
 ```
 
 ## Factory helpers
@@ -189,23 +185,23 @@ Deterministic tests need a clean database per test or per file. KernelCMS expose
 import { reset, snapshot } from '@kernel/core/testing'
 
 beforeAll(async () => {
-  await reset()                          // clean slate
-  await loadFixtures(['users.editor'])   // expensive shared setup
-  await snapshot.capture('baseline')     // freeze it
+  await reset() // clean slate
+  await loadFixtures(['users.editor']) // expensive shared setup
+  await snapshot.capture('baseline') // freeze it
 })
 
 beforeEach(async () => {
-  await snapshot.restore('baseline')     // roll back to frozen state
+  await snapshot.restore('baseline') // roll back to frozen state
 })
 ```
 
 The Adapter contract requires three methods so every backend behaves identically:
 
-| Method | Postgres / MySQL | SQLite / libSQL | MongoDB |
-| --- | --- | --- | --- |
-| `reset()` | `TRUNCATE ... RESTART IDENTITY CASCADE` | `DELETE FROM` + reset `sqlite_sequence` | `deleteMany({})` per collection |
-| `snapshot.capture()` | `pg_dump` to temp / template DB | file copy of the `.db` | `mongodump` / collection clone |
-| `snapshot.restore()` | restore from template | swap file back | `mongorestore` / clone back |
+| Method               | Postgres / MySQL                        | SQLite / libSQL                         | MongoDB                         |
+| -------------------- | --------------------------------------- | --------------------------------------- | ------------------------------- |
+| `reset()`            | `TRUNCATE ... RESTART IDENTITY CASCADE` | `DELETE FROM` + reset `sqlite_sequence` | `deleteMany({})` per collection |
+| `snapshot.capture()` | `pg_dump` to temp / template DB         | file copy of the `.db`                  | `mongodump` / collection clone  |
+| `snapshot.restore()` | restore from template                   | swap file back                          | `mongorestore` / clone back     |
 
 For the common SQLite-in-memory test setup, `snapshot.restore` is a buffer copy and runs in microseconds — the reason we default the test adapter to `@kernel/db-sqlite` with `:memory:`. Postgres integration suites use the template-database trick (`CREATE DATABASE ... TEMPLATE baseline`) so restore is a metadata operation, not a re-import.
 

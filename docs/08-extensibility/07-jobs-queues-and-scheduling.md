@@ -23,17 +23,17 @@ import { z } from 'zod'
 
 export const generateThumbnails = defineJob({
   slug: 'generate-thumbnails',
-  queue: 'media',                 // logical queue name, mapped by the adapter
+  queue: 'media', // logical queue name, mapped by the adapter
   input: z.object({
     uploadId: z.string(),
     sizes: z.array(z.enum(['thumb', 'card', 'hero'])).default(['thumb']),
   }),
   retries: { attempts: 5, backoff: { type: 'exponential', delay: 2_000 } },
-  timeout: 60_000,                // ms; handler is aborted past this
+  timeout: 60_000, // ms; handler is aborted past this
   async handler({ input, kernel, signal, attempt, log }) {
     const upload = await kernel.findByID({ collection: 'media', id: input.uploadId })
     for (const size of input.sizes) {
-      if (signal.aborted) return  // cooperate with timeout/shutdown
+      if (signal.aborted) return // cooperate with timeout/shutdown
       await renderDerivative(upload, size)
       log.info('derivative.done', { size, attempt })
     }
@@ -43,20 +43,22 @@ export const generateThumbnails = defineJob({
 export default defineConfig({
   jobs: {
     tasks: [generateThumbnails],
-    queue: postgresQueue({ /* … */ }),  // default adapter for all queues
+    queue: postgresQueue({
+      /* … */
+    }), // default adapter for all queues
   },
 })
 ```
 
 Key properties of a job definition:
 
-| Field | Meaning |
-| --- | --- |
-| `slug` | Stable identifier; used in logs, the admin UI, and `kernel.jobs.enqueue`. |
-| `queue` | Logical queue name. The adapter maps it to a real queue/topic/table partition. |
-| `input` | Zod (or any Standard Schema) shape. Payloads are validated on enqueue **and** on dequeue. |
-| `retries` | Attempt count and backoff strategy (see below). |
-| `timeout` | Per-attempt wall-clock budget. On expiry the `signal` aborts and the attempt fails. |
+| Field     | Meaning                                                                                               |
+| --------- | ----------------------------------------------------------------------------------------------------- |
+| `slug`    | Stable identifier; used in logs, the admin UI, and `kernel.jobs.enqueue`.                             |
+| `queue`   | Logical queue name. The adapter maps it to a real queue/topic/table partition.                        |
+| `input`   | Zod (or any Standard Schema) shape. Payloads are validated on enqueue **and** on dequeue.             |
+| `retries` | Attempt count and backoff strategy (see below).                                                       |
+| `timeout` | Per-attempt wall-clock budget. On expiry the `signal` aborts and the attempt fails.                   |
 | `handler` | Receives `{ input, kernel, signal, attempt, log, job }`. Idempotency is the handler's responsibility. |
 
 Enqueue from anywhere with full inference — the `input` argument is typed from the job's schema, so a typo or wrong shape is a compile error:
@@ -65,9 +67,9 @@ Enqueue from anywhere with full inference — the `input` argument is typed from
 // inside a hook, server function, or another job
 await kernel.jobs.enqueue(generateThumbnails, {
   input: { uploadId: doc.id, sizes: ['thumb', 'hero'] },
-  delay: 5_000,           // optional: schedule for the future
-  priority: 10,           // higher runs first within a queue
-  dedupeKey: doc.id,      // collapse duplicate enqueues
+  delay: 5_000, // optional: schedule for the future
+  priority: 10, // higher runs first within a queue
+  dedupeKey: doc.id, // collapse duplicate enqueues
 })
 ```
 
@@ -118,13 +120,13 @@ producer ──enqueue──▶ [ queue adapter ]
 
 Officially supported adapters:
 
-| Adapter | Package | Backing store | Best for |
-| --- | --- | --- | --- |
-| `inMemoryQueue` | `@kernel/core` | process memory | dev, tests, single-process edge |
-| `postgresQueue` | `@kernel/db-postgres` | `SELECT … FOR UPDATE SKIP LOCKED` | self-host, "one less service" |
-| `redisQueue` | `@kernel/queue-redis` | Redis streams | high throughput, low latency |
-| `sqsQueue` | `@kernel/queue-sqs` | Amazon SQS + DynamoDB | serverless/edge fan-out |
-| Cloud-managed | `@kernel/cloud` | managed | KernelCMS Cloud tenants |
+| Adapter         | Package               | Backing store                     | Best for                        |
+| --------------- | --------------------- | --------------------------------- | ------------------------------- |
+| `inMemoryQueue` | `@kernel/core`        | process memory                    | dev, tests, single-process edge |
+| `postgresQueue` | `@kernel/db-postgres` | `SELECT … FOR UPDATE SKIP LOCKED` | self-host, "one less service"   |
+| `redisQueue`    | `@kernel/queue-redis` | Redis streams                     | high throughput, low latency    |
+| `sqsQueue`      | `@kernel/queue-sqs`   | Amazon SQS + DynamoDB             | serverless/edge fan-out         |
+| Cloud-managed   | `@kernel/cloud`       | managed                           | KernelCMS Cloud tenants         |
 
 The Postgres adapter is the default and the differentiator. Like Payload it can run jobs on your existing database — no Redis required — but unlike Payload it uses `FOR UPDATE SKIP LOCKED` for contention-free multi-worker claims, exposes a real adapter seam so you can graduate to Redis or SQS without touching a single job handler, and persists scheduled and failed jobs in queryable tables surfaced in the admin panel.
 
@@ -145,9 +147,7 @@ Failure is the normal case for background work — a downstream API rate-limits 
 Two strategies ship in `@kernel/core`:
 
 ```ts
-type Backoff =
-  | { type: 'fixed'; delay: number }
-  | { type: 'exponential'; delay: number; max?: number; jitter?: boolean }
+type Backoff = { type: 'fixed'; delay: number } | { type: 'exponential'; delay: number; max?: number; jitter?: boolean }
 ```
 
 `exponential` computes `delay * 2 ** (attempt - 1)`, capped at `max`, with full jitter on by default to avoid thundering-herd retries. Attempt 1 is the initial run; `attempts: 5` means up to four retries.
@@ -187,11 +187,13 @@ Cron is declared in config, next to the job it triggers. There is no separate sc
 export default defineConfig({
   jobs: {
     tasks: [publishScheduled, pruneVersions],
-    queue: postgresQueue({ /* … */ }),
+    queue: postgresQueue({
+      /* … */
+    }),
     schedules: [
-      { job: publishScheduled, cron: '* * * * *', queue: 'default' },        // every minute
-      { job: pruneVersions,    cron: '0 3 * * *', tz: 'UTC' },               // 03:00 daily
-      { job: rebuildSitemap,   cron: '@hourly',   dedupeKey: 'sitemap' },
+      { job: publishScheduled, cron: '* * * * *', queue: 'default' }, // every minute
+      { job: pruneVersions, cron: '0 3 * * *', tz: 'UTC' }, // 03:00 daily
+      { job: rebuildSitemap, cron: '@hourly', dedupeKey: 'sitemap' },
     ],
   },
 })

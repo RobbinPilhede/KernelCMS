@@ -44,14 +44,14 @@ The defining strength is the Local API: the same operation core the REST and Gra
 
 The table below frames where each incumbent sits.
 
-| Capability            | Payload            | Sanity              | Strapi              | KernelCMS                          |
-| --------------------- | ------------------ | ------------------- | ------------------- | ---------------------------------- |
-| Config-as-code        | Yes                | Schema in JS, content hosted | Partial (UI + code) | Yes (`kernel.config.ts`)           |
-| Typed in-process API  | Local API          | Client only         | No                  | Local/RPC API                      |
-| Server framework      | Next.js (locked)   | Custom + hosted     | Koa                 | TanStack Start                     |
-| Default ORM           | Drizzle / Mongoose | Proprietary         | Knex                | Drizzle (`@kernel/db`)             |
-| Swappable infra adapters | DB only         | None                | DB + upload         | DB, storage, auth, email, search, cache, queue |
-| Hosted option         | Payload Cloud      | Sanity (default)    | Strapi Cloud        | KernelCMS Cloud (portable)         |
+| Capability               | Payload            | Sanity                       | Strapi              | KernelCMS                                      |
+| ------------------------ | ------------------ | ---------------------------- | ------------------- | ---------------------------------------------- |
+| Config-as-code           | Yes                | Schema in JS, content hosted | Partial (UI + code) | Yes (`kernel.config.ts`)                       |
+| Typed in-process API     | Local API          | Client only                  | No                  | Local/RPC API                                  |
+| Server framework         | Next.js (locked)   | Custom + hosted              | Koa                 | TanStack Start                                 |
+| Default ORM              | Drizzle / Mongoose | Proprietary                  | Knex                | Drizzle (`@kernel/db`)                         |
+| Swappable infra adapters | DB only            | None                         | DB + upload         | DB, storage, auth, email, search, cache, queue |
+| Hosted option            | Payload Cloud      | Sanity (default)             | Strapi Cloud        | KernelCMS Cloud (portable)                     |
 
 ## Weaknesses and gaps
 
@@ -90,17 +90,17 @@ Swapping SQLite for Postgres, or local disk for S3, is a one-line change. Nothin
 
 We are deliberate about borrowing what Payload got right and discarding what it got wrong.
 
-| Decision                         | Payload                          | KernelCMS                                              | Verdict |
-| -------------------------------- | -------------------------------- | ------------------------------------------------------ | ------- |
-| Config-as-code single source     | `payload.config.ts`              | `kernel.config.ts`, same principle                     | Adopt   |
-| Typed in-process operation core  | Local API                        | Local/RPC API over TanStack Start server functions     | Adopt + extend |
-| Operation/document/field access  | Access functions                 | Same three-level model, evaluated server-side          | Adopt   |
-| Field types and hooks            | Rich field set + hook pipeline   | Matched field set, equivalent hook pipeline            | Match   |
-| Server framework                 | Next.js App Router (locked)      | TanStack Start, router-first                            | Beat    |
-| Infra adapters                   | DB + storage plugin              | DB, storage, auth, email, search, cache, queue         | Beat    |
-| Rich text                        | Forked Lexical integration       | `@kernel/richtext` block model + converters            | Beat    |
-| Reactive client collections      | None                             | TanStack DB via `@kernel/client`                       | Beat    |
-| Hosting portability              | Payload Cloud (some lock-in)     | KernelCMS Cloud, content/config portable both ways     | Beat    |
+| Decision                        | Payload                        | KernelCMS                                          | Verdict        |
+| ------------------------------- | ------------------------------ | -------------------------------------------------- | -------------- |
+| Config-as-code single source    | `payload.config.ts`            | `kernel.config.ts`, same principle                 | Adopt          |
+| Typed in-process operation core | Local API                      | Local/RPC API over TanStack Start server functions | Adopt + extend |
+| Operation/document/field access | Access functions               | Same three-level model, evaluated server-side      | Adopt          |
+| Field types and hooks           | Rich field set + hook pipeline | Matched field set, equivalent hook pipeline        | Match          |
+| Server framework                | Next.js App Router (locked)    | TanStack Start, router-first                       | Beat           |
+| Infra adapters                  | DB + storage plugin            | DB, storage, auth, email, search, cache, queue     | Beat           |
+| Rich text                       | Forked Lexical integration     | `@kernel/richtext` block model + converters        | Beat           |
+| Reactive client collections     | None                           | TanStack DB via `@kernel/client`                   | Beat           |
+| Hosting portability             | Payload Cloud (some lock-in)   | KernelCMS Cloud, content/config portable both ways | Beat           |
 
 **Adopt:** the config-as-code thesis, the Local API as the operation core, the three-level access model, and Drizzle as the default SQL ORM. These are correct and we will not reinvent them.
 

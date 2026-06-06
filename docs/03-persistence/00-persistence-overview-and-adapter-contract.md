@@ -9,25 +9,25 @@ The `Adapter` interface lives in [`@kernel/db`](../01-architecture/adr/0002-driz
 ```ts
 // @kernel/db
 export interface Adapter {
-  readonly capabilities: AdapterCapabilities;
+  readonly capabilities: AdapterCapabilities
 
-  init(ctx: AdapterInitContext): Promise<void>;
-  destroy(): Promise<void>;
+  init(ctx: AdapterInitContext): Promise<void>
+  destroy(): Promise<void>
 
-  find<T>(args: FindArgs): Promise<PaginatedResult<T>>;
-  findOne<T>(args: FindOneArgs): Promise<T | null>;
-  create<T>(args: CreateArgs): Promise<T>;
-  update<T>(args: UpdateArgs): Promise<T>;
-  updateMany<T>(args: UpdateManyArgs): Promise<BulkResult>;
-  delete<T>(args: DeleteArgs): Promise<T>;
-  deleteMany(args: DeleteManyArgs): Promise<BulkResult>;
-  count(args: CountArgs): Promise<number>;
+  find<T>(args: FindArgs): Promise<PaginatedResult<T>>
+  findOne<T>(args: FindOneArgs): Promise<T | null>
+  create<T>(args: CreateArgs): Promise<T>
+  update<T>(args: UpdateArgs): Promise<T>
+  updateMany<T>(args: UpdateManyArgs): Promise<BulkResult>
+  delete<T>(args: DeleteArgs): Promise<T>
+  deleteMany(args: DeleteManyArgs): Promise<BulkResult>
+  count(args: CountArgs): Promise<number>
 
-  transaction<R>(fn: (tx: Adapter) => Promise<R>): Promise<R>;
+  transaction<R>(fn: (tx: Adapter) => Promise<R>): Promise<R>
 
   // Schema lifecycle
-  diff(schema: KernelSchema): Promise<MigrationPlan>;
-  migrate(plan: MigrationPlan): Promise<void>;
+  diff(schema: KernelSchema): Promise<MigrationPlan>
+  migrate(plan: MigrationPlan): Promise<void>
 }
 ```
 
@@ -37,13 +37,13 @@ Two design rules are non-negotiable. First, **every method is async and returns 
 
 The four CRUD operations share a common argument envelope so the operation core can treat them uniformly.
 
-| Method | Required args | Returns | Notes |
-| --- | --- | --- | --- |
-| `find` | `collection`, `where`, `sort`, `limit`, `page` | `PaginatedResult<T>` | Returns `docs`, `totalDocs`, `page`, `hasNextPage`. Cursor pagination optional via `capabilities.cursorPagination`. |
-| `findOne` | `collection`, `where` | `T \| null` | Convenience path; adapters may special-case lookup by primary key. |
-| `create` | `collection`, `data` | `T` | Returns the persisted row including DB-generated id, timestamps. |
-| `update` | `collection`, `id` \| `where`, `data` | `T` | Single-document update by id, or first-match by where. |
-| `delete` | `collection`, `id` \| `where` | `T` | Returns the deleted document so hooks can fire on the snapshot. |
+| Method    | Required args                                  | Returns              | Notes                                                                                                               |
+| --------- | ---------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `find`    | `collection`, `where`, `sort`, `limit`, `page` | `PaginatedResult<T>` | Returns `docs`, `totalDocs`, `page`, `hasNextPage`. Cursor pagination optional via `capabilities.cursorPagination`. |
+| `findOne` | `collection`, `where`                          | `T \| null`          | Convenience path; adapters may special-case lookup by primary key.                                                  |
+| `create`  | `collection`, `data`                           | `T`                  | Returns the persisted row including DB-generated id, timestamps.                                                    |
+| `update`  | `collection`, `id` \| `where`, `data`          | `T`                  | Single-document update by id, or first-match by where.                                                              |
+| `delete`  | `collection`, `id` \| `where`                  | `T`                  | Returns the deleted document so hooks can fire on the snapshot.                                                     |
 
 The adapter does **not** see field-level access rules or `beforeChange` hooks — those run in `@kernel/server`. By the time `create` is called, `data` is already validated and access-filtered. This keeps adapters honest: they persist exactly what they are given.
 
@@ -57,7 +57,7 @@ await adapter.find({
   page: 1,
   locale: 'en',
   depth: 1, // relationship population requested
-});
+})
 ```
 
 ### Transactions
@@ -80,27 +80,27 @@ No two databases are equal, and pretending otherwise produces leaky abstractions
 
 ```ts
 export interface AdapterCapabilities {
-  transactions: boolean;        // real ACID transactions
-  nestedTransactions: boolean;  // savepoints
-  jsonQueries: boolean;         // query inside json/jsonb columns
-  fullTextSearch: boolean;      // native FTS operator support
-  geoQueries: boolean;          // 'point' field near/within
-  cursorPagination: boolean;    // keyset pagination
-  caseInsensitiveLike: boolean; // ilike / collation-driven
-  arrayContains: boolean;       // native array membership
-  returning: boolean;           // RETURNING / write-then-read in one round-trip
-  maxInClauseSize: number;      // batching threshold for `in`
+  transactions: boolean // real ACID transactions
+  nestedTransactions: boolean // savepoints
+  jsonQueries: boolean // query inside json/jsonb columns
+  fullTextSearch: boolean // native FTS operator support
+  geoQueries: boolean // 'point' field near/within
+  cursorPagination: boolean // keyset pagination
+  caseInsensitiveLike: boolean // ilike / collation-driven
+  arrayContains: boolean // native array membership
+  returning: boolean // RETURNING / write-then-read in one round-trip
+  maxInClauseSize: number // batching threshold for `in`
 }
 ```
 
-| Capability | postgres | sqlite | mysql | mongodb |
-| --- | --- | --- | --- | --- |
-| `transactions` | ✅ | ✅ | ✅ | ⚠️ replica set only |
-| `jsonQueries` | ✅ jsonb | ⚠️ json1 ext | ✅ | ✅ native |
-| `fullTextSearch` | ✅ tsvector | ⚠️ FTS5 | ✅ | ✅ text index |
-| `geoQueries` | ✅ PostGIS opt. | ❌ | ⚠️ | ✅ 2dsphere |
-| `returning` | ✅ | ✅ | ❌ | n/a |
-| `cursorPagination` | ✅ | ✅ | ✅ | ✅ |
+| Capability         | postgres        | sqlite       | mysql | mongodb             |
+| ------------------ | --------------- | ------------ | ----- | ------------------- |
+| `transactions`     | ✅              | ✅           | ✅    | ⚠️ replica set only |
+| `jsonQueries`      | ✅ jsonb        | ⚠️ json1 ext | ✅    | ✅ native           |
+| `fullTextSearch`   | ✅ tsvector     | ⚠️ FTS5      | ✅    | ✅ text index       |
+| `geoQueries`       | ✅ PostGIS opt. | ❌           | ⚠️    | ✅ 2dsphere         |
+| `returning`        | ✅              | ✅           | ❌    | n/a                 |
+| `cursorPagination` | ✅              | ✅           | ✅    | ✅                  |
 
 When a capability is missing, the core has a defined fallback: no native FTS means the `like` operator drives a degraded substring search and search-heavy installs are nudged toward a real search adapter; no `returning` means MySQL does an insert followed by a keyed read inside the same transaction. The contract is that **a missing capability degrades gracefully — it never throws "unsupported."**
 
@@ -112,24 +112,31 @@ The AST is the lingua franca between the operation core and every adapter. It is
 export type WhereNode =
   | { and: WhereNode[] }
   | { or: WhereNode[] }
-  | { field: string; operator: Operator; value: unknown };
+  | { field: string; operator: Operator; value: unknown }
 
 export type Operator =
-  | 'equals' | 'not_equals'
-  | 'gt' | 'gte' | 'lt' | 'lte'
-  | 'in' | 'not_in'
-  | 'like' | 'contains'      // text
+  | 'equals'
+  | 'not_equals'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
+  | 'in'
+  | 'not_in'
+  | 'like'
+  | 'contains' // text
   | 'exists'
-  | 'near' | 'within';        // geo (point fields)
+  | 'near'
+  | 'within' // geo (point fields)
 
 export interface QueryAST {
-  collection: string;
-  where?: WhereNode;
-  sort: SortClause[];
-  pagination: { limit: number; page?: number; cursor?: string };
-  depth: number;     // relationship population levels
-  locale?: string;   // localized field resolution
-  select?: string[]; // projection
+  collection: string
+  where?: WhereNode
+  sort: SortClause[]
+  pagination: { limit: number; page?: number; cursor?: string }
+  depth: number // relationship population levels
+  locale?: string // localized field resolution
+  select?: string[] // projection
 }
 ```
 
@@ -152,8 +159,8 @@ A collection in `kernel.config.ts` is the source of truth. The SQL adapters comp
 
 ```ts
 // kernel.config.ts
-import { defineConfig, collection } from '@kernel/core';
-import { postgresAdapter } from '@kernel/db-postgres';
+import { defineConfig, collection } from '@kernel/core'
+import { postgresAdapter } from '@kernel/db-postgres'
 
 export default defineConfig({
   db: postgresAdapter({ connectionString: process.env.DATABASE_URL }),
@@ -171,22 +178,22 @@ export default defineConfig({
       versions: { drafts: true, autosave: true },
     }),
   ],
-});
+})
 ```
 
 The SQL mapping is opinionated and predictable:
 
-| Config construct | SQL physical model |
-| --- | --- |
-| `collection('posts', …)` | `posts` table, surrogate `id` + `createdAt`/`updatedAt` |
-| scalar field (`text`, `number`, `boolean`, `date`) | column with mapped type + nullability |
-| `relationship` (`hasMany: false`) | foreign-key column `author_id` |
-| `relationship` (`hasMany: true`) | join table `_posts_rels` (polymorphic-safe) |
-| `array` / `blocks` field | child table keyed by parent id + `_order` |
-| `json` / `meta` | `jsonb` (Postgres), `json` (MySQL/SQLite) |
-| `point` | `geometry`/`point` when `geoQueries`, else two numeric columns |
-| `localized: [...]` | `_locales` child table, one row per `(parent, locale)` |
-| `versions.drafts` | `_posts_v` version table, autosave rows flagged `latest` |
+| Config construct                                   | SQL physical model                                             |
+| -------------------------------------------------- | -------------------------------------------------------------- |
+| `collection('posts', …)`                           | `posts` table, surrogate `id` + `createdAt`/`updatedAt`        |
+| scalar field (`text`, `number`, `boolean`, `date`) | column with mapped type + nullability                          |
+| `relationship` (`hasMany: false`)                  | foreign-key column `author_id`                                 |
+| `relationship` (`hasMany: true`)                   | join table `_posts_rels` (polymorphic-safe)                    |
+| `array` / `blocks` field                           | child table keyed by parent id + `_order`                      |
+| `json` / `meta`                                    | `jsonb` (Postgres), `json` (MySQL/SQLite)                      |
+| `point`                                            | `geometry`/`point` when `geoQueries`, else two numeric columns |
+| `localized: [...]`                                 | `_locales` child table, one row per `(parent, locale)`         |
+| `versions.drafts`                                  | `_posts_v` version table, autosave rows flagged `latest`       |
 
 Mongo collapses arrays, blocks, and localized fields into embedded subdocuments rather than child tables, which is exactly why the adapter exists — document-oriented workflows where a post and its blocks are one read. The key invariant holds across both: **the same `kernel.config.ts` runs unchanged on any adapter.** Content and config are portable between self-host backends and KernelCMS Cloud, with no rewrite — the promise Sanity cannot make because its schema is bound to its hosted Content Lake, and that Payload approximates only within its own two SQL/Mongo paths.
 

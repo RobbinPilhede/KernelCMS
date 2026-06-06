@@ -107,7 +107,9 @@ function Intro({ data }: { data: Data }) {
   return (
     <section className="s-pad s-center">
       <h2 className="s-h2 s-gold">{str(data.heading)}</h2>
-      {str(data.description) && <div className="s-prose s-gold-soft" dangerouslySetInnerHTML={html(data.description)} />}
+      {str(data.description) && (
+        <div className="s-prose s-gold-soft" dangerouslySetInnerHTML={html(data.description)} />
+      )}
     </section>
   )
 }

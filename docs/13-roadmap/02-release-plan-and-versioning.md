@@ -21,13 +21,13 @@ The one exception is `@kernel/cloud`, which tracks the hosted platform and carri
 
 ## Semver policy
 
-We follow [Semantic Versioning 2.0.0](https://semver.org) literally. The contract is defined by what we consider *public surface*, because semver is only as meaningful as its boundary.
+We follow [Semantic Versioning 2.0.0](https://semver.org) literally. The contract is defined by what we consider _public surface_, because semver is only as meaningful as its boundary.
 
-| Bump | Triggers when we… | Examples |
-|------|-------------------|----------|
+| Bump              | Triggers when we…                                                                                             | Examples                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | **major** `x.0.0` | break a documented public API, change generated REST/GraphQL/RPC output shape, or change the migration format | rename a field config key, change `where` operator semantics, drop a Node version |
-| **minor** `2.x.0` | add public API, add an adapter, add a field type, or deprecate something | new `point` field option, new `@kernel/db-mysql` capability, new server hook |
-| **patch** `2.4.x` | fix a bug without changing surface | migration diff correctness fix, admin render bug |
+| **minor** `2.x.0` | add public API, add an adapter, add a field type, or deprecate something                                      | new `point` field option, new `@kernel/db-mysql` capability, new server hook      |
+| **patch** `2.4.x` | fix a bug without changing surface                                                                            | migration diff correctness fix, admin render bug                                  |
 
 ### What is public surface
 
@@ -84,11 +84,11 @@ Every feature moves left-to-right through three channels. The channel is encoded
    may vanish    may patch      in full
 ```
 
-| Channel | dist-tag | Stability promise | Who it's for |
-|---------|----------|-------------------|--------------|
-| **alpha** | `@next` | None. APIs change without notice; features may be removed entirely. | Contributors, plugin authors validating the SDK early. |
-| **beta** | `@beta` | API is **frozen** for the feature. Only bug fixes land. Data written is forward-compatible to GA. | Teams who want the feature in staging and will tolerate patch churn. |
-| **GA** | `@latest` | Full semver. This is the default `npm install`. | Production. |
+| Channel   | dist-tag  | Stability promise                                                                                 | Who it's for                                                         |
+| --------- | --------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **alpha** | `@next`   | None. APIs change without notice; features may be removed entirely.                               | Contributors, plugin authors validating the SDK early.               |
+| **beta**  | `@beta`   | API is **frozen** for the feature. Only bug fixes land. Data written is forward-compatible to GA. | Teams who want the feature in staging and will tolerate patch churn. |
+| **GA**    | `@latest` | Full semver. This is the default `npm install`.                                                   | Production.                                                          |
 
 A feature graduates alpha → beta when its `kernel.config.ts` surface and generated API are settled and it has migration coverage. Beta → GA requires: docs, a codemod for any migration path, performance budgets met (see [Performance Budgets](../11-quality/02-performance-benchmarks-and-budgets.md)), and the security gate passed (see Security Model).
 
@@ -98,7 +98,7 @@ Individual features can also ship behind a flag inside a GA release, which is ho
 export default defineConfig({
   experimental: {
     // typed, autocompleted, and warns at boot
-    liveCollections: true,    // @kernel/db reactive client collections
+    liveCollections: true, // @kernel/db reactive client collections
     visualEditingV2: false,
   },
 })
@@ -121,7 +121,7 @@ KernelCMS designates one major line per year as **LTS**. Self-hosters and agenci
 
 An LTS line receives:
 
-- **18 months** of patch releases from the day the *next* major ships.
+- **18 months** of patch releases from the day the _next_ major ships.
 - Security backports for the full window, even after feature patches stop at 12 months.
 - Guaranteed adapter compatibility: an LTS pins exact `drizzle-orm` and runtime (Node/Bun) ranges and will not move them.
 
@@ -163,11 +163,11 @@ At runtime the server logs a single, deduplicated warning per deprecated usage a
 
 The deprecation timeline is fixed so you can plan around it:
 
-| Phase | Channel | What happens |
-|-------|---------|--------------|
-| Announce | minor `2.6.0` | `@deprecated` JSDoc, boot warning, changelog entry, codemod published |
-| Sustain | every minor `2.7+` | warning persists, behavior unchanged |
-| Remove | next major `3.0.0` | symbol deleted; `kernel upgrade --codemod` rewrites call sites |
+| Phase    | Channel            | What happens                                                          |
+| -------- | ------------------ | --------------------------------------------------------------------- |
+| Announce | minor `2.6.0`      | `@deprecated` JSDoc, boot warning, changelog entry, codemod published |
+| Sustain  | every minor `2.7+` | warning persists, behavior unchanged                                  |
+| Remove   | next major `3.0.0` | symbol deleted; `kernel upgrade --codemod` rewrites call sites        |
 
 Every removal ships with an executable codemod, not just prose. Sanity and Strapi have historically documented breaking changes in release notes and left the rewrite to you; we treat the codemod as part of the deprecation's definition of done.
 

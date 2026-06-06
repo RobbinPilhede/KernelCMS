@@ -28,13 +28,13 @@ The default layout is computed, not hardcoded. `@kernel/admin` introspects the r
 
 The default widgets are:
 
-| Widget | Purpose | Data source |
-| --- | --- | --- |
-| `collections-overview` | Card per collection with live document counts and a quick "create" action | `count` op per collection, batched |
-| `recent-activity` | Cross-collection feed of create/update/publish/delete events | Activity log adapter |
-| `my-drafts` | Documents the current user has unpublished drafts on | `find` with `where: { _status: 'draft', updatedBy: userId } ` |
-| `globals` | Quick links to each global (singleton) | Resolved config |
-| `media-summary` | Object count and total size from the active storage adapter | `@kernel/storage` stats |
+| Widget                 | Purpose                                                                   | Data source                                                   |
+| ---------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `collections-overview` | Card per collection with live document counts and a quick "create" action | `count` op per collection, batched                            |
+| `recent-activity`      | Cross-collection feed of create/update/publish/delete events              | Activity log adapter                                          |
+| `my-drafts`            | Documents the current user has unpublished drafts on                      | `find` with `where: { _status: 'draft', updatedBy: userId } ` |
+| `globals`              | Quick links to each global (singleton)                                    | Resolved config                                               |
+| `media-summary`        | Object count and total size from the active storage adapter               | `@kernel/storage` stats                                       |
 
 Counts are fetched through the Local API and cached by TanStack Query with a 30-second `staleTime`, so navigating away and back does not re-hit the database. Every widget respects access control: if the current user cannot `read` a collection, its card never renders — the dashboard is filtered at the data layer, not hidden with CSS. See [Access Control](../06-auth-security/01-authorization-and-access-control.md) for how operation-level rules are evaluated.
 
@@ -110,12 +110,12 @@ Widgets answer "what cards appear in the grid." Slots answer "what appears in th
 
 The dashboard slots:
 
-| Slot | Location | Typical use |
-| --- | --- | --- |
-| `dashboard.header` | Above the grid | Environment banner, onboarding checklist |
-| `dashboard.beforeWidgets` | Top of grid column | Announcements, broadcast messages |
-| `dashboard.afterWidgets` | Bottom of grid | Support links, version/diagnostics footer |
-| `dashboard.sidebar` | Right rail | Pinned tasks, scheduled publishes |
+| Slot                      | Location           | Typical use                               |
+| ------------------------- | ------------------ | ----------------------------------------- |
+| `dashboard.header`        | Above the grid     | Environment banner, onboarding checklist  |
+| `dashboard.beforeWidgets` | Top of grid column | Announcements, broadcast messages         |
+| `dashboard.afterWidgets`  | Bottom of grid     | Support links, version/diagnostics footer |
+| `dashboard.sidebar`       | Right rail         | Pinned tasks, scheduled publishes         |
 
 Slots accept components from any plugin and from app config. Resolution is deterministic and ordered, so two plugins targeting the same slot do not race:
 
@@ -126,9 +126,7 @@ import { OnboardingChecklist } from '@/admin/onboarding'
 export default defineConfig({
   admin: {
     slots: {
-      'dashboard.header': [
-        { component: OnboardingChecklist, order: 0 },
-      ],
+      'dashboard.header': [{ component: OnboardingChecklist, order: 0 }],
     },
   },
 })
@@ -180,8 +178,8 @@ interface ActivityEntry {
   action: 'create' | 'update' | 'delete' | 'publish' | 'unpublish' | 'restore' | 'upload'
   target: { collection: string; documentId: string; title: string }
   locale?: string
-  diff?: FieldDiff[]   // present only when diff capture is enabled for the collection
-  at: string           // ISO 8601
+  diff?: FieldDiff[] // present only when diff capture is enabled for the collection
+  at: string // ISO 8601
 }
 ```
 

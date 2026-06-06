@@ -37,11 +37,22 @@ export function systemInfo(kernel: Kernel): SystemInfo {
   const cfg = kernel.config
   const isAuth = (c: (typeof cfg.collections)[number]) => Boolean(c.auth)
   const versionsOf = (c: (typeof cfg.collections)[number]) =>
-    c.versions === true ? { enabled: true, drafts: false } : c.versions ? { enabled: true, drafts: Boolean(c.versions.drafts) } : { enabled: false, drafts: false }
+    c.versions === true
+      ? { enabled: true, drafts: false }
+      : c.versions
+        ? { enabled: true, drafts: Boolean(c.versions.drafts) }
+        : { enabled: false, drafts: false }
 
   const collections: CollectionInfo[] = cfg.collections.map((c) => {
     const v = versionsOf(c)
-    return { slug: c.slug, auth: isAuth(c), upload: Boolean(c.upload), versions: v.enabled, drafts: v.drafts, fields: c.fields.length }
+    return {
+      slug: c.slug,
+      auth: isAuth(c),
+      upload: Boolean(c.upload),
+      versions: v.enabled,
+      drafts: v.drafts,
+      fields: c.fields.length,
+    }
   })
 
   return {
@@ -71,7 +82,14 @@ export function formatSystemInfo(info: SystemInfo): string {
     `Collections (${info.collections.length}):`,
     ...info.collections.map(
       (c) =>
-        `  • ${c.slug} — ${c.fields} field(s)${[c.auth && 'auth', c.upload && 'upload', c.drafts ? 'drafts' : c.versions && 'versions'].filter(Boolean).map((t) => ` · ${t}`).join('')}`,
+        `  • ${c.slug} — ${c.fields} field(s)${[
+          c.auth && 'auth',
+          c.upload && 'upload',
+          c.drafts ? 'drafts' : c.versions && 'versions',
+        ]
+          .filter(Boolean)
+          .map((t) => ` · ${t}`)
+          .join('')}`,
     ),
     `Globals (${info.globals.length}): ${info.globals.join(', ') || '(none)'}`,
     `Capabilities: ${caps.join(', ') || '(none)'}`,

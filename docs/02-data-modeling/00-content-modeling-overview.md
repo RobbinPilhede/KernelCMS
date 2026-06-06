@@ -15,7 +15,7 @@ kernel.config.ts  ──► @kernel/core compiler ──┬─► Drizzle schema
                                                └─► Admin UI         (@kernel/admin)
 ```
 
-This is the same config-as-code philosophy as Payload — and the deliberate opposite of Strapi, where content types are authored through an admin GUI and persisted as JSON in the project, and Sanity, where schemas are JS objects that drive a separate Content Lake with its own GROQ query model. KernelCMS keeps Payload's "your code is the schema" instinct but goes further on type inference: every artifact above is fully typed end-to-end, with zero `any`, and the Local API gives you the *same* operation core in-process that the wire APIs expose remotely.
+This is the same config-as-code philosophy as Payload — and the deliberate opposite of Strapi, where content types are authored through an admin GUI and persisted as JSON in the project, and Sanity, where schemas are JS objects that drive a separate Content Lake with its own GROQ query model. KernelCMS keeps Payload's "your code is the schema" instinct but goes further on type inference: every artifact above is fully typed end-to-end, with zero `any`, and the Local API gives you the _same_ operation core in-process that the wire APIs expose remotely.
 
 A minimal config establishes the shape:
 
@@ -56,13 +56,13 @@ Collection "posts"          Global "siteSettings"
 
 The distinction matters because it changes the API surface and the access model:
 
-| Aspect | Collection | Global |
-| --- | --- | --- |
-| Cardinality | Many documents | Exactly one |
-| Identity | Has an `id` | Addressed by `slug` only |
-| Local API | `kernel.find('posts')`, `kernel.findByID('posts', id)` | `kernel.findGlobal('siteSettings')` |
-| REST | `/api/posts`, `/api/posts/:id` | `/api/globals/site-settings` |
-| Typical use | Posts, products, users, media | Settings, navigation, footer, hero |
+| Aspect      | Collection                                             | Global                              |
+| ----------- | ------------------------------------------------------ | ----------------------------------- |
+| Cardinality | Many documents                                         | Exactly one                         |
+| Identity    | Has an `id`                                            | Addressed by `slug` only            |
+| Local API   | `kernel.find('posts')`, `kernel.findByID('posts', id)` | `kernel.findGlobal('siteSettings')` |
+| REST        | `/api/posts`, `/api/posts/:id`                         | `/api/globals/site-settings`        |
+| Typical use | Posts, products, users, media                          | Settings, navigation, footer, hero  |
 
 Definitions are symmetric apart from cardinality:
 
@@ -71,11 +71,7 @@ import { collection, global, fields as f } from '@kernel/core'
 
 export const Posts = collection({
   slug: 'posts',
-  fields: [
-    f.text('title', { required: true }),
-    f.richText('body'),
-    f.relationship('author', { to: 'authors' }),
-  ],
+  fields: [f.text('title', { required: true }), f.richText('body'), f.relationship('author', { to: 'authors' })],
   drafts: true,
   versions: { autosave: true },
 })
@@ -99,30 +95,31 @@ A useful rule of thumb: if you would ever want to list, paginate, or filter the 
 
 Fields are the atoms of the model. Both collections and globals are just an ordered array of fields, and the same field types are available in both. KernelCMS ships a broad set so you rarely reach for a workaround:
 
-| Category | Field types |
-| --- | --- |
-| Scalars | `text`, `textarea`, `number`, `boolean`, `date`, `email`, `json`, `code`, `point` |
-| Choice | `select`, `radio`, `checkbox` |
-| Relational | `relationship`, `upload` |
-| Structural | `array`, `blocks`, `group`, `tabs`, `row` |
-| Rich content | `richText` |
-| Presentational | `ui` (renders in the admin, stores nothing) |
-| Custom | user-defined field types via `@kernel/plugin-sdk` |
+| Category       | Field types                                                                       |
+| -------------- | --------------------------------------------------------------------------------- |
+| Scalars        | `text`, `textarea`, `number`, `boolean`, `date`, `email`, `json`, `code`, `point` |
+| Choice         | `select`, `radio`, `checkbox`                                                     |
+| Relational     | `relationship`, `upload`                                                          |
+| Structural     | `array`, `blocks`, `group`, `tabs`, `row`                                         |
+| Rich content   | `richText`                                                                        |
+| Presentational | `ui` (renders in the admin, stores nothing)                                       |
+| Custom         | user-defined field types via `@kernel/plugin-sdk`                                 |
 
 Every field carries the same cross-cutting capabilities, which is what makes the model expressive without bolting on special cases:
 
 ```ts
 f.text('summary', {
   required: true,
-  localized: true,                 // per-locale values
-  unique: true,                    // DB-level uniqueness
-  index: true,                     // generates an index in the Drizzle schema
+  localized: true, // per-locale values
+  unique: true, // DB-level uniqueness
+  index: true, // generates an index in the Drizzle schema
   defaultValue: '',
   validate: async (value, { req }) => {
     if (value && value.length > 160) return 'Keep summaries under 160 chars'
-    return true                    // sync, async, and cross-field validation
+    return true // sync, async, and cross-field validation
   },
-  access: {                        // field-level access control
+  access: {
+    // field-level access control
     read: () => true,
     update: ({ req }) => req.user?.role === 'editor',
   },
@@ -171,8 +168,8 @@ post.author       post.author = {           post.author.avatar = {
 ```ts
 // Local API — identical semantics over REST, GraphQL, RPC
 const post = await kernel.findByID('posts', id, { depth: 2 })
-post.author.name          // string, fully typed
-post.author.avatar.url    // resolved upload, fully typed
+post.author.name // string, fully typed
+post.author.avatar.url // resolved upload, fully typed
 ```
 
 This is the same `depth` mechanism Payload pioneered, and KernelCMS keeps it precisely because it solves the over-/under-fetching problem without forcing GraphQL on REST users. GraphQL clients get nested selection sets for free; REST and RPC clients get `depth`; both hit the same resolver. Sanity solves the same problem with GROQ projections and joins, which are powerful but bespoke to Sanity — KernelCMS keeps one query language across all surfaces instead.
@@ -182,11 +179,11 @@ Relationship integrity is handled at the adapter layer. On SQL backends (`@kerne
 ### Modeling guidance
 
 - Prefer `relationship` over duplicating data. Denormalize only behind a `ui` preview or a read hook, never in stored fields.
-- Use `hasMany` join semantics for tags/categories; use a join *collection* when the relationship itself needs fields (e.g. `postAuthors` with an `order` column).
+- Use `hasMany` join semantics for tags/categories; use a join _collection_ when the relationship itself needs fields (e.g. `postAuthors` with an `order` column).
 - Reach for polymorphic refs sparingly — they trade query simplicity for flexibility. A "related content" rail is a good fit; a core foreign key usually is not.
 
 ## Open Questions
 
 - **Default `onDelete` for SQL relationships.** `RESTRICT` is the safe default but breaks ergonomic deletes; `SET NULL` is friendlier but silently orphans. Leaning `RESTRICT` with an opt-in per field — unresolved.
-- **Cross-collection unique constraints.** Field-level `unique` is per-collection today. Composite/cross-collection uniqueness (e.g. a slug unique across `posts` *and* `pages`) likely needs a model-level constraint primitive rather than a field flag.
+- **Cross-collection unique constraints.** Field-level `unique` is per-collection today. Composite/cross-collection uniqueness (e.g. a slug unique across `posts` _and_ `pages`) likely needs a model-level constraint primitive rather than a field flag.
 - **Globals per-locale identity.** Whether a localized global is one document with per-locale field values (current plan) or N documents keyed by locale, which would change the `findGlobal` signature.

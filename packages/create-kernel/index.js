@@ -151,7 +151,9 @@ async function main() {
   }
 
   console.log(
-    paint('Creating a KernelCMS app in ', C.dim) + paint(`./${name}`, C.bold) + paint(`  (template: ${template})\n`, C.dim),
+    paint('Creating a KernelCMS app in ', C.dim) +
+      paint(`./${name}`, C.bold) +
+      paint(`  (template: ${template})\n`, C.dim),
   )
 
   cpSync(templateDir, target, {
@@ -178,7 +180,8 @@ async function main() {
     console.log(paint(`\nInstalling dependencies with ${pm}…\n`, C.dim))
     const res = runInstall(pm, target)
     installed = !res.error && res.status === 0
-    if (!installed) console.log(paint('\nDependency install did not complete — you can run it yourself below.', C.yellow))
+    if (!installed)
+      console.log(paint('\nDependency install did not complete — you can run it yourself below.', C.yellow))
     else console.log(paint('\n✓ Dependencies installed.', C.green))
   }
 
@@ -188,9 +191,7 @@ async function main() {
   console.log(paint(`    cd ${name}`, C.cyan))
   if (flags.noInstall || !installed) console.log(paint(`    ${pm === 'yarn' ? 'yarn' : pm + ' install'}`, C.cyan))
   console.log(paint(`    ${runDev}`, C.cyan))
-  console.log(
-    '\n  Then open the URL the dev server prints ' + paint('(default http://localhost:3000)', C.dim) + '.',
-  )
+  console.log('\n  Then open the URL the dev server prints ' + paint('(default http://localhost:3000)', C.dim) + '.')
   console.log(paint('\n  Edit src/server/config.ts to shape your content model. Happy building!\n', C.dim))
 }
 

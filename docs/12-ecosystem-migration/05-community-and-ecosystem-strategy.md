@@ -6,13 +6,13 @@ KernelCMS lives or dies by its community. The technical wedge — TanStack-nativ
 
 We run a small number of channels well rather than a large number poorly. Each channel has an owner, a response-time SLA, and a clear job. Sprawl is the enemy: Strapi's community spans Discord, a forum, GitHub Discussions, and a subreddit, and answers fragment across all four. We consolidate.
 
-| Channel | Job | Owner | SLA |
-|---|---|---|---|
-| GitHub Issues | Bugs, regressions, reproducible defects | Core maintainers | Triage < 48h |
-| GitHub Discussions | Q&A, RFCs, "show and tell" | Rotating maintainer | First reply < 24h |
-| Discord | Real-time help, casual chat, release pings | Community manager | Best-effort, business hours |
-| RFC repo (`kernel-rfcs`) | Design proposals for breaking changes | Steering group | Reviewed in next cycle |
-| Office hours (biweekly) | Live debugging, roadmap Q&A | Core team | Scheduled |
+| Channel                  | Job                                        | Owner               | SLA                         |
+| ------------------------ | ------------------------------------------ | ------------------- | --------------------------- |
+| GitHub Issues            | Bugs, regressions, reproducible defects    | Core maintainers    | Triage < 48h                |
+| GitHub Discussions       | Q&A, RFCs, "show and tell"                 | Rotating maintainer | First reply < 24h           |
+| Discord                  | Real-time help, casual chat, release pings | Community manager   | Best-effort, business hours |
+| RFC repo (`kernel-rfcs`) | Design proposals for breaking changes      | Steering group      | Reviewed in next cycle      |
+| Office hours (biweekly)  | Live debugging, roadmap Q&A                | Core team           | Scheduled                   |
 
 GitHub is the system of record. Discord is for speed and warmth, but anything that produces a decision or a reusable answer gets promoted to a Discussion or an issue. We explicitly avoid the Sanity pattern where the most useful answers are buried in unindexable Slack history — every resolved Discord thread with a real solution gets a one-line summary posted to Discussions with a link, so the knowledge is crawlable.
 
@@ -51,7 +51,9 @@ import { algoliaSearch } from '@kernel/plugin-algolia'
 
 export default defineConfig({
   db: postgres({ url: process.env.DATABASE_URL! }),
-  collections: [/* ... */],
+  collections: [
+    /* ... */
+  ],
   plugins: [
     stripePlugin({ secretKey: process.env.STRIPE_SECRET_KEY! }),
     algoliaSearch({ appId: process.env.ALGOLIA_APP_ID!, index: 'content' }),
@@ -63,26 +65,28 @@ export default defineConfig({
 // A minimal plugin: add a read-only `slug` field to every collection
 import type { KernelPlugin } from '@kernel/plugin-sdk'
 
-export const autoSlug = (opts: { from: string }): KernelPlugin => (config) => ({
-  ...config,
-  collections: config.collections.map((c) => ({
-    ...c,
-    fields: [
-      ...c.fields,
-      {
-        name: 'slug',
-        type: 'text',
-        admin: { readOnly: true },
-        hooks: {
-          beforeChange: [({ data }) => slugify(String(data[opts.from] ?? ''))],
+export const autoSlug =
+  (opts: { from: string }): KernelPlugin =>
+  (config) => ({
+    ...config,
+    collections: config.collections.map((c) => ({
+      ...c,
+      fields: [
+        ...c.fields,
+        {
+          name: 'slug',
+          type: 'text',
+          admin: { readOnly: true },
+          hooks: {
+            beforeChange: [({ data }) => slugify(String(data[opts.from] ?? ''))],
+          },
         },
-      },
-    ],
-  })),
-})
+      ],
+    })),
+  })
 ```
 
-**A registry with provenance.** We run a curated registry at `registry.kernelcms.org`, indexed by adapter category (database, storage, email, auth, search, cache, queue) and by capability (field types, admin views, hooks). Every entry shows compatible version range, weekly downloads, last publish date, and an "official / partner / community" trust tier. Sanity's plugin discovery is largely a GitHub-topic search; Payload's is a docs page. A typed, filterable registry that surfaces *which adapter contract version a plugin targets* answers the question users actually ask: "will this work with my stack?"
+**A registry with provenance.** We run a curated registry at `registry.kernelcms.org`, indexed by adapter category (database, storage, email, auth, search, cache, queue) and by capability (field types, admin views, hooks). Every entry shows compatible version range, weekly downloads, last publish date, and an "official / partner / community" trust tier. Sanity's plugin discovery is largely a GitHub-topic search; Payload's is a docs page. A typed, filterable registry that surfaces _which adapter contract version a plugin targets_ answers the question users actually ask: "will this work with my stack?"
 
 **`create-kernel-plugin` scaffolder.** One command produces a typed plugin package with a test harness that boots a real in-memory SQLite adapter (`@kernel/db-sqlite`), so authors test against a real backend, not mocks — consistent with our testing tenet of real dependencies over mocks.
 
@@ -98,12 +102,12 @@ Measured outputs of the flywheel: number of published plugins, share passing con
 
 Documentation is the highest-leverage growth investment we make, because it directly compresses time-to-first-success and it is what search engines and LLMs ingest. We split docs into four layers, each with a different job:
 
-| Layer | Job | Success metric |
-|---|---|---|
-| Quickstart | Running CMS in < 10 minutes | Completion rate |
-| Guides | Task-oriented ("add localization") | Bounce rate |
-| Reference | Exhaustive API/config surface | Coverage % |
-| Concepts | Mental models (adapters, query language) | Time on page |
+| Layer      | Job                                      | Success metric  |
+| ---------- | ---------------------------------------- | --------------- |
+| Quickstart | Running CMS in < 10 minutes              | Completion rate |
+| Guides     | Task-oriented ("add localization")       | Bounce rate     |
+| Reference  | Exhaustive API/config surface            | Coverage %      |
+| Concepts   | Mental models (adapters, query language) | Time on page    |
 
 Two non-negotiable standards. First, **every code sample is type-checked in CI.** Samples live in real `.ts` files, are compiled against the current `@kernel/*` packages, and are embedded into Markdown by a build step. A sample that no longer compiles fails the docs build. This kills the most common docs failure mode — drift between prose and the shipped API — which plagues fast-moving projects like Strapi across major versions.
 

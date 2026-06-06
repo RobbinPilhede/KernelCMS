@@ -25,10 +25,13 @@ export function toast(message: string, variant: ToastVariant = 'info', ms = 3200
   toasts = [...toasts, { id, message, variant }]
   emitToasts()
   // Flag as leaving so it animates out, then remove.
-  setTimeout(() => {
-    toasts = toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t))
-    emitToasts()
-  }, Math.max(0, ms - 220))
+  setTimeout(
+    () => {
+      toasts = toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t))
+      emitToasts()
+    },
+    Math.max(0, ms - 220),
+  )
   setTimeout(() => {
     toasts = toasts.filter((t) => t.id !== id)
     emitToasts()

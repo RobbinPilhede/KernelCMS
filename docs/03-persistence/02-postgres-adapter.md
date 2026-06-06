@@ -27,7 +27,7 @@ export default defineConfig({
 })
 ```
 
-Unlike Strapi — which abstracts over Knex and targets the lowest common denominator across SQLite/MySQL/Postgres — KernelCMS ships a *dedicated* Postgres adapter. Where Payload exposes a thin Drizzle layer and leans on Drizzle's portable subset, we deliberately emit Postgres-native DDL when the adapter detects it can win. The portability promise lives at the config and operation layer, not in the generated SQL.
+Unlike Strapi — which abstracts over Knex and targets the lowest common denominator across SQLite/MySQL/Postgres — KernelCMS ships a _dedicated_ Postgres adapter. Where Payload exposes a thin Drizzle layer and leans on Drizzle's portable subset, we deliberately emit Postgres-native DDL when the adapter detects it can win. The portability promise lives at the config and operation layer, not in the generated SQL.
 
 ## JSONB usage
 
@@ -35,13 +35,13 @@ Most KernelCMS fields map to first-class columns: `text` → `text`, `number` �
 
 The adapter follows a hybrid model:
 
-| Field type | Default storage | Rationale |
-|---|---|---|
-| `json`, `code` | `jsonb` column | Opaque payload; no per-element querying expected |
-| `group` | flattened columns *or* `jsonb` | Flattened when the group is fixed-shape and queried; `jsonb` when presentational |
-| `array` | child table *or* `jsonb` | Child table when rows are filtered/sorted; `jsonb` for small ordered lists |
-| `blocks` | child table (`_blocks` + discriminator) | Always relational — blocks need stable IDs, ordering, and per-block access control |
-| `richText` | `jsonb` document | Editor AST stored whole; queried by extracted plain text (see below) |
+| Field type     | Default storage                         | Rationale                                                                          |
+| -------------- | --------------------------------------- | ---------------------------------------------------------------------------------- |
+| `json`, `code` | `jsonb` column                          | Opaque payload; no per-element querying expected                                   |
+| `group`        | flattened columns _or_ `jsonb`          | Flattened when the group is fixed-shape and queried; `jsonb` when presentational   |
+| `array`        | child table _or_ `jsonb`                | Child table when rows are filtered/sorted; `jsonb` for small ordered lists         |
+| `blocks`       | child table (`_blocks` + discriminator) | Always relational — blocks need stable IDs, ordering, and per-block access control |
+| `richText`     | `jsonb` document                        | Editor AST stored whole; queried by extracted plain text (see below)               |
 
 `jsonb` over `json` is non-negotiable for the adapter: `json` stores the raw text and reparses on every access, while `jsonb` is decomposed binary, deduplicates keys, supports GIN indexing, and powers the `@>`, `?`, and `jsonb_path_query` operators we map the query language onto.
 
@@ -90,9 +90,9 @@ CREATE INDEX posts_search_idx ON posts USING gin (search_vector);
 
 ```ts
 fields: [
-  { name: 'title',   type: 'text',     index: { search: 'A' } },
+  { name: 'title', type: 'text', index: { search: 'A' } },
   { name: 'excerpt', type: 'textarea', index: { search: 'B' } },
-  { name: 'body',    type: 'richText', index: { search: 'C' } },
+  { name: 'body', type: 'richText', index: { search: 'C' } },
 ]
 ```
 
@@ -113,7 +113,7 @@ ORDER BY _rank DESC
 LIMIT 25;
 ```
 
-We use `websearch_to_tsquery` so end-user input (`"exact phrase" -excluded`) is parsed safely without hand-rolling `tsquery` syntax — and `$1` is always parameterized, never interpolated. This is the default, zero-infrastructure search tier. When you outgrow it, the same `_search` operator is satisfied by an external `@kernel/search` adapter (Postgres FTS → Typesense/Meilisearch/Elastic) with no change to collection config or query code. Sanity ships hosted search as part of the platform; KernelCMS makes the *built-in* tier production-real and the *upgrade* a swap.
+We use `websearch_to_tsquery` so end-user input (`"exact phrase" -excluded`) is parsed safely without hand-rolling `tsquery` syntax — and `$1` is always parameterized, never interpolated. This is the default, zero-infrastructure search tier. When you outgrow it, the same `_search` operator is satisfied by an external `@kernel/search` adapter (Postgres FTS → Typesense/Meilisearch/Elastic) with no change to collection config or query code. Sanity ships hosted search as part of the platform; KernelCMS makes the _built-in_ tier production-real and the _upgrade_ a swap.
 
 ## Indexing strategy
 
@@ -122,7 +122,7 @@ The adapter generates indexes from config and from access patterns it can prove,
 What the adapter creates automatically:
 
 - **Primary keys** — `uuid` (default) or `serial`, configurable per collection.
-- **Foreign key columns** — every `relationship`/`upload` FK column gets a btree index. Postgres does *not* index FK columns automatically, and missing them is the most common cause of slow `depth` joins and slow cascade deletes.
+- **Foreign key columns** — every `relationship`/`upload` FK column gets a btree index. Postgres does _not_ index FK columns automatically, and missing them is the most common cause of slow `depth` joins and slow cascade deletes.
 - **`unique` fields** — a unique btree index; with localization, scoped `(value, locale)`.
 - **Sort defaults** — the collection's `defaultSort` column.
 - **Soft-delete / draft predicate** — a **partial index** so the common "published only" read path stays cheap:
@@ -139,11 +139,9 @@ const Posts = defineCollection({
   slug: 'posts',
   indexes: [
     { fields: ['authorId', 'publishedAt'], order: ['asc', 'desc'] }, // composite
-    { on: "(data->>'sku')", unique: true },                          // JSONB expression
+    { on: "(data->>'sku')", unique: true }, // JSONB expression
   ],
-  fields: [
-    { name: 'slug', type: 'text', unique: true, index: true },
-  ],
+  fields: [{ name: 'slug', type: 'text', unique: true, index: true }],
 })
 ```
 

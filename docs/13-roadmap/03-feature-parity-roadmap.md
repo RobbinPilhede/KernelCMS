@@ -6,11 +6,11 @@ KernelCMS does not need to clone Payload, Sanity, and Strapi feature-for-feature
 
 Parity is not "we have a field called X." Parity is "a team evaluating us against Payload can run their real content model through KernelCMS and not hit a wall." We track three states per capability:
 
-| State | Meaning | Counts as parity? |
-| --- | --- | --- |
-| `missing` | Not implemented | No |
+| State     | Meaning                                    | Counts as parity?      |
+| --------- | ------------------------------------------ | ---------------------- |
+| `missing` | Not implemented                            | No                     |
 | `partial` | Works for the common path, gaps documented | No (but unblocks eval) |
-| `shipped` | Stable API, typed, tested, documented | Yes |
+| `shipped` | Stable API, typed, tested, documented      | Yes                    |
 
 A capability only flips to `shipped` when it has a typed `@kernel/*` surface, a migration path from the relevant competitor, and an entry in our parity matrix (see [Tracking progress](#tracking-progress)). "Demoable" is not "shipped."
 
@@ -22,17 +22,17 @@ We benchmark against the thing each competitor is genuinely good at, not their w
 
 Payload is the closest competitor in philosophy: config-as-code, collections and globals, field-level access control, drafts/versions, a local API. This is the parity set we cannot compromise on, because Payload's audience is exactly ours.
 
-| Payload capability | KernelCMS target | Status target (next 2 quarters) |
-| --- | --- | --- |
-| Config-as-code collections/globals | `defineCollection` / `defineGlobal` in `kernel.config.ts` | shipped |
-| Field-level access control | Operation/document/field access in `@kernel/auth` | shipped |
-| Drafts + versions + autosave | Version history in `@kernel/core` | shipped |
-| Local API with type inference | `@kernel/client` local mode + typed RPC | shipped |
-| Hooks (before/after change, read) | `@kernel/core` lifecycle hooks | shipped |
-| Block-based rich text | `@kernel/richtext` block editor | shipped |
-| Field-level localization | `localized: true` per field | shipped |
+| Payload capability                 | KernelCMS target                                          | Status target (next 2 quarters) |
+| ---------------------------------- | --------------------------------------------------------- | ------------------------------- |
+| Config-as-code collections/globals | `defineCollection` / `defineGlobal` in `kernel.config.ts` | shipped                         |
+| Field-level access control         | Operation/document/field access in `@kernel/auth`         | shipped                         |
+| Drafts + versions + autosave       | Version history in `@kernel/core`                         | shipped                         |
+| Local API with type inference      | `@kernel/client` local mode + typed RPC                   | shipped                         |
+| Hooks (before/after change, read)  | `@kernel/core` lifecycle hooks                            | shipped                         |
+| Block-based rich text              | `@kernel/richtext` block editor                           | shipped                         |
+| Field-level localization           | `localized: true` per field                               | shipped                         |
 
-Where we diverge from Payload on purpose: Payload's local API is in-process but its over-the-wire story is REST/GraphQL bolt-on. Ours is the *same* operation core exposed as typed RPC through TanStack Start server functions, so the local call and the network call share one type. Payload's admin is a bespoke React app; ours is TanStack Start end-to-end, which means Router, Query, Table, and Form are the public extension surface, not internal plumbing.
+Where we diverge from Payload on purpose: Payload's local API is in-process but its over-the-wire story is REST/GraphQL bolt-on. Ours is the _same_ operation core exposed as typed RPC through TanStack Start server functions, so the local call and the network call share one type. Payload's admin is a bespoke React app; ours is TanStack Start end-to-end, which means Router, Query, Table, and Form are the public extension surface, not internal plumbing.
 
 ```ts
 // kernel.config.ts — the Payload-parity surface, KernelCMS-native
@@ -61,36 +61,36 @@ export default defineConfig({
 
 ### Sanity — the structured-content, real-time, and portability bar
 
-Sanity wins on real-time collaboration, its portable-text model, live preview with visual editing, and content portability. Strapi and Payload trail here. We target the *capabilities*, not Sanity's GROQ or its hosted-only dataset model.
+Sanity wins on real-time collaboration, its portable-text model, live preview with visual editing, and content portability. Strapi and Payload trail here. We target the _capabilities_, not Sanity's GROQ or its hosted-only dataset model.
 
-| Sanity capability | KernelCMS target | Notes |
-| --- | --- | --- |
-| Real-time / live collections | `@kernel/client` + TanStack DB reactive collections | Optional, opt-in per collection |
-| Portable rich text | `@kernel/richtext` block JSON (portable, queryable) | Block model, not HTML blobs |
-| Live preview + visual editing | Admin live preview pane via TanStack Query subscriptions | Self-host *and* Cloud |
-| Content portability / no lock-in | Config-as-code + adapter export/import | Portable between self-host and KernelCMS Cloud |
-| Hosted platform | KernelCMS Cloud | Managed, multi-tenant, content CDN |
+| Sanity capability                | KernelCMS target                                         | Notes                                          |
+| -------------------------------- | -------------------------------------------------------- | ---------------------------------------------- |
+| Real-time / live collections     | `@kernel/client` + TanStack DB reactive collections      | Optional, opt-in per collection                |
+| Portable rich text               | `@kernel/richtext` block JSON (portable, queryable)      | Block model, not HTML blobs                    |
+| Live preview + visual editing    | Admin live preview pane via TanStack Query subscriptions | Self-host _and_ Cloud                          |
+| Content portability / no lock-in | Config-as-code + adapter export/import                   | Portable between self-host and KernelCMS Cloud |
+| Hosted platform                  | KernelCMS Cloud                                          | Managed, multi-tenant, content CDN             |
 
-Where we win on Sanity: Sanity's real-time and hosting are coupled to *their* infrastructure. Our live story rides TanStack DB and works against any adapter you bring, self-hosted or on KernelCMS Cloud, with content always exportable. Sanity makes you write GROQ; we expose one `where`/`sort`/`pagination`/`depth` query language across REST, GraphQL, and RPC, so you learn it once.
+Where we win on Sanity: Sanity's real-time and hosting are coupled to _their_ infrastructure. Our live story rides TanStack DB and works against any adapter you bring, self-hosted or on KernelCMS Cloud, with content always exportable. Sanity makes you write GROQ; we expose one `where`/`sort`/`pagination`/`depth` query language across REST, GraphQL, and RPC, so you learn it once.
 
 ### Strapi — the breadth, plugin-ecosystem, and admin-feature bar
 
-Strapi's strength is breadth: media library, i18n, role-based admin, a large plugin marketplace, a no-code content-type builder. We match the runtime breadth and deliberately *do not* match the no-code builder — config-as-code is the source of truth.
+Strapi's strength is breadth: media library, i18n, role-based admin, a large plugin marketplace, a no-code content-type builder. We match the runtime breadth and deliberately _do not_ match the no-code builder — config-as-code is the source of truth.
 
-| Strapi capability | KernelCMS target | Decision |
-| --- | --- | --- |
-| Media library | `@kernel/storage` + admin media library | Match |
-| i18n + RTL admin | Admin i18n, WCAG 2.2 AA, RTL | Match and exceed |
-| Role-based admin access | Field/document/operation access | Match |
-| REST + GraphQL auto-gen | `@kernel/rest` + `@kernel/graphql` | Match |
-| Plugin ecosystem | `@kernel/plugin-sdk` | Match (typed) |
-| No-code content-type builder | — | **Skip on purpose** |
+| Strapi capability            | KernelCMS target                        | Decision            |
+| ---------------------------- | --------------------------------------- | ------------------- |
+| Media library                | `@kernel/storage` + admin media library | Match               |
+| i18n + RTL admin             | Admin i18n, WCAG 2.2 AA, RTL            | Match and exceed    |
+| Role-based admin access      | Field/document/operation access         | Match               |
+| REST + GraphQL auto-gen      | `@kernel/rest` + `@kernel/graphql`      | Match               |
+| Plugin ecosystem             | `@kernel/plugin-sdk`                    | Match (typed)       |
+| No-code content-type builder | —                                       | **Skip on purpose** |
 
 The no-code builder is where Strapi's data model drifts from version control and breaks reproducible deploys. We reject it. Schema lives in `kernel.config.ts`, migrations are generated from schema diffs, and the admin reflects config — never the other way around.
 
 ## Sequencing
 
-We sequence by *unblocking evaluation*, not by feature glamour. A capability ships early if it stops a prospect from completing a real migration eval.
+We sequence by _unblocking evaluation_, not by feature glamour. A capability ships early if it stops a prospect from completing a real migration eval.
 
 ```
 Phase 1 ──────────► Phase 2 ──────────► Phase 3 ──────────► Phase 4
@@ -120,7 +120,7 @@ Parity gets us into the evaluation. These get us picked.
 
 ### One operation core, every surface
 
-Payload, Sanity, and Strapi each bolt APIs onto a server. KernelCMS has a single operation core; REST, GraphQL, the in-process Local API, and typed RPC are *projections* of it. The same `find`/`create`/`update` with the same `where`/`sort`/`depth` semantics runs in-process and over the wire with identical types.
+Payload, Sanity, and Strapi each bolt APIs onto a server. KernelCMS has a single operation core; REST, GraphQL, the in-process Local API, and typed RPC are _projections_ of it. The same `find`/`create`/`update` with the same `where`/`sort`/`depth` semantics runs in-process and over the wire with identical types.
 
 ```ts
 import { kernel } from '@kernel/client'
@@ -138,7 +138,7 @@ const remote = await client.posts.find({ where: { status: { equals: 'published' 
 
 ### Adapter-everything
 
-Database, storage, email, auth, search, cache, and queue are all swappable adapters implementing one contract. No competitor lets you change the database *and* the queue *and* the search backend without leaving the product. This is the "choose everything" wedge — see [the adapter architecture](../03-persistence/00-persistence-overview-and-adapter-contract.md).
+Database, storage, email, auth, search, cache, and queue are all swappable adapters implementing one contract. No competitor lets you change the database _and_ the queue _and_ the search backend without leaving the product. This is the "choose everything" wedge — see [the adapter architecture](../03-persistence/00-persistence-overview-and-adapter-contract.md).
 
 ```ts
 import { defineConfig } from '@kernel/core'

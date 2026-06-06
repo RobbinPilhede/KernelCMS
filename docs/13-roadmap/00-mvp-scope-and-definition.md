@@ -37,22 +37,20 @@ export default defineConfig({
     },
     { slug: 'media', upload: true, fields: [{ name: 'alt', type: 'text' }] },
   ],
-  globals: [
-    { slug: 'settings', fields: [{ name: 'siteName', type: 'text' }] },
-  ],
+  globals: [{ slug: 'settings', fields: [{ name: 'siteName', type: 'text' }] }],
 })
 ```
 
 The MVP field types are the ones a content team actually needs on day one:
 
-| Category      | Fields in MVP                                                                 |
-| ------------- | ---------------------------------------------------------------------------- |
-| Scalar        | `text`, `textarea`, `number`, `boolean`, `date`, `email`, `json`             |
-| Choice        | `select`, `radio`, `checkbox`                                                 |
-| Relational    | `relationship`, `upload`                                                      |
-| Structural    | `array`, `group`, `row`, `tabs`                                               |
-| Rich          | `richText`, `blocks`                                                          |
-| Presentational| `ui`                                                                          |
+| Category       | Fields in MVP                                                    |
+| -------------- | ---------------------------------------------------------------- |
+| Scalar         | `text`, `textarea`, `number`, `boolean`, `date`, `email`, `json` |
+| Choice         | `select`, `radio`, `checkbox`                                    |
+| Relational     | `relationship`, `upload`                                         |
+| Structural     | `array`, `group`, `row`, `tabs`                                  |
+| Rich           | `richText`, `blocks`                                             |
+| Presentational | `ui`                                                             |
 
 That is enough to model a marketing site, a docs site, or a product catalog. `code`, `point`, and custom field types ship later (see Exclusions).
 
@@ -129,13 +127,13 @@ Email/password auth via `@kernel/auth` with sessions. Access control is evaluate
 
 What we are deliberately **not** shipping in v1. These are not failures of scope — they are sequencing decisions, and most depend on contracts the MVP locks down.
 
-| Excluded from MVP                          | Why deferred                                                        | Lands |
-| ------------------------------------------ | ------------------------------------------------------------------- | ----- |
-| KernelCMS Cloud (managed hosting, billing) | Self-host must be solid before multi-tenant; needs the stable core  | Post-MVP |
+| Excluded from MVP                           | Why deferred                                                        | Lands    |
+| ------------------------------------------- | ------------------------------------------------------------------- | -------- |
+| KernelCMS Cloud (managed hosting, billing)  | Self-host must be solid before multi-tenant; needs the stable core  | Post-MVP |
 | MySQL & MongoDB adapters                    | Contract proven with Postgres + SQLite first                        | Post-MVP |
-| Live preview / visual editing              | Depends on a stable richText + draft model                          | Post-MVP |
-| Field-level localization & i18n/RTL admin  | Large surface; needs the field schema frozen                        | Post-MVP |
-| TanStack DB reactive client collections    | Powerful but additive; not needed to ship content                   | Post-MVP |
+| Live preview / visual editing               | Depends on a stable richText + draft model                          | Post-MVP |
+| Field-level localization & i18n/RTL admin   | Large surface; needs the field schema frozen                        | Post-MVP |
+| TanStack DB reactive client collections     | Powerful but additive; not needed to ship content                   | Post-MVP |
 | Plugin SDK (`@kernel/plugin-sdk`)           | Public extension API must not churn — stabilize core first          | Post-MVP |
 | Search, cache, queue (real adapters)        | Interfaces ship; real backends (e.g. Meilisearch, Redis) come later | Post-MVP |
 | White-label theming, advanced RBAC roles    | Access primitives ship; role management UI is later                 | Post-MVP |
@@ -150,16 +148,16 @@ The MVP is done when every item below is true and verifiable in CI — not when 
 
 ### Per-surface acceptance criteria
 
-| Surface        | Done means                                                                                          |
-| -------------- | --------------------------------------------------------------------------------------------------- |
-| Config         | `defineConfig` type-checks; invalid configs fail at compile time, not runtime                       |
-| Adapters       | Postgres and SQLite pass one shared adapter conformance suite (identical results)                   |
-| REST           | Full CRUD + query language; OpenAPI spec generated from config                                      |
-| GraphQL        | Generated schema covers all collections/globals; introspection matches config                       |
-| Local/RPC      | `payload.find/create/update/delete` fully typed; RPC mirrors Local API behavior over the wire       |
-| Admin          | Create/edit/publish a document end to end; list, media upload, rich text all functional             |
-| Access control | Op/doc/field rules enforced server-side; covered by tests that assert denial paths                  |
-| Migrations     | `kernel migrate` generates and applies diffs on both SQL adapters                                    |
+| Surface        | Done means                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------------- |
+| Config         | `defineConfig` type-checks; invalid configs fail at compile time, not runtime                 |
+| Adapters       | Postgres and SQLite pass one shared adapter conformance suite (identical results)             |
+| REST           | Full CRUD + query language; OpenAPI spec generated from config                                |
+| GraphQL        | Generated schema covers all collections/globals; introspection matches config                 |
+| Local/RPC      | `payload.find/create/update/delete` fully typed; RPC mirrors Local API behavior over the wire |
+| Admin          | Create/edit/publish a document end to end; list, media upload, rich text all functional       |
+| Access control | Op/doc/field rules enforced server-side; covered by tests that assert denial paths            |
+| Migrations     | `kernel migrate` generates and applies diffs on both SQL adapters                             |
 
 ### Cross-cutting gates
 
@@ -180,12 +178,12 @@ The single most important gate is the second line: **one config, three surfaces,
 
 ### Performance budgets (enforced)
 
-| Metric                          | Budget        |
-| ------------------------------- | ------------- |
-| Cold start (Node, Postgres)     | < 800 ms      |
-| List query p95 (10k docs)       | < 120 ms      |
-| Admin route TTI                 | < 2.5 s       |
-| `create-kernel` to first run    | < 5 min       |
+| Metric                       | Budget   |
+| ---------------------------- | -------- |
+| Cold start (Node, Postgres)  | < 800 ms |
+| List query p95 (10k docs)    | < 120 ms |
+| Admin route TTI              | < 2.5 s  |
+| `create-kernel` to first run | < 5 min  |
 
 ## The target user for the MVP
 

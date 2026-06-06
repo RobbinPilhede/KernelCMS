@@ -39,7 +39,14 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
     // Drafts add a system status column to the main row, plus a scheduled-publish time.
     if (versions.drafts) {
       columns.push({ name: '_status', type: 'text', required: false, unique: false, indexed: true, localized: false })
-      columns.push({ name: '_scheduled_at', type: 'timestamp', required: false, unique: false, indexed: true, localized: false })
+      columns.push({
+        name: '_scheduled_at',
+        type: 'timestamp',
+        required: false,
+        unique: false,
+        indexed: true,
+        localized: false,
+      })
     }
     tables.push({
       table: tableForCollection(collection.slug),

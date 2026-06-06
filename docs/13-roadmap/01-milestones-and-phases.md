@@ -6,13 +6,13 @@ KernelCMS ships in five phases — **P0 Foundations**, **P1 Core API**, **P2 Adm
 
 Each phase produces a tagged, installable release of the affected `@kernel/*` packages. Nothing ships to the public registry until P3.
 
-| Phase | Theme | Headline deliverables | Packages frozen for API |
-|-------|-------|----------------------|------------------------|
-| **P0** | Foundations | Config loader, field type system, Adapter contract, Postgres adapter | `@kernel/core`, `@kernel/db`, `@kernel/db-postgres` |
-| **P1** | Core API | Operation core, query language, REST + GraphQL + RPC generation | `@kernel/server`, `@kernel/rest`, `@kernel/graphql`, `@kernel/rpc`, `@kernel/client` |
-| **P2** | Admin | TanStack Start admin, collection lists, doc forms, media library, rich text | `@kernel/admin`, `@kernel/ui`, `@kernel/richtext` |
-| **P3** | Beta | Drafts/versions, localization, live preview, plugin SDK, second + third adapters | `@kernel/plugin-sdk`, `@kernel/db-sqlite`, `@kernel/db-mongodb` |
-| **P4** | GA | Performance budgets, security hardening, docs, Cloud GA, white-label | `@kernel/cloud`, all packages 1.0.0 |
+| Phase  | Theme       | Headline deliverables                                                            | Packages frozen for API                                                              |
+| ------ | ----------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **P0** | Foundations | Config loader, field type system, Adapter contract, Postgres adapter             | `@kernel/core`, `@kernel/db`, `@kernel/db-postgres`                                  |
+| **P1** | Core API    | Operation core, query language, REST + GraphQL + RPC generation                  | `@kernel/server`, `@kernel/rest`, `@kernel/graphql`, `@kernel/rpc`, `@kernel/client` |
+| **P2** | Admin       | TanStack Start admin, collection lists, doc forms, media library, rich text      | `@kernel/admin`, `@kernel/ui`, `@kernel/richtext`                                    |
+| **P3** | Beta        | Drafts/versions, localization, live preview, plugin SDK, second + third adapters | `@kernel/plugin-sdk`, `@kernel/db-sqlite`, `@kernel/db-mongodb`                      |
+| **P4** | GA          | Performance budgets, security hardening, docs, Cloud GA, white-label             | `@kernel/cloud`, all packages 1.0.0                                                  |
 
 ### P0 — Foundations
 
@@ -118,13 +118,13 @@ Three things are deliberately deferred to avoid blocking the critical path: the 
 
 Five squads, sized to the phase that needs them most. Allocation shifts as the critical path moves.
 
-| Squad | Owns | P0 | P1 | P2 | P3 | P4 |
-|-------|------|----|----|----|----|----|
-| **Kernel** | core, db, adapters | ●●● | ●● | ○ | ●● | ● |
-| **API** | server, rest, graphql, rpc | ○ | ●●● | ● | ● | ● |
-| **Admin** | admin, ui, richtext | ○ | ○ | ●●● | ●● | ● |
-| **Platform** | cloud, deploy, CI, perf | ● | ● | ● | ● | ●●● |
-| **DX/Docs** | cli, create-kernel, client, docs | ● | ● | ● | ●● | ●●● |
+| Squad        | Owns                             | P0  | P1  | P2  | P3  | P4  |
+| ------------ | -------------------------------- | --- | --- | --- | --- | --- |
+| **Kernel**   | core, db, adapters               | ●●● | ●●  | ○   | ●●  | ●   |
+| **API**      | server, rest, graphql, rpc       | ○   | ●●● | ●   | ●   | ●   |
+| **Admin**    | admin, ui, richtext              | ○   | ○   | ●●● | ●●  | ●   |
+| **Platform** | cloud, deploy, CI, perf          | ●   | ●   | ●   | ●   | ●●● |
+| **DX/Docs**  | cli, create-kernel, client, docs | ●   | ●   | ●   | ●●  | ●●● |
 
 `●●●` lead, `●●`/`●` support, `○` minimal. The Kernel squad front-loads P0/P1 then rotates to adapters in P3. The Admin squad is idle-by-design in P0/P1 — pulling them in early to "help" only produces admin code against an unstable API that gets rewritten. DX/Docs ramps hard into P3/P4 because the public beta is the first time external users hit `create-kernel` and the docs.
 
@@ -133,24 +133,28 @@ Five squads, sized to the phase that needs them most. Allocation shifts as the c
 A phase is done when every box is checked. Dates do not move criteria.
 
 **P0 exit**
+
 - `kernel.config.ts` parses, type-checks, and validates with actionable errors.
 - All field types resolve into the typed registry; zero `any` in `@kernel/core`.
 - Postgres adapter passes the full Adapter conformance suite.
 - Migrations generate correctly from a schema diff and round-trip.
 
 **P1 exit**
+
 - Local API implements all CRUD operations plus the full query language.
 - REST, GraphQL, and RPC are auto-generated and pass an identical behavior matrix — same `where`/`sort`/`depth` results across all three.
 - `@kernel/client` is end-to-end type-safe against a sample config.
 - Access control evaluates at operation, document, and field level.
 
 **P2 exit**
+
 - Admin performs full CRUD via RPC for collections and globals.
 - Lists virtualize and stay responsive at 50k+ rows; forms validate per field (sync + async).
 - Rich-text editor produces and round-trips block content.
 - Keyboard navigation and command palette functional; WCAG 2.2 AA on core flows.
 
 **P3 exit**
+
 - Drafts/publish, version history with autosave, and field-level localization work end to end.
 - Live preview with visual editing functional against a sample frontend.
 - `@kernel/plugin-sdk` documented; one first-party plugin built against it.
@@ -158,6 +162,7 @@ A phase is done when every box is checked. Dates do not move criteria.
 - `create-kernel` scaffolds a working project in under two minutes.
 
 **P4 / GA exit**
+
 - Performance budgets enforced in CI and green.
 - Saga security audit and Loki red-team pass with zero CRITICAL/HIGH findings.
 - Docs complete; migration guides from Payload, Sanity, and Strapi published.

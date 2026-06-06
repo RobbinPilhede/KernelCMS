@@ -32,9 +32,7 @@ async function loadSharp(): Promise<SharpFactory> {
     cached = (mod.default ?? mod) as SharpFactory
     return cached
   } catch {
-    throw new Error(
-      '@kernel/image-sharp needs the optional peer dependency "sharp". Install it with `npm i sharp`.',
-    )
+    throw new Error('@kernel/image-sharp needs the optional peer dependency "sharp". Install it with `npm i sharp`.')
   }
 }
 

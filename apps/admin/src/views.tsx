@@ -15,10 +15,8 @@ import {
   getGlobal,
   listDocs,
   listVersions,
-  publishDoc,
   resetPassword,
   restoreVersion,
-  unpublishDoc,
   updateDoc,
   updateGlobal,
   uploadFile,
@@ -34,7 +32,16 @@ import { ConfirmHost, Toaster, confirmDialog, toast } from './feedback'
 import { ThemeToggle } from './theme'
 
 const SYSTEM = new Set(['id', 'createdAt', 'updatedAt', 'hash'])
-const UPLOAD_SYSTEM = new Set(['filename', 'mime_type', 'filesize', 'checksum', 'storage_key', 'url', 'width', 'height'])
+const UPLOAD_SYSTEM = new Set([
+  'filename',
+  'mime_type',
+  'filesize',
+  'checksum',
+  'storage_key',
+  'url',
+  'width',
+  'height',
+])
 
 function editableFields(collection: AdminCollection): AdminFieldMeta[] {
   return collection.fields.filter((f) => !f.admin?.hidden && !SYSTEM.has(f.name))
@@ -501,7 +508,9 @@ export function ResetPasswordPage() {
           <h1>Choose a new password</h1>
         </div>
         {!collection || !token ? (
-          <div className="alert">This reset link is missing information. Request a new one from the sign-in screen.</div>
+          <div className="alert">
+            This reset link is missing information. Request a new one from the sign-in screen.
+          </div>
         ) : done ? (
           <>
             <p className="muted">Your password has been updated and you're signed in.</p>
@@ -770,7 +779,15 @@ function UserMenu() {
               Edit profile
             </button>
           )}
-          <button type="button" role="menuitem" className="user-item danger" onClick={() => { close(); signOut() }}>
+          <button
+            type="button"
+            role="menuitem"
+            className="user-item danger"
+            onClick={() => {
+              close()
+              signOut()
+            }}
+          >
             <svg {...ICON_SVG}>
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               <path d="M16 17l5-5-5-5" />
@@ -821,13 +838,7 @@ function Shell() {
         <UserMenu />
         <CommandPalette schema={schema} />
         <nav>
-          <NavItem
-            to="/"
-            params={{}}
-            icon={<DashboardIcon />}
-            label="Dashboard"
-            active={pathname === '/'}
-          />
+          <NavItem to="/" params={{}} icon={<DashboardIcon />} label="Dashboard" active={pathname === '/'} />
           <div className="nav-section">Collections</div>
           {collections.map((c) => (
             <NavItem
@@ -956,7 +967,12 @@ const UPLOADABLE_TEXT = new Set(['text', 'textarea', 'email', 'slug', 'code'])
 function fileExt(name: unknown): string {
   const s = String(name ?? '')
   const dot = s.lastIndexOf('.')
-  return dot > 0 ? s.slice(dot + 1).toUpperCase().slice(0, 4) : 'FILE'
+  return dot > 0
+    ? s
+        .slice(dot + 1)
+        .toUpperCase()
+        .slice(0, 4)
+    : 'FILE'
 }
 
 /** WordPress-style media library: a thumbnail grid with drag-and-drop upload. */
@@ -967,7 +983,10 @@ function MediaLibrary({ slug, collection }: { slug: string; collection: AdminCol
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(0)
 
-  const { data, isLoading } = useQuery({ queryKey: ['list', slug], queryFn: () => listDocs(slug, { limit: 100, depth: 0 }) })
+  const { data, isLoading } = useQuery({
+    queryKey: ['list', slug],
+    queryFn: () => listDocs(slug, { limit: 100, depth: 0 }),
+  })
   const docs = data?.docs ?? []
 
   // Pre-fill required text fields (e.g. `alt`) with the filename so a drag-drop
@@ -1148,7 +1167,8 @@ export function ListView() {
   const toggleHidden = (key: string) => {
     setHidden((prev) => {
       const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       try {
         localStorage.setItem(hiddenKey, JSON.stringify([...next]))
       } catch {
@@ -1208,7 +1228,8 @@ export function ListView() {
   const toggleRow = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
   const toggleAll = () =>
@@ -1709,7 +1730,11 @@ export function EditView() {
               </button>
             </>
           ) : (
-            <button className="btn primary" disabled={busy || (isUpload && isNew && !file)} onClick={() => save.mutate(undefined)}>
+            <button
+              className="btn primary"
+              disabled={busy || (isUpload && isNew && !file)}
+              onClick={() => save.mutate(undefined)}
+            >
               {busy ? 'Saving…' : 'Save'}
             </button>
           )}
@@ -1807,9 +1832,12 @@ function UploadZone({
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const stagedUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
-  useEffect(() => () => {
-    if (stagedUrl) URL.revokeObjectURL(stagedUrl)
-  }, [stagedUrl])
+  useEffect(
+    () => () => {
+      if (stagedUrl) URL.revokeObjectURL(stagedUrl)
+    },
+    [stagedUrl],
+  )
 
   const previewUrl = stagedUrl ?? existingUrl
   const showImage = file ? file.type.startsWith('image/') : existingUrl && filename ? isImageName(filename) : false
@@ -1886,7 +1914,12 @@ function VersionsPanel({
 
   return (
     <div className={closing ? 'modal-backdrop closing' : 'modal-backdrop'} onClick={requestClose}>
-      <div className="modal versions-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Version history">
+      <div
+        className="modal versions-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Version history"
+      >
         <header className="modal-head">
           <h2>Version history</h2>
           <button type="button" className="btn ghost" onClick={requestClose} aria-label="Close">

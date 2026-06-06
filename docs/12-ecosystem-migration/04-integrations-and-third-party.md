@@ -46,12 +46,12 @@ export default defineConfig({
 
 The adapter subscribes to `afterChange` and `afterDelete`. On publish it upserts a projected record; on unpublish or delete it removes it. The projection is deliberate — you index a thin, denormalized record (resolved relationships flattened, `richText` reduced to plain text) rather than the whole document. This keeps index size and reindex cost bounded.
 
-| Concern | Algolia | Typesense |
-| --- | --- | --- |
-| Hosting | SaaS only | Self-host or Typesense Cloud |
-| Typo tolerance | Excellent | Excellent |
-| Cost model | Per-operation + records | Flat (self-host) |
-| Best when | You want zero ops | You want to own infra |
+| Concern        | Algolia                 | Typesense                    |
+| -------------- | ----------------------- | ---------------------------- |
+| Hosting        | SaaS only               | Self-host or Typesense Cloud |
+| Typo tolerance | Excellent               | Excellent                    |
+| Cost model     | Per-operation + records | Flat (self-host)             |
+| Best when      | You want zero ops       | You want to own infra        |
 
 A full reindex is a CLI operation, `kernel search reindex posts`, which streams every published document through the same projection in batches and is safe to run against a live index using an alias swap. Search-as-you-type in the admin and on the frontend uses the search-only API key minted per request, never the admin key. Payload offers a search plugin but leaves relevance and projection entirely to you; KernelCMS bakes the publish-state filter and projection into the contract so you cannot accidentally index a draft.
 
@@ -196,12 +196,12 @@ export default defineConfig({
 })
 ```
 
-| Provider | Adapter | Notes |
-| --- | --- | --- |
-| Resend | `@kernel/email/resend` | React templates, simplest setup |
+| Provider | Adapter                  | Notes                                   |
+| -------- | ------------------------ | --------------------------------------- |
+| Resend   | `@kernel/email/resend`   | React templates, simplest setup         |
 | Postmark | `@kernel/email/postmark` | Strong deliverability, separate streams |
-| AWS SES | `@kernel/email/ses` | Cheapest at volume, more setup |
-| SMTP | `@kernel/email/smtp` | Self-host / on-prem relays |
+| AWS SES  | `@kernel/email/ses`      | Cheapest at volume, more setup          |
+| SMTP     | `@kernel/email/smtp`     | Self-host / on-prem relays              |
 
 Because email is an adapter rather than a hard dependency, KernelCMS Cloud can swap in a managed sending domain with no config change in your repo, mirroring how the database and storage adapters stay portable between self-host and Cloud.
 

@@ -10,27 +10,27 @@ KernelCMS resolves every dependency a request might touch — the active databas
 // @kernel/core
 export interface KernelContext {
   /** The fully resolved config, frozen at boot. */
-  readonly config: ResolvedConfig;
+  readonly config: ResolvedConfig
   /** The active database adapter (Drizzle SQL or MongoDB). */
-  readonly db: DatabaseAdapter;
+  readonly db: DatabaseAdapter
   /** Storage driver for uploads (S3, GCS, local disk, ...). */
-  readonly storage: StorageAdapter;
+  readonly storage: StorageAdapter
   /** Authenticated principal, or null for anonymous requests. */
-  readonly user: AuthUser | null;
+  readonly user: AuthUser | null
   /** Access-control evaluator, pre-bound to this user. */
-  readonly access: AccessEvaluator;
+  readonly access: AccessEvaluator
   /** Active locale + fallback chain for this request. */
-  readonly locale: LocaleState;
+  readonly locale: LocaleState
   /** Structured logger with request-scoped correlation id. */
-  readonly logger: Logger;
+  readonly logger: Logger
   /** Per-request memoization + dataloader cache. */
-  readonly cache: RequestCache;
+  readonly cache: RequestCache
   /** Re-enter the operation core with this same context. */
-  readonly local: LocalAPI;
+  readonly local: LocalAPI
   /** Transaction handle when inside `db.transaction(...)`. */
-  readonly tx?: TransactionScope;
+  readonly tx?: TransactionScope
   /** Cooperative cancellation for long operations. */
-  readonly signal: AbortSignal;
+  readonly signal: AbortSignal
 }
 ```
 
@@ -45,22 +45,22 @@ Long-lived dependencies — adapters, the auth provider, the search and queue cl
 ```ts
 // @kernel/server
 export interface Container {
-  resolve<K extends keyof ServiceMap>(token: K): ServiceMap[K];
+  resolve<K extends keyof ServiceMap>(token: K): ServiceMap[K]
   /** Build a request-scoped context from this root container. */
-  createContext(req: IncomingRequest): Promise<KernelContext>;
+  createContext(req: IncomingRequest): Promise<KernelContext>
   /** Graceful shutdown: drains queues, closes pools. */
-  dispose(): Promise<void>;
+  dispose(): Promise<void>
 }
 ```
 
-Services register declaratively. Every adapter in `kernel.config.ts` is a factory, and the factory's return type *is* the registration — there is no separate DI annotation layer, no decorators, no reflect-metadata. The config is the wiring.
+Services register declaratively. Every adapter in `kernel.config.ts` is a factory, and the factory's return type _is_ the registration — there is no separate DI annotation layer, no decorators, no reflect-metadata. The config is the wiring.
 
 ```ts
 // kernel.config.ts
-import { defineConfig } from '@kernel/core';
-import { postgresAdapter } from '@kernel/db-postgres';
-import { s3Storage } from '@kernel/storage';
-import { authPlugin } from '@kernel/auth';
+import { defineConfig } from '@kernel/core'
+import { postgresAdapter } from '@kernel/db-postgres'
+import { s3Storage } from '@kernel/storage'
+import { authPlugin } from '@kernel/auth'
 
 export default defineConfig({
   db: postgresAdapter({ url: process.env.DATABASE_URL }),
@@ -68,7 +68,7 @@ export default defineConfig({
   auth: authPlugin({ strategies: ['password', 'oauth'] }),
   collections: [Posts, Media, Users],
   globals: [SiteSettings],
-});
+})
 ```
 
 At boot, `@kernel/server` walks this config, resolves each factory, and validates the dependency graph. A storage driver that needs a queue, or a plugin that needs the search adapter, declares it and receives it — resolution is topologically ordered, and a missing or cyclic dependency fails the build, not the first request.
@@ -88,17 +88,17 @@ At boot, `@kernel/server` walks this config, resolves each factory, and validate
   (shares db pool, storage, plugins by reference)
 ```
 
-This is the inverse of Strapi's `strapi.service('...')` global and Sanity's reliance on the hosted runtime to supply backend services. In KernelCMS, the wiring is in your repository, type-checked, and identical between self-host and Cloud — Cloud simply swaps the adapter *implementations* (managed Postgres, the global media CDN) behind the same tokens. Nothing in your collection config or hooks changes when you move.
+This is the inverse of Strapi's `strapi.service('...')` global and Sanity's reliance on the hosted runtime to supply backend services. In KernelCMS, the wiring is in your repository, type-checked, and identical between self-host and Cloud — Cloud simply swaps the adapter _implementations_ (managed Postgres, the global media CDN) behind the same tokens. Nothing in your collection config or hooks changes when you move.
 
 ### Resolution rules
 
-| Concern | Rule |
-| --- | --- |
-| Singletons | Adapters and plugin services resolve once at boot, shared by reference across all contexts. |
-| Request services | `access`, `locale`, `cache`, `logger` are constructed per request in `createContext`. |
-| Lazy plugins | A plugin may register a factory that resolves on first use, then memoizes for the container lifetime. |
-| Overrides | Tests and Cloud inject alternate factories at boot; resolution is by token, so call sites never change. |
-| Cycles | Detected at boot via topological sort; a cycle is a hard build error. |
+| Concern          | Rule                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------- |
+| Singletons       | Adapters and plugin services resolve once at boot, shared by reference across all contexts.             |
+| Request services | `access`, `locale`, `cache`, `logger` are constructed per request in `createContext`.                   |
+| Lazy plugins     | A plugin may register a factory that resolves on first use, then memoizes for the container lifetime.   |
+| Overrides        | Tests and Cloud inject alternate factories at boot; resolution is by token, so call sites never change. |
+| Cycles           | Detected at boot via topological sort; a cycle is a hard build error.                                   |
 
 ## Scoping and lifetimes
 
@@ -115,14 +115,14 @@ await context.db.transaction(async (txContext) => {
   const order = await txContext.local.create({
     collection: 'orders',
     data: { total },
-  });
+  })
   // Nested writes and afterChange hooks all share txContext.tx.
   await txContext.local.update({
     collection: 'inventory',
     id: skuId,
     data: { reserved: { decrement: order.qty } },
-  });
-}); // commits on success, rolls back on throw
+  })
+}) // commits on success, rolls back on throw
 ```
 
 The lifetime boundaries are also where cleanup hooks fire. The request scope tears down dataloaders and flushes the logger; the transaction scope commits or rolls back; the application scope drains in-flight queue jobs before closing pools. `context.signal` propagates cancellation downward — abort the request and every in-flight `db` and `storage` call observing the signal stops.
@@ -141,23 +141,23 @@ app boot ───────────────────────�
 Because every dependency arrives through the context and every service resolves by token, the operation core has no hidden inputs — which is the whole point. A unit test constructs a container with whatever adapters it wants and never touches HTTP, the admin app, or a real network.
 
 ```ts
-import { createTestContainer } from '@kernel/server/testing';
-import { sqliteAdapter } from '@kernel/db-sqlite';
+import { createTestContainer } from '@kernel/server/testing'
+import { sqliteAdapter } from '@kernel/db-sqlite'
 
 const container = await createTestContainer({
   config,
   db: sqliteAdapter({ url: ':memory:' }), // real DB, in-memory
   storage: memoryStorage(),
-  user: { id: 'u1', roles: ['editor'] },   // seed the principal
-});
+  user: { id: 'u1', roles: ['editor'] }, // seed the principal
+})
 
-const ctx = await container.createContext(anonReq());
+const ctx = await container.createContext(anonReq())
 
 test('editors cannot publish', async () => {
-  await expect(
-    ctx.local.update({ collection: 'posts', id, data: { _status: 'published' } }),
-  ).rejects.toThrow(ForbiddenError);
-});
+  await expect(ctx.local.update({ collection: 'posts', id, data: { _status: 'published' } })).rejects.toThrow(
+    ForbiddenError,
+  )
+})
 ```
 
 Note the in-memory SQLite adapter: per our testing tenets we prefer a real dependency over a mock, and the Adapter contract makes that cheap — swap `@kernel/db-postgres` for `@kernel/db-sqlite` at the token, and the operation core can't tell. Access control, validation, localization fallback, and hook ordering are all exercised against real persistence, not stubs.
@@ -167,10 +167,10 @@ For the rare case where a real service is impractical (a paid email provider, a 
 ```ts
 const container = await createTestContainer({
   config,
-  email: fakeEmail(),        // captures sends for assertion
+  email: fakeEmail(), // captures sends for assertion
   search: inMemorySearch(),
-});
-expect(fakeEmail().sent).toContainEqual({ to: 'a@b.com', template: 'welcome' });
+})
+expect(fakeEmail().sent).toContainEqual({ to: 'a@b.com', template: 'welcome' })
 ```
 
 This is a sharper testing story than Payload's `payload.init()` (which still bootstraps a near-full server) or Strapi (where `strapi` is a global you stub by mutation). KernelCMS tests build the smallest container that satisfies the code under test, with zero global state to reset between cases. Combined with the request-scoped `cache`, tests are deterministic and isolated by construction — no shared mutable state, exactly as the testing rules require. See Testing the operation core for fixtures and factory helpers.

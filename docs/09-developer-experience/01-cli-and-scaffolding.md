@@ -55,16 +55,16 @@ create-kernel my-blog \
   --no-git
 ```
 
-| Flag | Purpose | Default |
-| --- | --- | --- |
-| `--db` | Database adapter | prompt |
-| `--storage` | Storage adapter | `local` |
-| `--auth` | Auth strategy | `password` |
-| `--template` | Starter template | `blank` |
-| `--pm` | Package manager (`pnpm`/`npm`/`bun`) | detected |
-| `--no-install` | Skip dependency install | install |
-| `--no-git` | Skip `git init` | init |
-| `--use-cloud` | Pre-wire `@kernel/cloud` deploy target | off |
+| Flag           | Purpose                                | Default    |
+| -------------- | -------------------------------------- | ---------- |
+| `--db`         | Database adapter                       | prompt     |
+| `--storage`    | Storage adapter                        | `local`    |
+| `--auth`       | Auth strategy                          | `password` |
+| `--template`   | Starter template                       | `blank`    |
+| `--pm`         | Package manager (`pnpm`/`npm`/`bun`)   | detected   |
+| `--no-install` | Skip dependency install                | install    |
+| `--no-git`     | Skip `git init`                        | init       |
+| `--use-cloud`  | Pre-wire `@kernel/cloud` deploy target | off        |
 
 `--use-cloud` is the only platform-specific flag: it adds the `@kernel/cloud` provider and a deploy hook so the same project pushes to [KernelCMS Cloud](../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md) without changing any content config. Self-host and Cloud share one config; the flag only adds a deploy target.
 
@@ -140,12 +140,12 @@ kernel dev
 
 It runs a watcher that regenerates types and the REST/GraphQL schemas on every config change, so the admin and your editor never lag the source. By default `kernel dev` does **not** mutate your database; pass `--push` to apply schema diffs directly for fast local iteration (the Drizzle "push" workflow), or leave it off and use real migrations. Sanity has no migration concept because the dataset is schemaless; KernelCMS treats the schema as code and the database as something you migrate deliberately.
 
-| Flag | Effect |
-| --- | --- |
-| `--port <n>` | Admin/API port (default `3000`) |
-| `--push` | Apply schema diff to dev DB without writing a migration |
-| `--no-open` | Don't open the browser |
-| `--inspect` | Enable Node/Bun inspector |
+| Flag         | Effect                                                  |
+| ------------ | ------------------------------------------------------- |
+| `--port <n>` | Admin/API port (default `3000`)                         |
+| `--push`     | Apply schema diff to dev DB without writing a migration |
+| `--no-open`  | Don't open the browser                                  |
+| `--inspect`  | Enable Node/Bun inspector                               |
 
 ### `kernel build`
 

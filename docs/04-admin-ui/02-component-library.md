@@ -20,13 +20,13 @@ Payload ships a React component set but couples it tightly to its own admin runt
 
 Primitives are the leaf components. They have no knowledge of collections, documents, or the API — they render and emit events. They split into five groups.
 
-| Group | Primitives | Notes |
-|-------|-----------|-------|
-| Layout | `Box`, `Stack`, `Inline`, `Grid`, `Card`, `Divider`, `Container` | Token-driven spacing only; no raw pixels in props |
-| Typography | `Text`, `Heading`, `Label`, `Code`, `KeyboardKey` | `text-wrap: balance` on headings, `pretty` on body |
-| Forms | `Input`, `Textarea`, `Select`, `Combobox`, `Checkbox`, `Radio`, `Switch`, `Slider`, `DatePicker`, `ColorField`, `FileDrop` | Each pairs with a `Field` wrapper for label/error/description |
-| Overlays | `Dialog`, `Drawer`, `Popover`, `Tooltip`, `Menu`, `Toast`, `CommandPalette` | All built on a shared focus-trap + dismiss layer |
-| Feedback & data | `Button`, `IconButton`, `Badge`, `Avatar`, `Spinner`, `Skeleton`, `ProgressBar`, `Table`, `VirtualList`, `Tabs`, `Tree` | `Table`/`VirtualList` wrap TanStack Table + Virtual |
+| Group           | Primitives                                                                                                                 | Notes                                                         |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Layout          | `Box`, `Stack`, `Inline`, `Grid`, `Card`, `Divider`, `Container`                                                           | Token-driven spacing only; no raw pixels in props             |
+| Typography      | `Text`, `Heading`, `Label`, `Code`, `KeyboardKey`                                                                          | `text-wrap: balance` on headings, `pretty` on body            |
+| Forms           | `Input`, `Textarea`, `Select`, `Combobox`, `Checkbox`, `Radio`, `Switch`, `Slider`, `DatePicker`, `ColorField`, `FileDrop` | Each pairs with a `Field` wrapper for label/error/description |
+| Overlays        | `Dialog`, `Drawer`, `Popover`, `Tooltip`, `Menu`, `Toast`, `CommandPalette`                                                | All built on a shared focus-trap + dismiss layer              |
+| Feedback & data | `Button`, `IconButton`, `Badge`, `Avatar`, `Spinner`, `Skeleton`, `ProgressBar`, `Table`, `VirtualList`, `Tabs`, `Tree`    | `Table`/`VirtualList` wrap TanStack Table + Virtual           |
 
 Two primitives carry most of the admin's weight and deserve specifics.
 
@@ -42,7 +42,7 @@ const table = useReactTable({
   getCoreRowModel: getCoreRowModel(),
   state: { sorting, columnSizing, rowSelection },
   onSortingChange: setSorting, // setSorting writes to router search params
-  manualSorting: true,         // server does the sort via the shared query language
+  manualSorting: true, // server does the sort via the shared query language
 })
 
 return <Table table={table} virtualized estimateRowHeight={44} />
@@ -52,8 +52,7 @@ return <Table table={table} virtualized estimateRowHeight={44} />
 
 ```tsx
 import { Field, Input } from '@kernel/ui'
-
-<Field label="Slug" description="URL-safe identifier" error={errors.slug} required>
+;<Field label="Slug" description="URL-safe identifier" error={errors.slug} required>
   {(props) => <Input {...props} value={value} onChange={onChange} />}
 </Field>
 ```
@@ -81,8 +80,12 @@ Components accept slots, not a growing pile of boolean props. A `Card` takes `he
   <Dialog.Title>Delete “{doc.title}”?</Dialog.Title>
   <Dialog.Body>This removes the published version and all drafts.</Dialog.Body>
   <Dialog.Actions>
-    <Button variant="ghost" onClick={close}>Cancel</Button>
-    <Button variant="danger" onClick={confirm}>Delete</Button>
+    <Button variant="ghost" onClick={close}>
+      Cancel
+    </Button>
+    <Button variant="danger" onClick={confirm}>
+      Delete
+    </Button>
   </Dialog.Actions>
 </Dialog>
 ```
@@ -98,8 +101,12 @@ Components accept slots, not a growing pile of boolean props. A `Card` takes `he
     <Tabs.Trigger value="seo">SEO</Tabs.Trigger>
     <Tabs.Trigger value="versions">Versions</Tabs.Trigger>
   </Tabs.List>
-  <Tabs.Panel value="content"><FieldRenderer fields={contentFields} /></Tabs.Panel>
-  <Tabs.Panel value="seo"><FieldRenderer fields={seoFields} /></Tabs.Panel>
+  <Tabs.Panel value="content">
+    <FieldRenderer fields={contentFields} />
+  </Tabs.Panel>
+  <Tabs.Panel value="seo">
+    <FieldRenderer fields={seoFields} />
+  </Tabs.Panel>
 </Tabs>
 ```
 
@@ -148,7 +155,7 @@ Each interactive primitive ships in two layers: a **headless** behavior hook/par
 ```tsx
 // Styled: the default, fully themed
 import { Combobox } from '@kernel/ui'
-<Combobox options={authors} value={authorId} onChange={setAuthorId} />
+;<Combobox options={authors} value={authorId} onChange={setAuthorId} />
 
 // Headless: same keyboard nav, focus management, and ARIA — your markup
 import { useCombobox } from '@kernel/ui/headless'
@@ -159,7 +166,11 @@ function CustomAuthorPicker() {
       <input {...cb.getInputProps()} />
       {cb.isOpen && (
         <ul {...cb.getListProps()}>
-          {cb.options.map((o) => <li key={o.id} {...cb.getOptionProps(o)}>{o.label}</li>)}
+          {cb.options.map((o) => (
+            <li key={o.id} {...cb.getOptionProps(o)}>
+              {o.label}
+            </li>
+          ))}
         </ul>
       )}
     </div>
@@ -196,15 +207,15 @@ Concentric border-radius, fluid `clamp()` spacing, and the full color ramp deriv
 
 Accessibility is a property of the headless layer, which means it cannot be styled away. The targets are WCAG 2.2 AA, including i18n with RTL, matching the brief. Every primitive is tested against the same checklist.
 
-| Concern | Guarantee |
-|---------|-----------|
-| Focus | `:focus-visible` rings only (keyboard, not mouse click); logical focus order; focus trap + return on every overlay |
+| Concern  | Guarantee                                                                                                                    |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Focus    | `:focus-visible` rings only (keyboard, not mouse click); logical focus order; focus trap + return on every overlay           |
 | Keyboard | All interactive primitives operable without a pointer; `Menu`/`Tabs`/`Tree`/`Combobox` use roving tabindex and arrow-key nav |
-| ARIA | Roles, `aria-*`, and live regions wired in headless hooks; `Field` owns `aria-describedby`/`aria-invalid` |
-| Contrast | Token ramps validated to ≥ 4.5:1 text, ≥ 3:1 UI; enforced in CI against the token file |
-| Motion | All transitions specify exact properties; `prefers-reduced-motion: reduce` honored globally |
-| RTL | Logical properties (`margin-inline`, `padding-block`) everywhere; `dir` flips layout without per-component work |
-| Targets | 44px minimum interactive target on touch |
+| ARIA     | Roles, `aria-*`, and live regions wired in headless hooks; `Field` owns `aria-describedby`/`aria-invalid`                    |
+| Contrast | Token ramps validated to ≥ 4.5:1 text, ≥ 3:1 UI; enforced in CI against the token file                                       |
+| Motion   | All transitions specify exact properties; `prefers-reduced-motion: reduce` honored globally                                  |
+| RTL      | Logical properties (`margin-inline`, `padding-block`) everywhere; `dir` flips layout without per-component work              |
+| Targets  | 44px minimum interactive target on touch                                                                                     |
 
 Overlays share one dismiss-and-trap layer, so `Dialog`, `Drawer`, `Popover`, and `CommandPalette` all handle `Escape`, outside-click, scroll-lock, and focus return identically. The command palette — central to the keyboard-first UX in [navigation and shell](./03-navigation-and-app-shell.md) — is just `CommandPalette` built on that layer, announced to screen readers as a live combobox.
 
@@ -213,6 +224,6 @@ Accessibility regressions are caught mechanically: every primitive carries `axe`
 ## Open questions
 
 - **Styling engine.** Token-driven CSS Modules vs. a zero-runtime compiler (e.g. vanilla-extract / Panda). Both satisfy the no-runtime-CSS-in-JS rule; the decision hinges on plugin-author ergonomics and bundle cost.
-- **Headless surface area.** Whether to expose headless hooks for *every* primitive or only the complex interactive ones (`Combobox`, `Menu`, `Tree`, overlays). Exposing all increases the public API we must keep stable across majors.
+- **Headless surface area.** Whether to expose headless hooks for _every_ primitive or only the complex interactive ones (`Combobox`, `Menu`, `Tree`, overlays). Exposing all increases the public API we must keep stable across majors.
 - **Icon strategy.** Ship a curated icon set in `@kernel/ui` vs. depend on an external set vs. let consumers inject icons via a provider. Affects bundle size and white-label flexibility.
 - **`@kernel/ui` outside the admin.** How much of the library to guarantee as stable for use on public frontends via `@kernel/client`, versus treating it as an admin-internal contract.

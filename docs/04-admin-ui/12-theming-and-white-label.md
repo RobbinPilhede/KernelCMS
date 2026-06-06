@@ -95,20 +95,22 @@ For full control — animated marks, conditional badges per environment — pass
 ```ts
 import { AcmeLogo } from './admin/AcmeLogo'
 
-branding: { logo: AcmeLogo } // a React component receiving { colorScheme, collapsed }
+branding: {
+  logo: AcmeLogo
+} // a React component receiving { colorScheme, collapsed }
 ```
 
 ### Colors
 
 Define brand color ramps once; semantic tokens reference them. The admin uses semantic tokens (`bg-canvas`, `text-default`, `border-subtle`, `brand`, `danger`) everywhere, so overriding the ramp re-skins the entire surface — buttons, focus rings, table selection, command palette — without touching component code. Use the CSS `light-dark()` function for paired values and let `colorScheme` drive the mode. Contrast is enforced: a build-time check flags any semantic pair below WCAG 2.2 AA (4.5:1 for body text), because accessibility is non-negotiable, not a theme-author's responsibility.
 
-| Slot | Token group | Drives |
-| --- | --- | --- |
-| Logo | `branding.logo` | Sidebar, login screen, collapsed nav |
-| Palette | `tokens.color.*` | All surfaces via semantic tokens |
-| Copy | `copy.*` | Product name, login text, empty states, emails |
-| Typography | `tokens.font.*` | UI font and code/mono font |
-| Shape | `tokens.radius`, `tokens.space.unit` | Corner rounding, density |
+| Slot       | Token group                          | Drives                                         |
+| ---------- | ------------------------------------ | ---------------------------------------------- |
+| Logo       | `branding.logo`                      | Sidebar, login screen, collapsed nav           |
+| Palette    | `tokens.color.*`                     | All surfaces via semantic tokens               |
+| Copy       | `copy.*`                             | Product name, login text, empty states, emails |
+| Typography | `tokens.font.*`                      | UI font and code/mono font                     |
+| Shape      | `tokens.radius`, `tokens.space.unit` | Corner rounding, density                       |
 
 ### Copy
 
@@ -120,7 +122,7 @@ defineTheme({
     'app.title': 'Acme Content',
     'auth.login.heading': 'Sign in to Acme',
     'auth.login.subheading': 'Use your Acme SSO account',
-    'nav.footer.poweredBy': '',           // empty string removes it entirely
+    'nav.footer.poweredBy': '', // empty string removes it entirely
     'collection.empty.cta': 'Create your first article',
   },
 })
@@ -151,12 +153,14 @@ The admin ships its styles inside the named cascade layer `kernel`, and your ove
   }
 
   /* Reach an internal element via a stable data-attribute hook */
-  [data-kernel="table-row"][data-selected="true"] {
+  [data-kernel='table-row'][data-selected='true'] {
     box-shadow: inset 3px 0 0 var(--color-brand-500);
   }
 
   /* Density tweak honoring reduced-motion and logical properties */
-  [data-kernel="field"] { padding-block: calc(var(--space-unit) * 1.5); }
+  [data-kernel='field'] {
+    padding-block: calc(var(--space-unit) * 1.5);
+  }
 }
 ```
 

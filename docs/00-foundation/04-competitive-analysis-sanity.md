@@ -1,6 +1,6 @@
 # Competitive Analysis: Sanity
 
-Sanity is the most architecturally distinct competitor KernelCMS faces. Where Payload is a code-first monolith and Strapi is a plugin-driven Node app, Sanity is a *hosted query engine* wrapped in a configurable editing client. Its two crown jewels — GROQ (a query language for arbitrary JSON) and Portable Text (a serializable rich-text format) — are genuinely good engineering that solved real problems. This teardown separates what Sanity got right (and we should steal) from the lock-in and architectural choices we deliberately reject. The short version: we want GROQ's expressiveness without GROQ's runtime, Studio's configurability without its proprietary query layer, and Portable Text's portability as a first-class output of `@kernel/richtext`.
+Sanity is the most architecturally distinct competitor KernelCMS faces. Where Payload is a code-first monolith and Strapi is a plugin-driven Node app, Sanity is a _hosted query engine_ wrapped in a configurable editing client. Its two crown jewels — GROQ (a query language for arbitrary JSON) and Portable Text (a serializable rich-text format) — are genuinely good engineering that solved real problems. This teardown separates what Sanity got right (and we should steal) from the lock-in and architectural choices we deliberately reject. The short version: we want GROQ's expressiveness without GROQ's runtime, Studio's configurability without its proprietary query layer, and Portable Text's portability as a first-class output of `@kernel/richtext`.
 
 ## GROQ and the Content Lake
 
@@ -23,9 +23,9 @@ Three things make this powerful:
 2. **Projections shape the response.** The `{ ... }` block returns exactly the shape you asked for, computed fields included (`"slug": slug.current`).
 3. **One namespace.** `*` is every document. Filters discriminate by `_type`. There is no schema barrier between collections at query time.
 
-The cost is real, though. GROQ runs only against Sanity's content lake (or `@sanity/client` hitting their API). It is a proprietary query language with a proprietary runtime. If you self-host, you don't get GROQ — you get nothing. Your content is portable as JSON export, but your *queries* are not. Every GROQ query in your frontend is a line tying you to Sanity's hosted service.
+The cost is real, though. GROQ runs only against Sanity's content lake (or `@sanity/client` hitting their API). It is a proprietary query language with a proprietary runtime. If you self-host, you don't get GROQ — you get nothing. Your content is portable as JSON export, but your _queries_ are not. Every GROQ query in your frontend is a line tying you to Sanity's hosted service.
 
-KernelCMS rejects the proprietary-runtime model. We give you one query language — the same `where` / `sort` / pagination / `depth` shape — across REST, GraphQL, the Local API, and typed RPC, and it runs on *your* database through `@kernel/db`. Depth-based dereferencing is our answer to `author->name`:
+KernelCMS rejects the proprietary-runtime model. We give you one query language — the same `where` / `sort` / pagination / `depth` shape — across REST, GraphQL, the Local API, and typed RPC, and it runs on _your_ database through `@kernel/db`. Depth-based dereferencing is our answer to `author->name`:
 
 ```ts
 import { getPayload } from '@kernel/client'
@@ -33,10 +33,7 @@ import { getPayload } from '@kernel/client'
 const posts = await kernel.find({
   collection: 'posts',
   where: {
-    and: [
-      { _status: { equals: 'published' } },
-      { publishedAt: { less_than: new Date() } },
-    ],
+    and: [{ _status: { equals: 'published' } }, { publishedAt: { less_than: new Date() } }],
   },
   sort: '-publishedAt',
   limit: 10,
@@ -47,13 +44,13 @@ const posts = await kernel.find({
 
 The tradeoff is honest: GROQ is more expressive for ad-hoc graph traversal than our `depth` model. We win on type safety (GROQ projections are strings; ours are inferred from config), on running against any adapter, and on not coupling your frontend to a vendor. Where users genuinely need GROQ-class traversal, the answer is the GraphQL surface from `@kernel/graphql`, which is also auto-generated from config and runs everywhere.
 
-| Concern | Sanity (GROQ + content lake) | KernelCMS |
-| --- | --- | --- |
-| Query language | GROQ (proprietary) | Unified `where`/`sort`/`depth` over REST/GraphQL/RPC |
-| Runtime | Sanity-hosted only | Any `@kernel/db` adapter (Postgres, SQLite, MySQL, MongoDB) |
-| Joins | `->` dereference | `depth` resolution + relationship fields |
-| Type safety | String projections, codegen | Inferred from `kernel.config.ts`, zero `any` |
-| Self-host | Not available | First-class |
+| Concern        | Sanity (GROQ + content lake) | KernelCMS                                                   |
+| -------------- | ---------------------------- | ----------------------------------------------------------- |
+| Query language | GROQ (proprietary)           | Unified `where`/`sort`/`depth` over REST/GraphQL/RPC        |
+| Runtime        | Sanity-hosted only           | Any `@kernel/db` adapter (Postgres, SQLite, MySQL, MongoDB) |
+| Joins          | `->` dereference             | `depth` resolution + relationship fields                    |
+| Type safety    | String projections, codegen  | Inferred from `kernel.config.ts`, zero `any`                |
+| Self-host      | Not available                | First-class                                                 |
 
 See [Persistence and the Adapter contract](../03-persistence/00-persistence-overview-and-adapter-contract.md) for how `depth` resolution maps onto each backend.
 
@@ -109,7 +106,7 @@ The architectural lesson from Studio is that **configurability and escape hatche
 
 ## Hosted versus Self-Host Tradeoffs
 
-Sanity's commercial model is the content lake. Studio is open source and free; the *data* lives in Sanity's hosted, metered API. Pricing scales on API requests, bandwidth, document count, and seats. There is no self-hosted content lake — the GROQ engine and real-time API are not products you can run.
+Sanity's commercial model is the content lake. Studio is open source and free; the _data_ lives in Sanity's hosted, metered API. Pricing scales on API requests, bandwidth, document count, and seats. There is no self-hosted content lake — the GROQ engine and real-time API are not products you can run.
 
 ```
 SANITY                                  KERNELCMS
@@ -128,7 +125,7 @@ SANITY                                  KERNELCMS
 This is the single biggest strategic gap KernelCMS exploits. Sanity's bet is "you'll never want to run the database." That bet excludes:
 
 - Teams with data-residency or compliance requirements that forbid third-party storage.
-- Teams that need the content in *their* Postgres for joins with application data.
+- Teams that need the content in _their_ Postgres for joins with application data.
 - Teams that want predictable infra cost instead of per-request metering.
 
 KernelCMS offers **two ways to run with full portability between them**:
@@ -138,13 +135,13 @@ KernelCMS offers **two ways to run with full portability between them**:
 
 The guarantee Sanity cannot make: **content and config are always portable between the two.** Your `kernel.config.ts` is the source of truth; your data lives in a standard database you can `pg_dump`. Moving from Cloud to self-host is an export/import, not a migration off a proprietary lake. This is the "no lock-in" wedge stated plainly. See [Deployment topologies](../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md) and [KernelCMS Cloud](../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md).
 
-| Dimension | Sanity | KernelCMS self-host | KernelCMS Cloud |
-| --- | --- | --- | --- |
-| Data location | Sanity content lake only | Your database | Managed, exportable |
-| Query engine | Proprietary GROQ | Runs on your adapter | Runs on managed adapter |
-| Pricing model | Per request / bandwidth / seats | Your infra cost | Metered, but portable out |
-| Lock-in | High (queries + runtime) | None | None (config is portable) |
-| Real-time | Built in | Opt-in via TanStack DB | Built in |
+| Dimension     | Sanity                          | KernelCMS self-host    | KernelCMS Cloud           |
+| ------------- | ------------------------------- | ---------------------- | ------------------------- |
+| Data location | Sanity content lake only        | Your database          | Managed, exportable       |
+| Query engine  | Proprietary GROQ                | Runs on your adapter   | Runs on managed adapter   |
+| Pricing model | Per request / bandwidth / seats | Your infra cost        | Metered, but portable out |
+| Lock-in       | High (queries + runtime)        | None                   | None (config is portable) |
+| Real-time     | Built in                        | Opt-in via TanStack DB | Built in                  |
 
 ## Portable Text Lessons
 
@@ -173,10 +170,10 @@ The lessons we take:
 Where KernelCMS improves on Portable Text:
 
 - **Typed renderers, zero `any`.** Our serializers are typed against the node union, so an unhandled block type is a compile error, not a runtime blank. Sanity's `@portabletext/react` is good but the component map is loosely typed.
-- **Editor and storage co-designed.** `@kernel/richtext` ships the block-based editor *and* the schema, both driven from `kernel.config.ts`. You don't wire a separate editor library to a separate serializer.
+- **Editor and storage co-designed.** `@kernel/richtext` ships the block-based editor _and_ the schema, both driven from `kernel.config.ts`. You don't wire a separate editor library to a separate serializer.
 - **Portable Text export.** Because we treat rich text as data, `@kernel/richtext` can emit a Portable-Text-compatible document for teams migrating off Sanity — concrete proof of the no-lock-in tenet, in the inbound direction this time.
 
-The takeaway across all four areas: Sanity's *formats and editor* are excellent and worth matching or beating; its *runtime and hosting* are a lock-in surface we route around by running the same expressive query model on any database, self-hosted or on KernelCMS Cloud, with content and config portable in both directions.
+The takeaway across all four areas: Sanity's _formats and editor_ are excellent and worth matching or beating; its _runtime and hosting_ are a lock-in surface we route around by running the same expressive query model on any database, self-hosted or on KernelCMS Cloud, with content and config portable in both directions.
 
 ## Open Questions
 

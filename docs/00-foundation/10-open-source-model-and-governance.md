@@ -8,23 +8,23 @@ Every package that you need to model content, run the server, and operate the ad
 
 The MIT-licensed surface is the whole `@kernel/*` runtime:
 
-| Package | Scope | License |
-| --- | --- | --- |
-| `@kernel/core` | Operation core, query language, field & access engine | MIT |
-| `@kernel/server` | TanStack Start host, lifecycle, hooks | MIT |
-| `@kernel/admin` | React admin app | MIT |
-| `@kernel/ui` | Component library, design tokens | MIT |
-| `@kernel/db`, `@kernel/db-postgres`, `@kernel/db-sqlite`, `@kernel/db-mysql`, `@kernel/db-mongodb` | Adapter contract + all official adapters | MIT |
-| `@kernel/storage`, `@kernel/auth`, `@kernel/graphql`, `@kernel/rest`, `@kernel/rpc`, `@kernel/richtext` | Infrastructure adapters & API surfaces | MIT |
-| `@kernel/cli`, `@kernel/client`, `@kernel/plugin-sdk` | `kernel` binary, typed client, plugin authoring kit | MIT |
-| `create-kernel` | Scaffolder | MIT |
+| Package                                                                                                 | Scope                                                 | License |
+| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------- |
+| `@kernel/core`                                                                                          | Operation core, query language, field & access engine | MIT     |
+| `@kernel/server`                                                                                        | TanStack Start host, lifecycle, hooks                 | MIT     |
+| `@kernel/admin`                                                                                         | React admin app                                       | MIT     |
+| `@kernel/ui`                                                                                            | Component library, design tokens                      | MIT     |
+| `@kernel/db`, `@kernel/db-postgres`, `@kernel/db-sqlite`, `@kernel/db-mysql`, `@kernel/db-mongodb`      | Adapter contract + all official adapters              | MIT     |
+| `@kernel/storage`, `@kernel/auth`, `@kernel/graphql`, `@kernel/rest`, `@kernel/rpc`, `@kernel/richtext` | Infrastructure adapters & API surfaces                | MIT     |
+| `@kernel/cli`, `@kernel/client`, `@kernel/plugin-sdk`                                                   | `kernel` binary, typed client, plugin authoring kit   | MIT     |
+| `create-kernel`                                                                                         | Scaffolder                                            | MIT     |
 
 The one package outside this list is `@kernel/cloud`, covered below.
 
 Why MIT and not AGPL or BSL? Three reasons.
 
 1. **Adapters and plugins must be unencumbered.** A copyleft core would force every database adapter, storage backend, and third-party plugin to reason about license compatibility before it could link against us. The `@kernel/plugin-sdk` ecosystem only works if the boundary is permissive. Payload is MIT and benefits from exactly this; Strapi's relicensing to a custom SSPL-adjacent model in its enterprise tiers created precisely the uncertainty we want to avoid.
-2. **Embedding is a first-class use case.** People build commercial products *on top of* KernelCMS. MIT means they never have to ask a lawyer whether shipping their app triggers a disclosure obligation.
+2. **Embedding is a first-class use case.** People build commercial products _on top of_ KernelCMS. MIT means they never have to ask a lawyer whether shipping their app triggers a disclosure obligation.
 3. **Cloud does not need a license moat.** Sanity is closed-core with an open SDK; their leverage is the hosted backend, not the license. We take the better half of that: the backend is open too, and Cloud competes on operational excellence rather than on being the only thing that can run the code.
 
 Every published package carries a `LICENSE` file and an SPDX header. CI fails on any new dependency whose license is not in the allowlist (`MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`). Copyleft dependencies are rejected at the PR gate, not discovered at release.
@@ -76,22 +76,22 @@ import { cloud } from '@kernel/cloud' // commercial license
 export default defineConfig({
   deploy: cloud({ project: 'acme-marketing', region: 'eu-west' }),
   collections: [Posts, Authors, Media], // unchanged
-  globals: [SiteSettings],              // unchanged
+  globals: [SiteSettings], // unchanged
 })
 ```
 
 What lives in commercial / enterprise add-ons, and the explicit guarantee that it never migrates into Cloud-only:
 
-| Capability | Where | Guarantee |
-| --- | --- | --- |
-| Content modeling, fields, validation, access control | MIT core | Always free |
-| REST / GraphQL / RPC generation, query language | MIT core | Always free |
-| Admin panel, live preview, command palette, i18n/RTL | MIT core | Always free |
-| All database, storage, auth, search, cache, queue adapters | MIT core | Always free |
-| Drafts, versions, autosave, localization | MIT core | Always free |
-| Managed multi-tenant hosting, billing, metering | `@kernel/cloud` | Commercial |
-| Global content CDN, managed backups, point-in-time restore | `@kernel/cloud` | Commercial |
-| SSO/SCIM provisioning, audit-log export, SLA support | Enterprise | Commercial, but the **mechanisms** (auth adapter, hooks) are MIT |
+| Capability                                                 | Where           | Guarantee                                                        |
+| ---------------------------------------------------------- | --------------- | ---------------------------------------------------------------- |
+| Content modeling, fields, validation, access control       | MIT core        | Always free                                                      |
+| REST / GraphQL / RPC generation, query language            | MIT core        | Always free                                                      |
+| Admin panel, live preview, command palette, i18n/RTL       | MIT core        | Always free                                                      |
+| All database, storage, auth, search, cache, queue adapters | MIT core        | Always free                                                      |
+| Drafts, versions, autosave, localization                   | MIT core        | Always free                                                      |
+| Managed multi-tenant hosting, billing, metering            | `@kernel/cloud` | Commercial                                                       |
+| Global content CDN, managed backups, point-in-time restore | `@kernel/cloud` | Commercial                                                       |
+| SSO/SCIM provisioning, audit-log export, SLA support       | Enterprise      | Commercial, but the **mechanisms** (auth adapter, hooks) are MIT |
 
 The last row matters. Enterprise SSO is a paid offering, but `@kernel/auth` exposes the adapter interface that makes any SSO provider implementable by anyone, for free. We sell the supported, hardened integration and the SLA — never the only door into the building. This is where we diverge hardest from Strapi, whose RBAC and SSO are gated enterprise features with no community-buildable equivalent at the framework layer. See [Deployment Topologies](../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md) and the [Adapter Contract](../03-persistence/00-persistence-overview-and-adapter-contract.md) for the mechanics.
 
@@ -114,7 +114,7 @@ Concrete requirements, enforced by automation rather than reviewer goodwill:
 
 ### The DCO, not a CLA
 
-We require the **Developer Certificate of Origin**, signed off per commit (`git commit -s`), and explicitly *not* a copyright-assignment CLA. A bot enforces sign-off on every commit in a PR.
+We require the **Developer Certificate of Origin**, signed off per commit (`git commit -s`), and explicitly _not_ a copyright-assignment CLA. A bot enforces sign-off on every commit in a PR.
 
 This is a values decision. A traditional CLA — the kind that assigns or licenses your copyright to a single company — gives that company the unilateral power to relicense the whole project later. That is the exact lever Strapi and others have pulled. By standing on the DCO, **no entity, including the KernelCMS company, can relicense contributed core code away from MIT without every contributor's agreement.** The license stickiness is structural, not a promise. Contributors retain their copyright; they grant the project the MIT license to their work and certify they have the right to do so. Nothing more.
 
@@ -135,7 +135,7 @@ RFCs are Markdown files in `rfcs/` with a fixed front matter, so tooling and hum
 ---
 rfc: 0042
 title: Cross-field async validation in @kernel/core
-status: draft        # draft | fcp | accepted | rejected | postponed
+status: draft # draft | fcp | accepted | rejected | postponed
 authors: [you@example.com]
 packages: ['@kernel/core', '@kernel/admin']
 breaking: false
@@ -143,10 +143,15 @@ target: 2.3.0
 ---
 
 ## Summary
-## Motivation        # what's broken without this; prior art in Payload/Sanity/Strapi
-## Design            # kernel.config.ts snippets, @kernel/* signatures, migration notes
+
+## Motivation # what's broken without this; prior art in Payload/Sanity/Strapi
+
+## Design # kernel.config.ts snippets, @kernel/\* signatures, migration notes
+
 ## Drawbacks
+
 ## Alternatives
+
 ## Open questions
 ```
 
@@ -156,14 +161,14 @@ Two norms keep RFCs honest. First, **every RFC must cite prior art** — how Pay
 
 KernelCMS runs on **BDFL-delegated, package-scoped maintainership** — strong enough to ship a coherent product, distributed enough that no single person is a bottleneck.
 
-| Role | Authority | How you get it |
-| --- | --- | --- |
-| Contributor | Open PRs, file RFCs, vote in discussion | Land one merged PR |
-| Maintainer (per package) | Approve/merge in their package(s), triage | Sustained quality contribution + existing maintainer nomination |
-| Core team | Cross-package architecture, accept/reject RFCs, releases | Maintainer + core nomination + lazy-consensus confirmation |
-| Lead (BDFL) | Tie-break only; stewards license & trademark | Founder role, succession defined below |
+| Role                     | Authority                                                | How you get it                                                  |
+| ------------------------ | -------------------------------------------------------- | --------------------------------------------------------------- |
+| Contributor              | Open PRs, file RFCs, vote in discussion                  | Land one merged PR                                              |
+| Maintainer (per package) | Approve/merge in their package(s), triage                | Sustained quality contribution + existing maintainer nomination |
+| Core team                | Cross-package architecture, accept/reject RFCs, releases | Maintainer + core nomination + lazy-consensus confirmation      |
+| Lead (BDFL)              | Tie-break only; stewards license & trademark             | Founder role, succession defined below                          |
 
-Decision rule is **lazy consensus**: a proposal with no sustained objection after its comment window passes. Disagreement escalates one level — package maintainers to core team, core team to a recorded vote, and only an unbreakable deadlock reaches the Lead. The Lead's standing job is to *not* be needed; using the tie-break is treated as a process smell to be reviewed afterward.
+Decision rule is **lazy consensus**: a proposal with no sustained objection after its comment window passes. Disagreement escalates one level — package maintainers to core team, core team to a recorded vote, and only an unbreakable deadlock reaches the Lead. The Lead's standing job is to _not_ be needed; using the tie-break is treated as a process smell to be reviewed afterward.
 
 **Roadmap ownership is split on purpose.** The open-source roadmap lives in public GitHub milestones and is owned by the core team. The KernelCMS Cloud roadmap is owned by the company. The firewall between them is a hard rule: **Cloud's commercial priorities cannot reorder or starve the OSS roadmap, and no OSS feature may be deferred to make Cloud more attractive.** Where the two genuinely conflict, the OSS roadmap wins, because the open core is the product and Cloud is a way to run it. This is the opposite of the gravitational pull that turns open cores into demos for a paid product.
 

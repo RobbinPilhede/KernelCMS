@@ -9,7 +9,7 @@ KernelCMS treats schema and data as two separate evolution problems that happen 
 - **Schema evolution** is structural: a new column, a renamed table, a dropped index, a changed `not null` constraint. For SQL backends this is owned by Drizzle, the default ORM across `@kernel/db-postgres`, `@kernel/db-sqlite`, and `@kernel/db-mysql`. For document-oriented workloads, `@kernel/db-mongodb` has no DDL, so its "schema" migrations are really validator and index changes.
 - **Data evolution** is semantic: existing documents need their field values transformed to satisfy the new schema (split a `name` into `firstName`/`lastName`, normalize a `select` value, populate a new required field). This is always handwritten — no diff engine can infer your business rules.
 
-Every backend implements the same `Adapter` contract (see Adapters & the persistence layer), so the migration *workflow* is identical regardless of database. What differs is the generated SQL/commands the adapter emits.
+Every backend implements the same `Adapter` contract (see Adapters & the persistence layer), so the migration _workflow_ is identical regardless of database. What differs is the generated SQL/commands the adapter emits.
 
 ```
 kernel.config.ts ──diff──▶ migration file ──apply──▶ database
@@ -61,13 +61,13 @@ export default defineMigration({
 
 `_journal.json` records which migrations have run, in order, with a content hash. The runner refuses to apply a migration whose hash changed after it was committed to the journal — you edited an already-applied file, which is almost always a mistake. CLI surface:
 
-| Command | Effect |
-| --- | --- |
-| `kernel migrate generate` | Diff config against latest snapshot, write a new migration + snapshot |
-| `kernel migrate up` | Apply pending migrations in journal order |
-| `kernel migrate down --to 0001` | Roll back to a target |
-| `kernel migrate status` | Show applied vs. pending and detect schema drift |
-| `kernel migrate dev` | Generate + apply in one step (dev only, never CI/prod) |
+| Command                         | Effect                                                                |
+| ------------------------------- | --------------------------------------------------------------------- |
+| `kernel migrate generate`       | Diff config against latest snapshot, write a new migration + snapshot |
+| `kernel migrate up`             | Apply pending migrations in journal order                             |
+| `kernel migrate down --to 0001` | Roll back to a target                                                 |
+| `kernel migrate status`         | Show applied vs. pending and detect schema drift                      |
+| `kernel migrate dev`            | Generate + apply in one step (dev only, never CI/prod)                |
 
 `kernel migrate status` also runs a **drift check**: it diffs the live database against the latest snapshot and fails if someone hand-altered the database out of band. This is the guard rail Strapi's boot-time auto-migrate never had.
 
@@ -140,14 +140,14 @@ async up({ config }) {
 
 Guidance on choosing:
 
-| Concern | Raw SQL (Level 1) | Local API (Level 2) |
-| --- | --- | --- |
-| Throughput | Millions/min | Thousands/min |
-| Runs field hooks | No | Yes |
-| Validates output | No | Yes |
-| Localized fields | Manual JSON surgery | Handled |
-| Version history written | No (intentional) | Optional via `context` |
-| Use when | Mechanical value mapping | Business logic required |
+| Concern                 | Raw SQL (Level 1)        | Local API (Level 2)     |
+| ----------------------- | ------------------------ | ----------------------- |
+| Throughput              | Millions/min             | Thousands/min           |
+| Runs field hooks        | No                       | Yes                     |
+| Validates output        | No                       | Yes                     |
+| Localized fields        | Manual JSON surgery      | Handled                 |
+| Version history written | No (intentional)         | Optional via `context`  |
+| Use when                | Mechanical value mapping | Business logic required |
 
 `kernel.find.stream` is backed by TanStack DB-style cursored reads on the server so a backfill never loads the whole collection into memory. Always paginate by an immutable cursor (the document `id` / `createdAt`), never `OFFSET` — offset pagination drifts when rows change under you.
 
@@ -180,7 +180,7 @@ KernelCMS supports this directly with versioned field config. You mark the legac
 
 ```ts
 text('name', {
-  deprecated: true,            // hidden in admin, still readable via API
+  deprecated: true, // hidden in admin, still readable via API
   virtual: { from: 'fullName' }, // read-through alias during the cutover
 })
 ```

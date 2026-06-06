@@ -10,16 +10,16 @@ pnpm create kernel@latest
 
 ## The Starter Catalog
 
-Starters answer one question: *what is the smallest correct project that compiles, persists, authenticates, and serves an API?* Each one pins a database adapter, a storage adapter, an auth strategy, and a deployment target. They are deliberately thin — a `kernel.config.ts`, one or two collections, a `globals` singleton, and a runnable admin app. You delete what you don't need rather than hunting for what's missing.
+Starters answer one question: _what is the smallest correct project that compiles, persists, authenticates, and serves an API?_ Each one pins a database adapter, a storage adapter, an auth strategy, and a deployment target. They are deliberately thin — a `kernel.config.ts`, one or two collections, a `globals` singleton, and a runnable admin app. You delete what you don't need rather than hunting for what's missing.
 
-| Starter | DB adapter | Storage | Auth | Runtime / deploy target |
-| --- | --- | --- | --- | --- |
-| `blank` | `@kernel/db-sqlite` | local disk | cookie session | Node + Docker |
-| `blog-postgres` | `@kernel/db-postgres` | S3 | cookie session | Node + Docker Compose |
-| `commerce-postgres` | `@kernel/db-postgres` | S3 | session + API keys | Node + Kubernetes |
-| `edge-sqlite` | `@kernel/db-sqlite` (libSQL) | R2 | JWT | Bun / Cloudflare edge |
-| `mongo-docs` | `@kernel/db-mongodb` | local disk | cookie session | Node + Docker |
-| `cloud` | managed | managed CDN | managed | KernelCMS Cloud |
+| Starter             | DB adapter                   | Storage     | Auth               | Runtime / deploy target |
+| ------------------- | ---------------------------- | ----------- | ------------------ | ----------------------- |
+| `blank`             | `@kernel/db-sqlite`          | local disk  | cookie session     | Node + Docker           |
+| `blog-postgres`     | `@kernel/db-postgres`        | S3          | cookie session     | Node + Docker Compose   |
+| `commerce-postgres` | `@kernel/db-postgres`        | S3          | session + API keys | Node + Kubernetes       |
+| `edge-sqlite`       | `@kernel/db-sqlite` (libSQL) | R2          | JWT                | Bun / Cloudflare edge   |
+| `mongo-docs`        | `@kernel/db-mongodb`         | local disk  | cookie session     | Node + Docker           |
+| `cloud`             | managed                      | managed CDN | managed            | KernelCMS Cloud         |
 
 The `--db`, `--storage`, and `--auth` flags override any starter's defaults, because adapters are swappable by design — this is the "choose everything" tenet expressed at scaffold time. Picking `blog-postgres --db sqlite` is valid and produces a coherent project; the scaffolder rewrites the adapter import, the `kernel.config.ts` block, and the generated `docker-compose.yml`.
 
@@ -45,7 +45,7 @@ export default defineConfig({
 })
 ```
 
-Contrast with the field: Payload's `create-payload-app` gives you templates but couples you to its bundled Mongo/Postgres choices and Express/Next host; Strapi's `create-strapi-app` scaffolds a monolith with a fixed admin build pipeline; Sanity's `sanity init` is studio-first and assumes Sanity's hosted Content Lake — there is no self-host parity. KernelCMS starters keep the *infrastructure decision in your hands* and keep the admin and API host on the same TanStack Start app, so a starter is genuinely a starting point and not a framework you have to grow out of.
+Contrast with the field: Payload's `create-payload-app` gives you templates but couples you to its bundled Mongo/Postgres choices and Express/Next host; Strapi's `create-strapi-app` scaffolds a monolith with a fixed admin build pipeline; Sanity's `sanity init` is studio-first and assumes Sanity's hosted Content Lake — there is no self-host parity. KernelCMS starters keep the _infrastructure decision in your hands_ and keep the admin and API host on the same TanStack Start app, so a starter is genuinely a starting point and not a framework you have to grow out of.
 
 ### How starters stay minimal
 
@@ -53,7 +53,7 @@ A starter is held to a hard ceiling: under ~200 lines of project code excluding 
 
 ## Example Apps
 
-Example apps are complete, opinionated projects that demonstrate KernelCMS *integrated with a real frontend and real infrastructure*. Where a starter shows the CMS in isolation, an example shows the whole picture: a Next.js or TanStack Start frontend consuming the typed `@kernel/client`, live preview wired through the admin, seeded content, and a deploy script.
+Example apps are complete, opinionated projects that demonstrate KernelCMS _integrated with a real frontend and real infrastructure_. Where a starter shows the CMS in isolation, an example shows the whole picture: a Next.js or TanStack Start frontend consuming the typed `@kernel/client`, live preview wired through the admin, seeded content, and a deploy script.
 
 ```
 examples/
@@ -104,7 +104,7 @@ Each example carries a `README.md` with a one-command bootstrap, a `seed.ts` tha
 
 ### What every example must demonstrate
 
-- A real frontend consuming `@kernel/client` over REST, GraphQL, *or* RPC — the example name says which.
+- A real frontend consuming `@kernel/client` over REST, GraphQL, _or_ RPC — the example name says which.
 - At least one cross-cutting feature: drafts/publish, localization, version history, or access control.
 - A working **live preview** + visual editing loop, since that is the feature buyers compare against Sanity's Presentation tool and Storyblok.
 - Seed data and a `Dockerfile` or deploy config matching the starter it extends.
@@ -141,13 +141,13 @@ const Posts = extendCollection(blog.collections.Posts, {
 })
 ```
 
-| Template package | Provides | Notable features used |
-| --- | --- | --- |
-| `@kernel/template-blog` | Posts, Authors, Categories, Tags | drafts, richText blocks, relationship |
-| `@kernel/template-ecommerce` | Products, Variants, Orders, Inventory | access control, async validation |
-| `@kernel/template-docs` | Docs, Versions, Navigation global | version history, localization |
-| `@kernel/template-marketing` | Pages, blocks library, Redirects | blocks, live preview, i18n + RTL |
-| `@kernel/template-portfolio` | Projects, Media, About global | upload, point (geo), tabs |
+| Template package             | Provides                              | Notable features used                 |
+| ---------------------------- | ------------------------------------- | ------------------------------------- |
+| `@kernel/template-blog`      | Posts, Authors, Categories, Tags      | drafts, richText blocks, relationship |
+| `@kernel/template-ecommerce` | Products, Variants, Orders, Inventory | access control, async validation      |
+| `@kernel/template-docs`      | Docs, Versions, Navigation global     | version history, localization         |
+| `@kernel/template-marketing` | Pages, blocks library, Redirects      | blocks, live preview, i18n + RTL      |
+| `@kernel/template-portfolio` | Projects, Media, About global         | upload, point (geo), tabs             |
 
 This composable model is the sharpest contrast with the competition. Strapi's "content-type templates" are project-scoped JSON you import once; Payload has no published template ecosystem beyond example repos; Sanity's schema is reusable but bound to the Studio. Because KernelCMS content is **config-as-code** and a template is just a typed module, templates version independently, publish to npm, and stay portable between self-host and KernelCMS Cloud with no migration step.
 
@@ -155,7 +155,7 @@ This composable model is the sharpest contrast with the competition. Strapi's "c
 
 The whole value proposition collapses if any of this drifts behind core, so maintenance is engineered, not aspirational.
 
-**Monorepo residency.** Starters, examples, and templates live in the same pnpm workspace as `@kernel/*`, build through the same Turborepo pipeline, and depend on `workspace:*` versions. A breaking change in `@kernel/core` fails the example builds in the *same PR* that introduces it, which forces the author to update both at once.
+**Monorepo residency.** Starters, examples, and templates live in the same pnpm workspace as `@kernel/*`, build through the same Turborepo pipeline, and depend on `workspace:*` versions. A breaking change in `@kernel/core` fails the example builds in the _same PR_ that introduces it, which forces the author to update both at once.
 
 **Version pinning and release coupling.** On every release, a `changeset`-driven job rewrites each scaffold target's published `package.json` to the exact released `@kernel/*` version and tags the example repos `vX.Y.Z`. `create-kernel --version 2.3.0` always reconstructs a project that matches that release.
 
@@ -166,7 +166,7 @@ core PR merged ──► Turborepo build (all packages + examples + templates)
               ──► nightly: scaffold each starter from registry, build, smoke-test
 ```
 
-**Nightly scaffold-and-build.** A scheduled job runs `create-kernel` against every starter and template *from the published registry* (not the local workspace), boots the admin, hits a health endpoint, and runs migrations. This catches packaging bugs that a workspace build hides.
+**Nightly scaffold-and-build.** A scheduled job runs `create-kernel` against every starter and template _from the published registry_ (not the local workspace), boots the admin, hits a health endpoint, and runs migrations. This catches packaging bugs that a workspace build hides.
 
 **Ownership and tiers.** Every starter and example has a `CODEOWNERS` entry and a support tier: **Tier 1** (core team owns; blocks releases) covers `blank`, `blog-postgres`, `tanstack-storefront`, and the five `@kernel/template-*` packages; **Tier 2** (community-maintained, CI-gated but non-blocking) covers the rest. The tier is printed in each README so users know what they're adopting — a clarity Strapi and Sanity's sprawling example lists never offer.
 

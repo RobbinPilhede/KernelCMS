@@ -80,13 +80,9 @@ export function generateTypes(input: CodegenInput): string {
     .map((c) => renderInterface(pascal(c.slug), c.fields, c.timestamps ?? true))
     .join('\n\n')
 
-  const globalTypes = input.globals
-    .map((g) => renderInterface(pascal(g.slug), g.fields, true))
-    .join('\n\n')
+  const globalTypes = input.globals.map((g) => renderInterface(pascal(g.slug), g.fields, true)).join('\n\n')
 
-  const collectionMap = input.collections
-    .map((c) => `    ${c.slug}: ${pascal(c.slug)}`)
-    .join('\n')
+  const collectionMap = input.collections.map((c) => `    ${c.slug}: ${pascal(c.slug)}`).join('\n')
   const globalMap = input.globals.map((g) => `    ${g.slug}: ${pascal(g.slug)}`).join('\n')
 
   const registry = `export interface KernelTypes {

@@ -28,10 +28,10 @@ Commands are contributed declaratively. A command has an id, a title, an optiona
 import type { CommandContext } from '@kernel/admin'
 
 interface Command {
-  id: string                       // 'document.publish'
+  id: string // 'document.publish'
   title: string | ((ctx: CommandContext) => string)
-  group?: string                   // 'Document' | 'Navigation' | 'Settings'
-  keybinding?: string              // 'mod+shift+p'  (mod = ⌘ on macOS, Ctrl elsewhere)
+  group?: string // 'Document' | 'Navigation' | 'Settings'
+  keybinding?: string // 'mod+shift+p'  (mod = ⌘ on macOS, Ctrl elsewhere)
   icon?: string
   when?: (ctx: CommandContext) => boolean
   run: (ctx: CommandContext) => void | Promise<void>
@@ -46,8 +46,8 @@ interface CommandContext {
   document?: { id: string; collection: string; status: 'draft' | 'published' }
   locale: string
   can: (action: string, scope?: { collection?: string; id?: string }) => boolean
-  router: Router          // TanStack Router instance
-  query: QueryClient      // TanStack Query client for invalidation
+  router: Router // TanStack Router instance
+  query: QueryClient // TanStack Query client for invalidation
   toast: ToastApi
 }
 ```
@@ -85,11 +85,11 @@ export default defineConfig({
 
 Results come from three providers — command index, route index, and the search adapter — and are merged into one ranked list. Commands and routes rank locally with a fuzzy matcher (subsequence match plus prefix and word-boundary bonuses, recency boost from a per-user MRU list in TanStack Store). Document hits arrive asynchronously from `@kernel/client` against your search adapter and are deboucned and streamed in as they resolve, so the palette never blocks on a network round-trip.
 
-| Provider        | Source                          | Latency      | Ranking inputs                          |
-|-----------------|---------------------------------|--------------|-----------------------------------------|
-| Commands        | in-memory registry              | synchronous  | fuzzy score, MRU, `group` weight        |
-| Navigation      | TanStack Router route tree      | synchronous  | fuzzy score, MRU                        |
-| Documents       | search adapter via TanStack Query | async/debounced | adapter relevance, collection weight |
+| Provider   | Source                            | Latency         | Ranking inputs                       |
+| ---------- | --------------------------------- | --------------- | ------------------------------------ |
+| Commands   | in-memory registry                | synchronous     | fuzzy score, MRU, `group` weight     |
+| Navigation | TanStack Router route tree        | synchronous     | fuzzy score, MRU                     |
+| Documents  | search adapter via TanStack Query | async/debounced | adapter relevance, collection weight |
 
 Synchronous providers render on the first keystroke; the async document list fills in underneath without reflowing the selected row. The selection index is anchored to a stable result id, never to a list position, so an item never shifts under the user's cursor mid-keystroke — a subtle but important correctness property for keyboard navigation.
 
@@ -101,26 +101,26 @@ Shortcuts are a registry, not a pile of `keydown` listeners. `@kernel/admin` exp
 
 `mod` resolves to `⌘` on macOS and `Ctrl` elsewhere. Bindings live in three scopes: **global** (always active), **list** (collection list view), and **document** (edit view).
 
-| Chord            | Scope     | Action                          |
-|------------------|-----------|---------------------------------|
-| `mod+k`          | global    | Open command palette            |
-| `mod+p`          | global    | Quick switcher (documents)      |
-| `mod+shift+p`    | document  | Publish document                |
-| `mod+s`          | document  | Save (draft or autosave flush)  |
-| `mod+enter`      | document  | Save and close                  |
-| `mod+/`          | global    | Open keyboard shortcut help     |
-| `g` then `c`     | global    | Go to Collections               |
-| `g` then `m`     | global    | Go to Media library             |
-| `j` / `k`        | list      | Move selection down / up        |
-| `x`              | list      | Toggle row selection            |
-| `mod+a`          | list      | Select all (current page)       |
-| `?`              | global    | Toggle shortcut cheat sheet     |
+| Chord         | Scope    | Action                         |
+| ------------- | -------- | ------------------------------ |
+| `mod+k`       | global   | Open command palette           |
+| `mod+p`       | global   | Quick switcher (documents)     |
+| `mod+shift+p` | document | Publish document               |
+| `mod+s`       | document | Save (draft or autosave flush) |
+| `mod+enter`   | document | Save and close                 |
+| `mod+/`       | global   | Open keyboard shortcut help    |
+| `g` then `c`  | global   | Go to Collections              |
+| `g` then `m`  | global   | Go to Media library            |
+| `j` / `k`     | list     | Move selection down / up       |
+| `x`           | list     | Toggle row selection           |
+| `mod+a`       | list     | Select all (current page)      |
+| `?`           | global   | Toggle shortcut cheat sheet    |
 
 The `g`-prefixed sequences are two-key chords (Gmail-style), handled by a short-lived chord buffer that times out after 1000ms. Single-letter bindings (`j`, `k`, `x`) only fire when focus is not inside a text input, which the dispatcher checks via the focused element's role and `contenteditable` state.
 
 ### Scopes and the dispatch model
 
-Scopes form a stack. The document edit view pushes `document`; opening the palette pushes `palette`, which is *exclusive* — it suppresses everything below it so Escape and arrow keys belong to the overlay alone. This is what prevents the classic bug where an arrow key both moves the palette selection and scrolls the page behind it.
+Scopes form a stack. The document edit view pushes `document`; opening the palette pushes `palette`, which is _exclusive_ — it suppresses everything below it so Escape and arrow keys belong to the overlay alone. This is what prevents the classic bug where an arrow key both moves the palette selection and scrolls the page behind it.
 
 ```
 focus enters edit view  → push 'document'

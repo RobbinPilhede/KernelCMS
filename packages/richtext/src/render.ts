@@ -7,11 +7,7 @@
 import type { KernelRichText, LinkNode, Mark, RichBlockNode, RichInlineNode, TextNode } from './types'
 
 /** Minimal createElement signature (compatible with React.createElement). */
-export type CreateElement<E> = (
-  type: string,
-  props: Record<string, unknown> | null,
-  ...children: (E | string)[]
-) => E
+export type CreateElement<E> = (type: string, props: Record<string, unknown> | null, ...children: (E | string)[]) => E
 
 export interface RenderResolvers<E> {
   /** Render an embedded block with the host's real component. */
@@ -66,7 +62,11 @@ function renderBlock<E>(node: RichBlockNode, opts: RenderOptions<E>): E | null {
     case 'quote':
       return h('blockquote', { key: k() }, ...node.children.map((n) => renderBlock(n, opts)).filter(notNull))
     case 'list':
-      return h(node.ordered ? 'ol' : 'ul', { key: k() }, ...node.children.map((n) => renderBlock(n, opts)).filter(notNull))
+      return h(
+        node.ordered ? 'ol' : 'ul',
+        { key: k() },
+        ...node.children.map((n) => renderBlock(n, opts)).filter(notNull),
+      )
     case 'listItem':
       return h('li', { key: k() }, ...node.children.map((n) => renderBlock(n, opts)).filter(notNull))
     case 'codeBlock':

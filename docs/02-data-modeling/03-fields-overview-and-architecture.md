@@ -42,20 +42,20 @@ export default defineConfig({
 
 Every field shares a common base contract, then narrows by `type`. The base is the part that the schema generator, the API layer, and the admin all agree on:
 
-| Property | Type | Applies to | Purpose |
-| --- | --- | --- | --- |
-| `name` | `string` | data fields | Storage key and API property. Omitted on presentational fields. |
-| `type` | `FieldType` | all | Discriminant. Drives storage column, validator, and React input. |
-| `label` | `string \| Record<Locale, string>` | all | Admin label. Defaults to a humanized `name`. |
-| `required` | `boolean` | data fields | Non-null at the storage and validation layer. |
-| `unique` | `boolean` | scalar data fields | Adds a unique constraint to the generated migration. |
-| `index` | `boolean \| IndexConfig` | scalar data fields | Generates a btree (or adapter-specific) index. |
-| `localized` | `boolean` | data fields | Stores a value per configured locale. |
-| `defaultValue` | `T \| (args) => T \| Promise<T>` | data fields | Static or computed default, run server-side. |
-| `validate` | `(value, ctx) => true \| string \| Promise<...>` | data fields | Custom sync/async/cross-field validation. |
-| `access` | `FieldAccess` | data fields | `read`/`create`/`update` predicates at field granularity. |
-| `hooks` | `FieldHooks` | data fields | Lifecycle hooks (see below). |
-| `admin` | `FieldAdminConfig` | all | Description, `condition`, `width`, `position`, custom components. |
+| Property       | Type                                             | Applies to         | Purpose                                                           |
+| -------------- | ------------------------------------------------ | ------------------ | ----------------------------------------------------------------- |
+| `name`         | `string`                                         | data fields        | Storage key and API property. Omitted on presentational fields.   |
+| `type`         | `FieldType`                                      | all                | Discriminant. Drives storage column, validator, and React input.  |
+| `label`        | `string \| Record<Locale, string>`               | all                | Admin label. Defaults to a humanized `name`.                      |
+| `required`     | `boolean`                                        | data fields        | Non-null at the storage and validation layer.                     |
+| `unique`       | `boolean`                                        | scalar data fields | Adds a unique constraint to the generated migration.              |
+| `index`        | `boolean \| IndexConfig`                         | scalar data fields | Generates a btree (or adapter-specific) index.                    |
+| `localized`    | `boolean`                                        | data fields        | Stores a value per configured locale.                             |
+| `defaultValue` | `T \| (args) => T \| Promise<T>`                 | data fields        | Static or computed default, run server-side.                      |
+| `validate`     | `(value, ctx) => true \| string \| Promise<...>` | data fields        | Custom sync/async/cross-field validation.                         |
+| `access`       | `FieldAccess`                                    | data fields        | `read`/`create`/`update` predicates at field granularity.         |
+| `hooks`        | `FieldHooks`                                     | data fields        | Lifecycle hooks (see below).                                      |
+| `admin`        | `FieldAdminConfig`                               | all                | Description, `condition`, `width`, `position`, custom components. |
 
 The crucial design choice — and where KernelCMS diverges from Payload — is that the type is a **discriminated union keyed on `type`**, fully inferred. `relationTo` only exists when `type` is `'relationship'` or `'upload'`; `options` only exists on `'select'`/`'radio'`; `fields` only exists on the container types `'array'`, `'group'`, `'row'`, `'tabs'`, `'blocks'`. There is no `any` anywhere in the field tree, and the inferred document type is computed from the field array via mapped types in `@kernel/core`:
 
@@ -92,7 +92,7 @@ WRITE (create / update)                READ (find / findByID)
 
 A few rules make this predictable:
 
-- **Access runs first and last.** On write, a failed `access.create`/`access.update` predicate strips the field from the incoming payload before validation — an unauthorized field can't even produce a validation error. On read, `access.read` runs *after* the value is loaded and removes it from the response. This is the resource- and field-level authorization the brief requires, evaluated in the operation core, never in the client.
+- **Access runs first and last.** On write, a failed `access.create`/`access.update` predicate strips the field from the incoming payload before validation — an unauthorized field can't even produce a validation error. On read, `access.read` runs _after_ the value is loaded and removes it from the response. This is the resource- and field-level authorization the brief requires, evaluated in the operation core, never in the client.
 - **Validation sees the whole document.** The `validate(value, ctx)` signature receives `ctx.data` (the full incoming doc), `ctx.siblingData` (the immediate parent object, important inside `array`/`group`), `ctx.operation`, `ctx.req`, and `ctx.locale`. Cross-field rules ("`publishedAt` required when `status === 'published'`") are expressed naturally without a separate schema pass.
 - **Serialization is the adapter boundary.** A field's logical value (`point` → `{ lat, lng }`, `richText` → a JSON document, `date` → a JS `Date`) is serialized to the adapter's storage representation by the field's `serialize`/`deserialize` pair. The Postgres/SQLite/MySQL Drizzle adapters and the MongoDB adapter each get the same logical value and decide how to persist it. A field type never writes SQL.
 
@@ -114,13 +114,13 @@ Hooks fire in a fixed order and may be async. `beforeChange` is where you comput
 
 KernelCMS draws a hard line between fields that own a value and fields that only affect the admin UI.
 
-| | Data field | Presentational field |
-| --- | --- | --- |
-| Has `name` | Yes (required) | No |
-| Generates a column / API property | Yes | No |
-| Runs validation / access / hooks | Yes | No |
-| Appears in `InferDoc<T>` | Yes | No |
-| Examples | `text`, `relationship`, `array`, `blocks` | `ui`, `row`, `tabs` (the layout shells) |
+|                                   | Data field                                | Presentational field                    |
+| --------------------------------- | ----------------------------------------- | --------------------------------------- |
+| Has `name`                        | Yes (required)                            | No                                      |
+| Generates a column / API property | Yes                                       | No                                      |
+| Runs validation / access / hooks  | Yes                                       | No                                      |
+| Appears in `InferDoc<T>`          | Yes                                       | No                                      |
+| Examples                          | `text`, `relationship`, `array`, `blocks` | `ui`, `row`, `tabs` (the layout shells) |
 
 The `ui` field is the canonical presentational type: it renders an arbitrary React component in the form — a callout, a "generate slug" button, a computed summary — but contributes nothing to storage, the API, or the inferred type.
 
@@ -136,7 +136,7 @@ The `ui` field is the canonical presentational type: it renders an arbitrary Rea
 }
 ```
 
-This split keeps the schema generator honest: it iterates the field tree, skips anything without a storage `name`, and never has to special-case "is this a real column?" mid-generation. Payload conflates the two more than we'd like (its `ui` field still carries a `name`); KernelCMS treats presentational fields as a distinct branch of the union so they can't accidentally leak into a migration. `row` and `tabs` are a hybrid — presentational at the storage layer (they flatten) but containers of data fields, so their *children* still produce columns.
+This split keeps the schema generator honest: it iterates the field tree, skips anything without a storage `name`, and never has to special-case "is this a real column?" mid-generation. Payload conflates the two more than we'd like (its `ui` field still carries a `name`); KernelCMS treats presentational fields as a distinct branch of the union so they can't accidentally leak into a migration. `row` and `tabs` are a hybrid — presentational at the storage layer (they flatten) but containers of data fields, so their _children_ still produce columns.
 
 ## Custom field hook-in points
 
@@ -163,9 +163,7 @@ There are four escalating levels of customization, and you should reach for the 
      type: 'currency',
      // 1. how it persists, per adapter kind
      schema: ({ adapter }) =>
-       adapter.kind === 'mongodb'
-         ? { bsonType: 'object' }
-         : adapter.columns({ amount: 'integer', code: 'varchar(3)' }),
+       adapter.kind === 'mongodb' ? { bsonType: 'object' } : adapter.columns({ amount: 'integer', code: 'varchar(3)' }),
      // 2. logical <-> storage
      serialize: (v) => ({ amount: v.minorUnits, code: v.currency }),
      deserialize: (row) => ({ minorUnits: row.amount, currency: row.code }),

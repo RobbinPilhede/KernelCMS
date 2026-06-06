@@ -1,6 +1,6 @@
 # Admin Accessibility Standards
 
-The KernelCMS admin is a tool people use for hours every day, often with assistive technology. We treat WCAG 2.2 AA as a build-time contract, not a post-launch audit. Accessibility is wired into `@kernel/ui` primitives, enforced in CI, and surfaced to plugin authors through the same component API everyone else uses. Payload and Strapi ship admin UIs that are *mostly* keyboard-usable but carry known gaps in focus management and dynamic-region announcements; Sanity Studio is the strongest of the three but still leaves custom input authors to solve ARIA themselves. KernelCMS pushes the conformance guarantees down into the primitive layer so that a correctly-built field is accessible by construction.
+The KernelCMS admin is a tool people use for hours every day, often with assistive technology. We treat WCAG 2.2 AA as a build-time contract, not a post-launch audit. Accessibility is wired into `@kernel/ui` primitives, enforced in CI, and surfaced to plugin authors through the same component API everyone else uses. Payload and Strapi ship admin UIs that are _mostly_ keyboard-usable but carry known gaps in focus management and dynamic-region announcements; Sanity Studio is the strongest of the three but still leaves custom input authors to solve ARIA themselves. KernelCMS pushes the conformance guarantees down into the primitive layer so that a correctly-built field is accessible by construction.
 
 ## WCAG 2.2 AA targets
 
@@ -8,18 +8,18 @@ We commit to the full WCAG 2.2 Level A and AA success criteria for the admin she
 
 The criteria we treat as highest-leverage and most frequently regressed:
 
-| Criterion | Level | What it means in the admin |
-| --- | --- | --- |
-| 1.4.3 Contrast (Minimum) | AA | Every design token pairing meets 4.5:1 body / 3:1 large text |
-| 1.4.11 Non-text Contrast | AA | Input borders, focus rings, icon buttons meet 3:1 against adjacent color |
-| 2.1.1 Keyboard | A | Every operation reachable and operable without a pointer |
-| 2.4.7 Focus Visible | AA | `:focus-visible` ring on every interactive element |
-| 2.4.11 Focus Not Obscured | AA | Sticky headers / toolbars never cover the focused control |
-| 2.5.7 Dragging Movements | AA | Array/blocks reordering has a keyboard alternative |
-| 2.5.8 Target Size (Minimum) | AA | Interactive targets ≥ 24×24 CSS px (we ship 44px) |
-| 3.3.7 Redundant Entry | A | Multi-step flows don't re-ask for known data |
-| 4.1.2 Name, Role, Value | A | Custom widgets expose correct ARIA semantics |
-| 4.1.3 Status Messages | AA | Saves, validation, and autosave announce via live regions |
+| Criterion                   | Level | What it means in the admin                                               |
+| --------------------------- | ----- | ------------------------------------------------------------------------ |
+| 1.4.3 Contrast (Minimum)    | AA    | Every design token pairing meets 4.5:1 body / 3:1 large text             |
+| 1.4.11 Non-text Contrast    | AA    | Input borders, focus rings, icon buttons meet 3:1 against adjacent color |
+| 2.1.1 Keyboard              | A     | Every operation reachable and operable without a pointer                 |
+| 2.4.7 Focus Visible         | AA    | `:focus-visible` ring on every interactive element                       |
+| 2.4.11 Focus Not Obscured   | AA    | Sticky headers / toolbars never cover the focused control                |
+| 2.5.7 Dragging Movements    | AA    | Array/blocks reordering has a keyboard alternative                       |
+| 2.5.8 Target Size (Minimum) | AA    | Interactive targets ≥ 24×24 CSS px (we ship 44px)                        |
+| 3.3.7 Redundant Entry       | A     | Multi-step flows don't re-ask for known data                             |
+| 4.1.2 Name, Role, Value     | A     | Custom widgets expose correct ARIA semantics                             |
+| 4.1.3 Status Messages       | AA    | Saves, validation, and autosave announce via live regions                |
 
 2.5.7, 2.5.8, 2.4.11, and 3.3.7 are new in 2.2 and are exactly where reorderable arrays, blocks, and sticky document toolbars tend to break — so they get explicit test coverage rather than relying on a generic audit pass.
 
@@ -112,17 +112,17 @@ We follow the WAI-ARIA Authoring Practices for every composite widget and we pre
 
 The fixed mapping from KernelCMS UI surface to ARIA pattern:
 
-| Admin surface | Native / ARIA pattern | Key attributes |
-| --- | --- | --- |
-| Command palette | `combobox` + `listbox` | `aria-expanded`, `aria-activedescendant`, `aria-controls` |
-| `select` / `radio` field | native `<select>` / `radiogroup` | grouped, labelled, keyboard-native |
-| `tabs` field | `tablist` / `tab` / `tabpanel` | `aria-selected`, `aria-controls`, roving tabindex |
-| Collection list (TanStack Table) | `grid` | `aria-sort` on sortable columns, `aria-rowcount` |
-| Blocks slash-menu | `listbox` | `aria-activedescendant`, typeahead |
-| Media library grid | `grid` + multiselect | `aria-multiselectable`, `aria-selected` |
-| Autosave / publish status | `status` live region | `aria-live="polite"`, `role="status"` |
-| Validation summary | `alert` live region | `aria-live="assertive"`, `role="alert"` |
-| Live preview iframe | labelled region | `title`, `aria-label` describing the frame |
+| Admin surface                    | Native / ARIA pattern            | Key attributes                                            |
+| -------------------------------- | -------------------------------- | --------------------------------------------------------- |
+| Command palette                  | `combobox` + `listbox`           | `aria-expanded`, `aria-activedescendant`, `aria-controls` |
+| `select` / `radio` field         | native `<select>` / `radiogroup` | grouped, labelled, keyboard-native                        |
+| `tabs` field                     | `tablist` / `tab` / `tabpanel`   | `aria-selected`, `aria-controls`, roving tabindex         |
+| Collection list (TanStack Table) | `grid`                           | `aria-sort` on sortable columns, `aria-rowcount`          |
+| Blocks slash-menu                | `listbox`                        | `aria-activedescendant`, typeahead                        |
+| Media library grid               | `grid` + multiselect             | `aria-multiselectable`, `aria-selected`                   |
+| Autosave / publish status        | `status` live region             | `aria-live="polite"`, `role="status"`                     |
+| Validation summary               | `alert` live region              | `aria-live="assertive"`, `role="alert"`                   |
+| Live preview iframe              | labelled region                  | `title`, `aria-label` describing the frame                |
 
 Status messages (4.1.3) are the criterion teams forget. KernelCMS routes every async outcome — autosave ticks, save success, publish, draft restore, validation errors — through a single live-region manager so announcements are consistent and never dropped:
 
@@ -171,24 +171,25 @@ import AxeBuilder from '@axe-core/playwright'
 test('document edit view has zero AA violations and keyboard reorder works', async ({ page }) => {
   await page.goto('/admin/collections/posts/new')
 
-  const results = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag22aa'])
-    .analyze()
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag22aa']).analyze()
   expect(results.violations).toEqual([])
 
   // Reorder array rows with the keyboard only — no pointer
-  await page.getByRole('button', { name: /sortable item/i }).first().focus()
+  await page
+    .getByRole('button', { name: /sortable item/i })
+    .first()
+    .focus()
   await page.keyboard.press('ArrowDown')
   await expect(page.getByRole('status')).toContainText('Row 2 of')
 })
 ```
 
-3. **Manual and assistive-technology** — before each release, a human runs the admin with NVDA on Firefox and VoiceOver on Safari, keyboard-only, at 200% zoom, in Windows High Contrast (`forced-colors`), and with `prefers-reduced-motion`. This is the only way to catch announcement *quality* (does "Row 2 of 5" actually make sense in context) and reduced-motion compliance, which automation can flag but not judge.
+3. **Manual and assistive-technology** — before each release, a human runs the admin with NVDA on Firefox and VoiceOver on Safari, keyboard-only, at 200% zoom, in Windows High Contrast (`forced-colors`), and with `prefers-reduced-motion`. This is the only way to catch announcement _quality_ (does "Row 2 of 5" actually make sense in context) and reduced-motion compliance, which automation can flag but not judge.
 
 Findings feed back into fixtures: any AT bug becomes a Playwright regression test before it's fixed, so the same defect can't return. This is the practical difference from Payload and Strapi — accessibility there is a quality goal pursued by maintainers; in KernelCMS the AA gate is a CI requirement that blocks merges, and the guarantees live in primitives every plugin reuses.
 
 ## Open questions
 
-- **Conformance scope for embedded preview targets.** Live preview renders the *user's* frontend inside an iframe; we can guarantee the admin chrome around it but not the previewed site. Do we surface a non-blocking axe report for the preview frame, or stay silent to avoid implying we audit user content?
+- **Conformance scope for embedded preview targets.** Live preview renders the _user's_ frontend inside an iframe; we can guarantee the admin chrome around it but not the previewed site. Do we surface a non-blocking axe report for the preview frame, or stay silent to avoid implying we audit user content?
 - **AA vs. AAA opt-in.** Some teams (public sector) need AAA contrast (7:1). Should `contrastGuard` accept `enforce: 'AAA'` as a supported tier, or document it as best-effort only?
 - **Third-party rich-text plugins.** Custom block components from `@kernel/plugin-sdk` inherit primitives, but an author can still inject raw DOM. Do we run axe against registered plugin components at build time, or only warn?

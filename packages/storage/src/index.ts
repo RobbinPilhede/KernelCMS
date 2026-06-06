@@ -6,11 +6,4 @@ export { s3Storage, r2, type S3StorageOptions } from './s3'
 export { sniffMimeType, isContentTypeConsistent } from './sniff'
 export { generateKey, sanitizeFilename, assertSafeKey } from './key'
 export { extForFormat } from './image'
-export type {
-  ImageProcessor,
-  ImageInfo,
-  ImageFit,
-  ImageFormat,
-  ResizeOptions,
-  ResizeResult,
-} from './image'
+export type { ImageProcessor, ImageInfo, ImageFit, ImageFormat, ResizeOptions, ResizeResult } from './image'

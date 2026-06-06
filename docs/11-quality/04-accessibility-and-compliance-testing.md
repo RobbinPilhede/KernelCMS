@@ -97,10 +97,10 @@ import AxeBuilder from '@axe-core/playwright'
 
 const ROUTES = [
   '/admin/login',
-  '/admin/collections/posts',          // TanStack Table list view
-  '/admin/collections/posts/create',   // TanStack Form edit view
+  '/admin/collections/posts', // TanStack Table list view
+  '/admin/collections/posts/create', // TanStack Form edit view
   '/admin/globals/site-settings',
-  '/admin/media',                       // media library
+  '/admin/media', // media library
 ] as const
 
 for (const route of ROUTES) {
@@ -108,9 +108,7 @@ for (const route of ROUTES) {
     for (const theme of ['light', 'dark'] as const) {
       await page.goto(route)
       await page.emulateMedia({ colorScheme: theme })
-      const results = await new AxeBuilder({ page })
-        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-        .analyze()
+      const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
       expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([])
     }
   })
@@ -123,18 +121,18 @@ Running every route in both light and dark is non-negotiable. Dark mode regressi
 
 We keep an honest internal table of the WCAG 2.2 criteria automation does **not** cover, so nobody mistakes a green pipeline for conformance:
 
-| Criterion | Why automation misses it | Where it's covered |
-|---|---|---|
-| 2.4.3 Focus Order | Logical order is semantic, not structural | Manual + KB walkthrough |
-| 1.3.2 Meaningful Sequence | Reading order vs. DOM order | Manual + screen reader |
-| 2.5.3 Label in Name | Visible label ⊆ accessible name | Partial (lint) + manual |
-| 3.3.2 Labels or Instructions | Presence detectable, sufficiency not | Manual |
-| 1.4.13 Content on Hover/Focus | Dismissible/persistent behavior | Manual |
-| 2.4.11 Focus Not Obscured | Sticky toolbars vs. focus ring | Manual + E2E heuristic |
+| Criterion                     | Why automation misses it                  | Where it's covered      |
+| ----------------------------- | ----------------------------------------- | ----------------------- |
+| 2.4.3 Focus Order             | Logical order is semantic, not structural | Manual + KB walkthrough |
+| 1.3.2 Meaningful Sequence     | Reading order vs. DOM order               | Manual + screen reader  |
+| 2.5.3 Label in Name           | Visible label ⊆ accessible name           | Partial (lint) + manual |
+| 3.3.2 Labels or Instructions  | Presence detectable, sufficiency not      | Manual                  |
+| 1.4.13 Content on Hover/Focus | Dismissible/persistent behavior           | Manual                  |
+| 2.4.11 Focus Not Obscured     | Sticky toolbars vs. focus ring            | Manual + E2E heuristic  |
 
 ## Manual audits
 
-Automation gates merges; manual audits gate releases. Before any `kernel`/`@kernel/admin` minor release, an audit runs against the candidate build and must be signed off. We script the *coverage* so it's repeatable even though the *judgment* is human.
+Automation gates merges; manual audits gate releases. Before any `kernel`/`@kernel/admin` minor release, an audit runs against the candidate build and must be signed off. We script the _coverage_ so it's repeatable even though the _judgment_ is human.
 
 ### Cadence and scope
 
@@ -146,12 +144,12 @@ Automation gates merges; manual audits gate releases. Before any `kernel`/`@kern
 
 Each flow is exercised with keyboard-only, then with a screen reader, then at 200% and 400% zoom, then with `prefers-reduced-motion`. We test on the combinations real users actually run:
 
-| Assistive tech | Browser | OS |
-|---|---|---|
-| NVDA | Firefox | Windows |
-| JAWS | Chrome | Windows |
-| VoiceOver | Safari | macOS |
-| TalkBack | Chrome | Android (live preview only) |
+| Assistive tech | Browser | OS                          |
+| -------------- | ------- | --------------------------- |
+| NVDA           | Firefox | Windows                     |
+| JAWS           | Chrome  | Windows                     |
+| VoiceOver      | Safari  | macOS                       |
+| TalkBack       | Chrome  | Android (live preview only) |
 
 ### Critical flows
 
@@ -174,12 +172,12 @@ We publish a **Voluntary Product Accessibility Template** (VPAT 2.5 Rev, WCAG 2.
 
 Each WCAG 2.2 success criterion gets a conformance level and explanatory notes:
 
-| Conformance level | Meaning |
-|---|---|
-| Supports | Meets the criterion without exception |
-| Partially Supports | Some functionality does not fully meet it |
-| Does Not Support | Majority of functionality does not meet it |
-| Not Applicable | Criterion does not apply to the product |
+| Conformance level  | Meaning                                    |
+| ------------------ | ------------------------------------------ |
+| Supports           | Meets the criterion without exception      |
+| Partially Supports | Some functionality does not fully meet it  |
+| Does Not Support   | Majority of functionality does not meet it |
+| Not Applicable     | Criterion does not apply to the product    |
 
 ### Honesty rules
 
@@ -197,8 +195,8 @@ import { collectAxeResults } from '@kernel/admin/testing'
 type Evidence = {
   criterion: `${number}.${number}.${number}`
   level: 'Supports' | 'Partially Supports' | 'Does Not Support' | 'Not Applicable'
-  automated: string[]   // E2E/component test ids
-  manual: string[]      // audit run ids
+  automated: string[] // E2E/component test ids
+  manual: string[] // audit run ids
   notes: string
 }
 
@@ -230,13 +228,11 @@ import { defineConfig } from '@kernel/core'
 export default defineConfig({
   admin: {
     accessibility: {
-      standard: 'wcag22aa',          // floor — cannot be set below 'wcag2aa'
+      standard: 'wcag22aa', // floor — cannot be set below 'wcag2aa'
       failOn: ['critical', 'serious'], // axe impact levels that fail CI
-      themes: ['light', 'dark'],       // both must pass E2E
+      themes: ['light', 'dark'], // both must pass E2E
       // criteria automation can't verify, owned by the manual audit:
-      manualReviewRequired: [
-        '2.4.3', '1.3.2', '2.5.3', '3.3.2', '1.4.13', '2.4.11',
-      ],
+      manualReviewRequired: ['2.4.3', '1.3.2', '2.5.3', '3.3.2', '1.4.13', '2.4.11'],
     },
   },
 })
@@ -248,11 +244,11 @@ jobs:
   a11y:
     runs-on: ubuntu-latest
     steps:
-      - run: pnpm lint:a11y           # eslint-plugin-jsx-a11y, blocks on error
-      - run: pnpm test:a11y           # vitest-axe component suite
+      - run: pnpm lint:a11y # eslint-plugin-jsx-a11y, blocks on error
+      - run: pnpm test:a11y # vitest-axe component suite
       - run: pnpm build
-      - run: pnpm e2e:a11y            # @axe-core/playwright, light + dark
-      - run: pnpm vpat:check          # fails if a 'Supports' claim lost its evidence
+      - run: pnpm e2e:a11y # @axe-core/playwright, light + dark
+      - run: pnpm vpat:check # fails if a 'Supports' claim lost its evidence
 ```
 
 The `vpat:check` step is the keystone: it fails the build if any criterion marked "Supports" in the published VPAT no longer has a passing automated or logged-manual evidence trail. That closes the loop where a refactor silently regresses a claim we've made to customers — the exact failure mode that makes most published VPATs stale within a release or two.

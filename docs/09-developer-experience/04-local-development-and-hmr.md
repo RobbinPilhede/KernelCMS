@@ -24,14 +24,14 @@ Unlike Strapi, which runs an admin webpack/Vite build alongside a Koa server and
 
 The CLI flags that matter day to day:
 
-| Flag | Default | Effect |
-|------|---------|--------|
-| `--port` | `3000` | Host port for admin + API. |
-| `--db` | from `kernel.config.ts` | Override the adapter URL, e.g. point at an ephemeral SQLite file. |
-| `--no-open` | off | Don't open the browser. |
-| `--seed` | off | Run the seed script after the dev DB is ready. |
-| `--debug` | off | Verbose adapter, watcher, and RPC logging. |
-| `--inspect` | off | Enable the Node/Bun inspector for the host process. |
+| Flag        | Default                 | Effect                                                            |
+| ----------- | ----------------------- | ----------------------------------------------------------------- |
+| `--port`    | `3000`                  | Host port for admin + API.                                        |
+| `--db`      | from `kernel.config.ts` | Override the adapter URL, e.g. point at an ephemeral SQLite file. |
+| `--no-open` | off                     | Don't open the browser.                                           |
+| `--seed`    | off                     | Run the seed script after the dev DB is ready.                    |
+| `--debug`   | off                     | Verbose adapter, watcher, and RPC logging.                        |
+| `--inspect` | off                     | Enable the Node/Bun inspector for the host process.               |
 
 For zero-friction first runs, point the dev server at SQLite even if production is Postgres. The Adapter contract guarantees the same operation semantics across `@kernel/db-sqlite`, `@kernel/db-postgres`, `@kernel/db-mysql`, and `@kernel/db-mongodb`, so collection code written against SQLite locally behaves identically against Postgres in CI. See Database adapters.
 
@@ -69,15 +69,15 @@ edit kernel.config.ts
 
 What the watcher tracks, and what each change triggers:
 
-| Change in config | Type re-emit | Dev migration | Admin HMR |
-|------------------|:------------:|:-------------:|:---------:|
-| Add/remove a field | yes | yes | yes |
-| Change a field type | yes | yes | yes |
-| Rename a collection | yes | yes (rename, not drop+create) | yes |
-| Edit a `validate` fn | no | no | yes |
-| Edit an access rule | no | no | yes |
-| Add a localized locale | yes | yes | yes |
-| Change admin UI metadata | no | no | yes |
+| Change in config         | Type re-emit |         Dev migration         | Admin HMR |
+| ------------------------ | :----------: | :---------------------------: | :-------: |
+| Add/remove a field       |     yes      |              yes              |    yes    |
+| Change a field type      |     yes      |              yes              |    yes    |
+| Rename a collection      |     yes      | yes (rename, not drop+create) |    yes    |
+| Edit a `validate` fn     |      no      |              no               |    yes    |
+| Edit an access rule      |      no      |              no               |    yes    |
+| Add a localized locale   |     yes      |              yes              |    yes    |
+| Change admin UI metadata |      no      |              no               |    yes    |
 
 The emitted `@kernel/types` is what makes the Local API fully inferred. Because the same operation core backs RPC, REST, and GraphQL, the types you get in a server function are the exact response shape clients receive:
 
@@ -166,13 +166,13 @@ export async function seed({ kernel, reset }: SeedContext) {
 
 The commands:
 
-| Command | What it does |
-|---------|--------------|
-| `kernel seed` | Run `seed.ts` against the current dev database. |
-| `kernel seed --fresh` | Reset, run all migrations, then seed — a clean slate. |
-| `kernel db:reset` | Truncate all collections and globals; keep the schema. |
+| Command                  | What it does                                            |
+| ------------------------ | ------------------------------------------------------- |
+| `kernel seed`            | Run `seed.ts` against the current dev database.         |
+| `kernel seed --fresh`    | Reset, run all migrations, then seed — a clean slate.   |
+| `kernel db:reset`        | Truncate all collections and globals; keep the schema.  |
 | `kernel db:reset --hard` | Drop and recreate the database, then re-run migrations. |
-| `kernel dev --seed` | Boot the dev server and seed once the DB is ready. |
+| `kernel dev --seed`      | Boot the dev server and seed once the DB is ready.      |
 
 Because seeds go through the Local API, they respect the adapter contract and run identically on SQLite, Postgres, MySQL, or MongoDB. A common pattern is deterministic factories with a seeded RNG so every `kernel seed --fresh` produces the same fixtures — useful for screenshot tests and reproducible bug reports. Keep seeds idempotent by starting with `reset()`; never let a seed depend on rows a previous run left behind.
 

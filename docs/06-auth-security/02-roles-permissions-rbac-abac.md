@@ -19,13 +19,7 @@ export const roles = defineRoles({
   },
   editor: {
     label: 'Editor',
-    grants: [
-      'read:*',
-      'create:posts',
-      'update:posts',
-      'delete:posts',
-      'publish:posts',
-    ],
+    grants: ['read:*', 'create:posts', 'update:posts', 'delete:posts', 'publish:posts'],
   },
   translator: {
     label: 'Translator',
@@ -42,19 +36,24 @@ Actions are a closed union, not free-form strings, so a typo fails at compile ti
 
 ```ts
 type Action =
-  | 'create' | 'read' | 'update' | 'delete'
-  | 'publish' | 'unpublish' | 'restore' // version ops
-  | 'admin'                              // panel/UI access
+  | 'create'
+  | 'read'
+  | 'update'
+  | 'delete'
+  | 'publish'
+  | 'unpublish'
+  | 'restore' // version ops
+  | 'admin' // panel/UI access
 ```
 
 Scopes address resources hierarchically: `collection`, `collection.fields.fieldPath`, `globals.slug`, or `*`. A grant on a parent scope implies its children unless a narrower grant or deny overrides it. The `@kernel/core` type inference walks your collection definitions, so `update:posts.fields.<path>` only autocompletes paths that actually exist on the `posts` collection — a guarantee neither Payload's function-based access nor Strapi's string permissions provide.
 
-| Concept | KernelCMS | Payload | Strapi | Sanity |
-| --- | --- | --- | --- | --- |
-| Roles in code | Yes (`kernel.config.ts`) | Functions per collection | DB + admin UI | Dashboard (fixed tiers + custom) |
-| Field-level grants | Yes, typed paths | Yes, via functions | Limited | Document-level only |
-| ABAC conditions | First-class | Manual in functions | No | Limited (filters) |
-| Compile-time safety | Full | Partial | None | None |
+| Concept             | KernelCMS                | Payload                  | Strapi        | Sanity                           |
+| ------------------- | ------------------------ | ------------------------ | ------------- | -------------------------------- |
+| Roles in code       | Yes (`kernel.config.ts`) | Functions per collection | DB + admin UI | Dashboard (fixed tiers + custom) |
+| Field-level grants  | Yes, typed paths         | Yes, via functions       | Limited       | Document-level only              |
+| ABAC conditions     | First-class              | Manual in functions      | No            | Limited (filters)                |
+| Compile-time safety | Full                     | Partial                  | None          | None                             |
 
 ## The RBAC Model
 
@@ -92,11 +91,11 @@ const verdict = resolveAccess({
 // → { allowed: true, decidedBy: 'rbac', matchedGrant: 'update:posts' }
 ```
 
-This is structurally different from Payload, where access is a per-collection function you write (`access: { update: ({ req }) => Boolean(req.user) }`). Payload's model is flexible but gives you no role registry, no inheritance, and no way to introspect "what can this role do?" without executing every function. KernelCMS keeps the declarative role registry *and* the function escape hatch — the latter lives in the ABAC layer.
+This is structurally different from Payload, where access is a per-collection function you write (`access: { update: ({ req }) => Boolean(req.user) }`). Payload's model is flexible but gives you no role registry, no inheritance, and no way to introspect "what can this role do?" without executing every function. KernelCMS keeps the declarative role registry _and_ the function escape hatch — the latter lives in the ABAC layer.
 
 ## ABAC Conditions
 
-RBAC answers "can this role, in principle, perform this action?" ABAC answers "given *this* request and *this* document, should it be allowed *now*?" Conditions are attached to grants and receive a typed context: the subject, the document (on writes and document reads), the request (locale, IP, headers), and the environment.
+RBAC answers "can this role, in principle, perform this action?" ABAC answers "given _this_ request and _this_ document, should it be allowed _now_?" Conditions are attached to grants and receive a typed context: the subject, the document (on writes and document reads), the request (locale, IP, headers), and the environment.
 
 ```ts
 import { defineRoles, where } from '@kernel/auth'
@@ -110,8 +109,7 @@ export const roles = defineRoles({
         action: 'update',
         scope: 'posts',
         // Authors may only edit their own unpublished drafts.
-        when: ({ subject, doc }) =>
-          doc.authorId === subject.id && doc.status === 'draft',
+        when: ({ subject, doc }) => doc.authorId === subject.id && doc.status === 'draft',
       },
       {
         action: 'read',
@@ -164,7 +162,7 @@ The resolver is a fixed pipeline. Order is normative: every adapter and every AP
 Three rules govern combination:
 
 1. **Explicit deny beats any grant.** A `deny` at step 4 short-circuits before ABAC runs. You cannot ABAC your way back into a denied capability.
-2. **Grants are OR-combined; conditions on a single grant are AND-combined.** If two grants both match an action/scope, the subject is allowed if *either* grant's conditions pass. Within one grant, every `when`/`filter`/`role-condition` must pass.
+2. **Grants are OR-combined; conditions on a single grant are AND-combined.** If two grants both match an action/scope, the subject is allowed if _either_ grant's conditions pass. Within one grant, every `when`/`filter`/`role-condition` must pass.
 3. **Operation-level runs before document-level, which runs before field-level.** A failed operation check (e.g. `create:posts` denied) never fetches a document; a failed document check never reaches field masking. This ordering is what prevents the timing and existence leaks that naive "fetch then check" implementations ship with.
 
 ```ts
@@ -187,7 +185,7 @@ const sanitized = applyFieldMask(data, result.fieldMask)
 
 Field-level resolution (step 8) is **redact, not reject** by default: a write to a forbidden field is dropped from the payload, and a read of a forbidden field is omitted from the response. This matches how an experienced team actually wants partial-permission UIs to behave, and it mirrors Payload's field-level access while adding the declarative role registry Payload lacks. The behavior is configurable to `strict` (reject the whole operation) per field where silent dropping would be surprising.
 
-The full evaluation is exposed through `@kernel/auth`'s `access.evaluate` and `access.explain` APIs. `explain` returns the matched grant, the deciding condition, and the resolution step, so the admin can render *why* a button is disabled — feeding the command palette and the disabled-state tooltips described in [Admin Permissions UX](../04-admin-ui/11-command-palette-and-keyboard.md).
+The full evaluation is exposed through `@kernel/auth`'s `access.evaluate` and `access.explain` APIs. `explain` returns the matched grant, the deciding condition, and the resolution step, so the admin can render _why_ a button is disabled — feeding the command palette and the disabled-state tooltips described in [Admin Permissions UX](../04-admin-ui/11-command-palette-and-keyboard.md).
 
 ## Open Questions
 

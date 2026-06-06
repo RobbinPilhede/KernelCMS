@@ -22,7 +22,7 @@ Every frontend talks to a running KernelCMS server through one of four surfaces.
                   @kernel/db-* adapter → database
 ```
 
-`@kernel/client` is a thin, fully typed client generated from your `kernel.config.ts`. It speaks the same query language — `where`, `sort`, pagination, `depth` — regardless of which transport it resolves to. Unlike Sanity's GROQ (a separate query language you must learn) or Strapi's REST query syntax (stringly-typed `filters[field][$eq]` params), the KernelCMS query object is the *same shape* in the Local API, RPC, REST, and the GraphQL variables. Learn it once.
+`@kernel/client` is a thin, fully typed client generated from your `kernel.config.ts`. It speaks the same query language — `where`, `sort`, pagination, `depth` — regardless of which transport it resolves to. Unlike Sanity's GROQ (a separate query language you must learn) or Strapi's REST query syntax (stringly-typed `filters[field][$eq]` params), the KernelCMS query object is the _same shape_ in the Local API, RPC, REST, and the GraphQL variables. Learn it once.
 
 ```ts
 import { createClient } from '@kernel/client'
@@ -64,8 +64,7 @@ const postQuery = (slug: string) =>
   })
 
 export const Route = createFileRoute('/posts/$slug')({
-  loader: ({ context, params }) =>
-    context.queryClient.ensureQueryData(postQuery(params.slug)),
+  loader: ({ context, params }) => context.queryClient.ensureQueryData(postQuery(params.slug)),
   component: Post,
 })
 
@@ -78,12 +77,12 @@ function Post() {
 
 For live or offline-capable frontends, swap the static fetch for a **TanStack DB** collection backed by `@kernel/client`. Documents become reactive client-side rows that update from the server without manual `invalidateQueries` calls — the same mechanism the admin uses for live collaboration. No other CMS ships a reactive client collection layer; with Sanity you wire up its listener API by hand, and with Payload/Strapi you poll or build your own websocket.
 
-| Concern | TanStack Start | Other frameworks |
-| --- | --- | --- |
-| Type inference | In-process, zero codegen | RPC client + generated types |
-| Data fetching | TanStack Query loaders | Framework loader + fetch |
-| Live updates | TanStack DB collections | Manual / polling |
-| Preview | Shared session, no token round-trip | Cookie + draft token |
+| Concern        | TanStack Start                      | Other frameworks             |
+| -------------- | ----------------------------------- | ---------------------------- |
+| Type inference | In-process, zero codegen            | RPC client + generated types |
+| Data fetching  | TanStack Query loaders              | Framework loader + fetch     |
+| Live updates   | TanStack DB collections             | Manual / polling             |
+| Preview        | Shared session, no token round-trip | Cookie + draft token         |
 
 ## Next.js
 
@@ -192,7 +191,7 @@ This is where the single shared query language pays off: the `where`/`sort`/`dep
 
 ## Draft and preview integration
 
-Preview means rendering *unpublished* content for an authenticated editor while the public sees only published documents. The flow is identical across frameworks; only the cookie-setting glue differs.
+Preview means rendering _unpublished_ content for an authenticated editor while the public sees only published documents. The flow is identical across frameworks; only the cookie-setting glue differs.
 
 ```
 editor clicks "Preview" in admin
@@ -251,14 +250,14 @@ export default defineConfig({
 
 The receiving endpoint verifies the HMAC signature and invokes the framework's revalidation primitive. The signature check is mandatory — an unauthenticated revalidation endpoint is a cache-poisoning and denial-of-service vector.
 
-| Framework | Primitive | Granularity |
-| --- | --- | --- |
-| Next.js | `revalidateTag` / `revalidatePath` | Per tag or path |
-| TanStack Start | `queryClient.invalidateQueries` | Per query key |
-| Remix | CDN purge by `Cache-Tag` | Per tag (CDN) |
-| Astro | Rebuild or SSR + CDN purge | Page or tag |
-| Nuxt | `refreshNuxtData` / Nitro cache purge | Key or route |
-| SvelteKit | CDN purge / `invalidate` | Tag or load dep |
+| Framework      | Primitive                             | Granularity     |
+| -------------- | ------------------------------------- | --------------- |
+| Next.js        | `revalidateTag` / `revalidatePath`    | Per tag or path |
+| TanStack Start | `queryClient.invalidateQueries`       | Per query key   |
+| Remix          | CDN purge by `Cache-Tag`              | Per tag (CDN)   |
+| Astro          | Rebuild or SSR + CDN purge            | Page or tag     |
+| Nuxt           | `refreshNuxtData` / Nitro cache purge | Key or route    |
+| SvelteKit      | CDN purge / `invalidate`              | Tag or load dep |
 
 ```ts
 // Next.js: app/api/revalidate/route.ts

@@ -38,7 +38,7 @@ export default defineConfig({
       oidcProvider({
         id: 'okta',
         label: 'Okta',
-        issuer: 'https://acme.okta.com',          // OIDC discovery document is fetched from /.well-known
+        issuer: 'https://acme.okta.com', // OIDC discovery document is fetched from /.well-known
         clientId: process.env.OKTA_CLIENT_ID!,
         clientSecret: process.env.OKTA_CLIENT_SECRET!,
         scopes: ['openid', 'profile', 'email', 'groups'],
@@ -126,14 +126,14 @@ KernelCMS implements the **SP-initiated POST binding** for the AuthnRequest and 
 
 A machine-readable SP metadata document is served at `/api/auth/saml/:providerId/metadata` so the IdP admin can configure the connection by URL rather than by hand.
 
-| Concern | OIDC | SAML 2.0 |
-| --- | --- | --- |
-| Token format | JWT (`id_token`) | XML assertion |
-| Discovery | `.well-known` + JWKS | IdP metadata XML |
-| Signature | JWS over JWT | XML-DSig over assertion |
-| Replay defense | `nonce` + `exp` | `ID`/`InResponseTo` + `NotOnOrAfter` |
-| Initiated by | SP (code flow) | SP-initiated POST |
-| Logout | RP-initiated / front-channel | SLO (`LogoutRequest`/`LogoutResponse`) |
+| Concern        | OIDC                         | SAML 2.0                               |
+| -------------- | ---------------------------- | -------------------------------------- |
+| Token format   | JWT (`id_token`)             | XML assertion                          |
+| Discovery      | `.well-known` + JWKS         | IdP metadata XML                       |
+| Signature      | JWS over JWT                 | XML-DSig over assertion                |
+| Replay defense | `nonce` + `exp`              | `ID`/`InResponseTo` + `NotOnOrAfter`   |
+| Initiated by   | SP (code flow)               | SP-initiated POST                      |
+| Logout         | RP-initiated / front-channel | SLO (`LogoutRequest`/`LogoutResponse`) |
 
 Single Logout (SLO) is opt-in via `slo: true`. When enabled, signing out of KernelCMS issues a `LogoutRequest` to the IdP, and inbound `LogoutRequest` messages terminate the local session.
 
@@ -203,7 +203,7 @@ users (1) ───< accounts (N)
                 refreshToken? (encrypted)
 ```
 
-The default linking strategy is **verified-email matching**: when a federated profile arrives, KernelCMS looks for an existing user whose email matches *and* where the incoming provider asserts the email is verified. If both hold, it attaches a new `accounts` row to that user. If no user matches, it provisions one.
+The default linking strategy is **verified-email matching**: when a federated profile arrives, KernelCMS looks for an existing user whose email matches _and_ where the incoming provider asserts the email is verified. If both hold, it attaches a new `accounts` row to that user. If no user matches, it provisions one.
 
 ```ts
 auth: {
@@ -214,13 +214,13 @@ auth: {
 }
 ```
 
-| Strategy | Behavior | Use when |
-| --- | --- | --- |
-| `verified-email` | Auto-link if emails match and provider verified it | Default; balances UX and safety |
-| `manual` | New identities stay unlinked until the signed-in user confirms in account settings | High-security tenants |
-| `never` | Every provider account is a distinct user | Strict isolation |
+| Strategy         | Behavior                                                                           | Use when                        |
+| ---------------- | ---------------------------------------------------------------------------------- | ------------------------------- |
+| `verified-email` | Auto-link if emails match and provider verified it                                 | Default; balances UX and safety |
+| `manual`         | New identities stay unlinked until the signed-in user confirms in account settings | High-security tenants           |
+| `never`          | Every provider account is a distinct user                                          | Strict isolation                |
 
-The `manual` flow exists because automatic linking on an *unverified* email is an account-takeover vector: an attacker registers an OAuth app, sets the email to your victim's, and inherits their account. KernelCMS refuses to link on unverified email regardless of strategy unless the provider is in `trustedProviders`. This is the trap Strapi's `users-permissions` historically fell into; KernelCMS closes it by default.
+The `manual` flow exists because automatic linking on an _unverified_ email is an account-takeover vector: an attacker registers an OAuth app, sets the email to your victim's, and inherits their account. KernelCMS refuses to link on unverified email regardless of strategy unless the provider is in `trustedProviders`. This is the trap Strapi's `users-permissions` historically fell into; KernelCMS closes it by default.
 
 Authenticated users link additional providers from account settings, which calls a typed RPC server function:
 

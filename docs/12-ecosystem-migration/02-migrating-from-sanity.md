@@ -35,10 +35,14 @@ export default defineConfig({
       slug: 'siteSettings',
       fields: [
         { name: 'title', type: 'text', required: true },
-        { name: 'mainNav', type: 'array', fields: [
-          { name: 'label', type: 'text' },
-          { name: 'href', type: 'text' },
-        ]},
+        {
+          name: 'mainNav',
+          type: 'array',
+          fields: [
+            { name: 'label', type: 'text' },
+            { name: 'href', type: 'text' },
+          ],
+        },
       ],
     },
   ],
@@ -47,24 +51,24 @@ export default defineConfig({
 
 The field-type translation is direct for most cases. The table below is the canonical mapping — keep it open while you port a schema.
 
-| Sanity type | KernelCMS field | Notes |
-| --- | --- | --- |
-| `string` | `text` | Add `validate` for length/regex that Sanity put in `validation`. |
-| `text` | `textarea` | Multi-line plain text. |
-| `number` | `number` | `min`/`max` move from `validation` to field `min`/`max`. |
-| `boolean` | `boolean` | — |
-| `datetime` / `date` | `date` | Store ISO 8601; the admin picker handles both granularities. |
-| `slug` | `text` with `unique: true` | Sanity's `slug.current` flattens to a plain indexed string. |
-| `url` | `text` with URL `validate` | No dedicated field; validate the format. |
-| `image` | `upload` | Targets a media collection; see [media-library](../04-admin-ui/09-media-library-ui.md). |
-| `file` | `upload` | Same, non-image MIME. |
-| `reference` | `relationship` | `to: [{ type }]` becomes `relationTo`; arrays become `hasMany: true`. |
-| `array` of objects | `array` | Named subfields; positional and reorderable. |
-| `array` of typed blocks | `blocks` | Each Sanity object type becomes a named block. |
-| `object` | `group` | Inline named subfields, single instance. |
-| `block` (Portable Text) | `richText` | Converted, not copied — see below. |
-| `geopoint` | `point` | `{ lat, lng }` maps to KernelCMS `point`. |
-| custom input component | custom field type | Register through `@kernel/plugin-sdk`. |
+| Sanity type             | KernelCMS field            | Notes                                                                                   |
+| ----------------------- | -------------------------- | --------------------------------------------------------------------------------------- |
+| `string`                | `text`                     | Add `validate` for length/regex that Sanity put in `validation`.                        |
+| `text`                  | `textarea`                 | Multi-line plain text.                                                                  |
+| `number`                | `number`                   | `min`/`max` move from `validation` to field `min`/`max`.                                |
+| `boolean`               | `boolean`                  | —                                                                                       |
+| `datetime` / `date`     | `date`                     | Store ISO 8601; the admin picker handles both granularities.                            |
+| `slug`                  | `text` with `unique: true` | Sanity's `slug.current` flattens to a plain indexed string.                             |
+| `url`                   | `text` with URL `validate` | No dedicated field; validate the format.                                                |
+| `image`                 | `upload`                   | Targets a media collection; see [media-library](../04-admin-ui/09-media-library-ui.md). |
+| `file`                  | `upload`                   | Same, non-image MIME.                                                                   |
+| `reference`             | `relationship`             | `to: [{ type }]` becomes `relationTo`; arrays become `hasMany: true`.                   |
+| `array` of objects      | `array`                    | Named subfields; positional and reorderable.                                            |
+| `array` of typed blocks | `blocks`                   | Each Sanity object type becomes a named block.                                          |
+| `object`                | `group`                    | Inline named subfields, single instance.                                                |
+| `block` (Portable Text) | `richText`                 | Converted, not copied — see below.                                                      |
+| `geopoint`              | `point`                    | `{ lat, lng }` maps to KernelCMS `point`.                                               |
+| custom input component  | custom field type          | Register through `@kernel/plugin-sdk`.                                                  |
 
 Two structural differences deserve attention.
 
@@ -74,7 +78,7 @@ Two structural differences deserve attention.
 
 ## GROQ to KernelCMS queries
 
-GROQ is expressive and proprietary. KernelCMS does not reimplement it; it ships **one query language** — `where` / `sort` / pagination / `depth` — that runs over REST, GraphQL, and the Local API. The mental shift: GROQ projections that *join and shape* in the query are replaced by `depth` (relationship population) plus `select` (field projection). Filtering moves into a structured `where` object instead of a string DSL.
+GROQ is expressive and proprietary. KernelCMS does not reimplement it; it ships **one query language** — `where` / `sort` / pagination / `depth` — that runs over REST, GraphQL, and the Local API. The mental shift: GROQ projections that _join and shape_ in the query are replaced by `depth` (relationship population) plus `select` (field projection). Filtering moves into a structured `where` object instead of a string DSL.
 
 ```
 GROQ:   *[_type == "post" && publishedAt < now()] | order(publishedAt desc) [0...10] { title, "author": author->name }
@@ -96,24 +100,24 @@ const { docs } = await kernel.find({
   },
   sort: '-publishedAt',
   limit: 10,
-  depth: 1,                 // populates author -> { name, ... }
+  depth: 1, // populates author -> { name, ... }
   select: { title: true, author: true },
 })
 ```
 
 Operator translation covers the common GROQ idioms:
 
-| GROQ | KernelCMS `where` |
-| --- | --- |
-| `field == value` | `{ field: { equals: value } }` |
-| `field != value` | `{ field: { not_equals: value } }` |
-| `field in [a, b]` | `{ field: { in: [a, b] } }` |
-| `field match "term*"` | `{ field: { like: 'term' } }` |
-| `count(tags) > 0` | `{ tags: { exists: true } }` |
-| `a && b` | `{ and: [a, b] }` |
-| `a \|\| b` | `{ or: [a, b] }` |
-| `references($id)` | `{ relField: { equals: id } }` |
-| `field->sub == x` (join filter) | `{ 'field.sub': { equals: x } }` |
+| GROQ                            | KernelCMS `where`                  |
+| ------------------------------- | ---------------------------------- |
+| `field == value`                | `{ field: { equals: value } }`     |
+| `field != value`                | `{ field: { not_equals: value } }` |
+| `field in [a, b]`               | `{ field: { in: [a, b] } }`        |
+| `field match "term*"`           | `{ field: { like: 'term' } }`      |
+| `count(tags) > 0`               | `{ tags: { exists: true } }`       |
+| `a && b`                        | `{ and: [a, b] }`                  |
+| `a \|\| b`                      | `{ or: [a, b] }`                   |
+| `references($id)`               | `{ relField: { equals: id } }`     |
+| `field->sub == x` (join filter) | `{ 'field.sub': { equals: x } }`   |
 
 Two GROQ features have no direct equal. **Arbitrary projections** (computing fields, renaming, deep reshaping inside the query) are deliberately not in the query language — do that shaping in a server function or a TanStack Query `select`, where it is typed. **Multi-document joins in a single GROQ expression** become either nested `depth` population or an explicit second `find`; KernelCMS favors predictable SQL over one opaque query, which is the same trade Payload makes against Sanity. For the full grammar see query-language. On the frontend, the same query runs through `@kernel/client` and is cached by TanStack Query:
 
@@ -147,11 +151,13 @@ import { toRichText } from './portable-text'
 
 const kernel = await getPayload()
 const typeToCollection: Record<string, string> = {
-  post: 'post', author: 'author', category: 'category',
+  post: 'post',
+  author: 'author',
+  category: 'category',
 }
 
 for await (const doc of readNdjson('data.ndjson')) {
-  if (doc._type.startsWith('sanity.')) continue        // skip system docs
+  if (doc._type.startsWith('sanity.')) continue // skip system docs
   const collection = typeToCollection[doc._type]
   if (!collection) continue
 
@@ -181,17 +187,17 @@ For large datasets, batch `create` calls and disable autosave during import, the
 
 Portable Text is Sanity's serialized rich text: an array of `block` and custom objects, each block carrying `children` (spans with `marks`) and a `markDefs` array that resolves mark keys to annotations (links, footnotes). KernelCMS `richText` stores a structured document of the same family — a typed node tree edited by the block-based editor in `@kernel/richtext` — so conversion is a tree transform, not a reparse.
 
-| Portable Text | KernelCMS `richText` node |
-| --- | --- |
-| `block.style: 'normal'` | `paragraph` |
-| `block.style: 'h2'…'h4'` | `heading` with `level` |
-| `block.style: 'blockquote'` | `blockquote` |
-| `block.listItem: 'bullet'` | `list` (`unordered`) item |
-| `span.marks: ['strong']` | text node with `bold` format |
-| `span.marks: ['em']` | text node with `italic` format |
-| mark key → `markDefs[].link` | `link` node with `url` |
-| custom `image` object | `upload` node (resolved to media ID) |
-| custom block object | named `blocks` node |
+| Portable Text                | KernelCMS `richText` node            |
+| ---------------------------- | ------------------------------------ |
+| `block.style: 'normal'`      | `paragraph`                          |
+| `block.style: 'h2'…'h4'`     | `heading` with `level`               |
+| `block.style: 'blockquote'`  | `blockquote`                         |
+| `block.listItem: 'bullet'`   | `list` (`unordered`) item            |
+| `span.marks: ['strong']`     | text node with `bold` format         |
+| `span.marks: ['em']`         | text node with `italic` format       |
+| mark key → `markDefs[].link` | `link` node with `url`               |
+| custom `image` object        | `upload` node (resolved to media ID) |
+| custom block object          | named `blocks` node                  |
 
 ```ts
 import type { RichTextNode } from '@kernel/richtext'
@@ -200,7 +206,7 @@ export function toRichText(blocks: PortableTextBlock[]): RichTextNode {
   return {
     type: 'root',
     children: blocks.map((b) => {
-      if (b._type !== 'block') return convertCustom(b)   // images, embeds
+      if (b._type !== 'block') return convertCustom(b) // images, embeds
       const markDefs = Object.fromEntries((b.markDefs ?? []).map((m) => [m._key, m]))
       return {
         type: b.listItem ? 'listitem' : blockType(b.style),

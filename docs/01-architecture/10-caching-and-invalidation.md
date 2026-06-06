@@ -33,12 +33,12 @@ KernelCMS defines four layers. Each is optional and individually swappable, but 
       ▼   database (Drizzle / Mongo adapter)
 ```
 
-| Layer | Scope | Backing | TTL default | Invalidation |
-|-------|-------|---------|-------------|--------------|
-| L0 request memo | Single operation | Map in `RequestContext` | request lifetime | automatic |
-| L1 process | One Node/Bun instance | `lru-cache` | 60s | tag map in-process |
-| L2 shared | All instances | `@kernel/cache` adapter | 300s | tag set in adapter |
-| L3 HTTP/CDN | Edge / proxy | `Cache-Control` + surrogate keys | `s-maxage` | surrogate-key purge |
+| Layer           | Scope                 | Backing                          | TTL default      | Invalidation        |
+| --------------- | --------------------- | -------------------------------- | ---------------- | ------------------- |
+| L0 request memo | Single operation      | Map in `RequestContext`          | request lifetime | automatic           |
+| L1 process      | One Node/Bun instance | `lru-cache`                      | 60s              | tag map in-process  |
+| L2 shared       | All instances         | `@kernel/cache` adapter          | 300s             | tag set in adapter  |
+| L3 HTTP/CDN     | Edge / proxy          | `Cache-Control` + surrogate keys | `s-maxage`       | surrogate-key purge |
 
 L0 is the cheapest and most overlooked win. Within one resolver pass, a GraphQL query with `depth: 2` may resolve the same `relationship` target several times; the request memo guarantees one database round-trip per `(collection, id, locale, draft)` tuple. Payload solves the same N+1 class with DataLoader batching; KernelCMS uses a memo keyed by the canonical cache key (below), which also covers globals and access-filtered reads, not just `findByID`.
 
@@ -70,11 +70,11 @@ Every cacheable read produces a structured key. Caching identity is not the URL 
 ```ts
 type CacheKey = {
   scope: 'collection' | 'global'
-  slug: string                 // 'posts'
+  slug: string // 'posts'
   op: 'find' | 'findByID' | 'count'
-  id?: string                  // for findByID
-  locale?: string              // field-level localization dimension
-  draft: boolean               // drafts vs published are separate entries
+  id?: string // for findByID
+  locale?: string // field-level localization dimension
+  draft: boolean // drafts vs published are separate entries
   // the query language, normalized + stable-stringified:
   where?: NormalizedWhere
   sort?: string[]
@@ -106,10 +106,10 @@ A published mutation on `posts:42` emits:
 ```ts
 // computed by @kernel/server on the operation result
 const tags = [
-  'col:posts',          // list views must refresh
-  'doc:posts:42',       // the document itself
-  'rel:posts:42',       // documents that joined to it at any depth
-  'locale:de',          // only the locales actually touched
+  'col:posts', // list views must refresh
+  'doc:posts:42', // the document itself
+  'rel:posts:42', // documents that joined to it at any depth
+  'locale:de', // only the locales actually touched
 ]
 ```
 
@@ -147,10 +147,8 @@ The win is that server tags and client query keys are the same vocabulary. `@ker
 ```ts
 // @kernel/client query key factory — deterministic, structural
 export const keys = {
-  find: (slug: string, q: FindArgs) =>
-    ['kernel', 'col', slug, 'find', normalize(q)] as const,
-  doc: (slug: string, id: string, q: DocArgs = {}) =>
-    ['kernel', 'col', slug, 'doc', id, normalize(q)] as const,
+  find: (slug: string, q: FindArgs) => ['kernel', 'col', slug, 'find', normalize(q)] as const,
+  doc: (slug: string, id: string, q: DocArgs = {}) => ['kernel', 'col', slug, 'doc', id, normalize(q)] as const,
 }
 
 const { data } = useQuery({
@@ -183,8 +181,7 @@ const mutation = useMutation({
     queryClient.setQueryData(keys.doc('posts', id), (d) => ({ ...d, ...patch }))
     return { prev }
   },
-  onError: (_e, _v, ctx) =>
-    queryClient.setQueryData(keys.doc('posts', id), ctx?.prev),
+  onError: (_e, _v, ctx) => queryClient.setQueryData(keys.doc('posts', id), ctx?.prev),
   // no manual invalidate: server emits doc:/col:/rel: tags,
   // the realtime bridge re-syncs every affected query
 })
@@ -198,14 +195,16 @@ Every layer follows the same policy: serve fast, refresh in the background, neve
 
 ```ts
 // per-collection override in kernel.config.ts
-collections: [{
-  slug: 'posts',
-  cache: {
-    ttl: 60_000,        // fresh for 60s
-    staleTtl: 600_000,  // serve stale up to 10m while revalidating
-    swr: true,
+collections: [
+  {
+    slug: 'posts',
+    cache: {
+      ttl: 60_000, // fresh for 60s
+      staleTtl: 600_000, // serve stale up to 10m while revalidating
+      swr: true,
+    },
   },
-}]
+]
 ```
 
 Read state machine at L1/L2:
@@ -231,8 +230,8 @@ The crucial interaction: SWR governs **time-based** staleness; tag invalidation 
 useQuery({
   queryKey: keys.doc('posts', id),
   queryFn: () => kernel.posts.findByID(id),
-  staleTime: 60_000,      // mirrors server ttl: serve cached, no refetch
-  gcTime: 600_000,        // mirrors staleTtl
+  staleTime: 60_000, // mirrors server ttl: serve cached, no refetch
+  gcTime: 600_000, // mirrors staleTtl
 })
 ```
 

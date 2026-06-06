@@ -110,16 +110,16 @@ await kernel.collections.media.finalize({ token, data: { alt: 'Keynote' } })
 
 Extraction (stage ③) is where an opaque blob becomes queryable content. We run a typed extractor per media class and merge the result into the system fields.
 
-| Field | Source | Applies to |
-|---|---|---|
-| `width`, `height` | image header probe (`sharp`/`image-size`) | images, video poster |
-| `mimeType` | magic-byte sniff (`file-type`) | all |
-| `filesize` | byte length | all |
-| `checksum` | SHA-256 of original bytes | all |
-| `exif` | EXIF/IPTC/XMP parse | images |
-| `dominantColor`, `blurhash` | downscaled pixel analysis | images |
-| `duration`, `codec` | container probe (`ffprobe`) | video, audio |
-| `pageCount` | PDF catalog | documents |
+| Field                       | Source                                    | Applies to           |
+| --------------------------- | ----------------------------------------- | -------------------- |
+| `width`, `height`           | image header probe (`sharp`/`image-size`) | images, video poster |
+| `mimeType`                  | magic-byte sniff (`file-type`)            | all                  |
+| `filesize`                  | byte length                               | all                  |
+| `checksum`                  | SHA-256 of original bytes                 | all                  |
+| `exif`                      | EXIF/IPTC/XMP parse                       | images               |
+| `dominantColor`, `blurhash` | downscaled pixel analysis                 | images               |
+| `duration`, `codec`         | container probe (`ffprobe`)               | video, audio         |
+| `pageCount`                 | PDF catalog                               | documents            |
 
 EXIF handling is opinionated: **GPS and serial-number tags are stripped from stored derivatives by default** to avoid leaking a photographer's location, while the parsed values remain available on the document for editors who need them. This is a deliberate divergence from tools that re-serve original EXIF verbatim. `blurhash` and `dominantColor` exist so the frontend can render a meaningful placeholder before the image paints — Sanity ships `lqip` for the same reason; we make it a standard system field rather than a metadata sub-object.
 
@@ -147,20 +147,20 @@ import { s3Storage } from '@kernel/storage'
 s3Storage({
   bucket: process.env.MEDIA_BUCKET!,
   delivery: {
-    mode: 'cdn',                 // 'cdn' | 'signed' | 'proxy'
+    mode: 'cdn', // 'cdn' | 'signed' | 'proxy'
     baseUrl: 'https://cdn.acme.com',
-    signedUrlTtl: 3600,          // used when mode: 'signed'
+    signedUrlTtl: 3600, // used when mode: 'signed'
   },
 })
 ```
 
 Three modes cover the realistic cases:
 
-| Mode | URL returned | Access control | Use when |
-|---|---|---|---|
-| `cdn` | public CDN URL | none at fetch time | public marketing assets |
-| `signed` | time-limited presigned URL | enforced at issue time | gated/paid media |
-| `proxy` | `@kernel/server` route | re-checked per request | per-user document access |
+| Mode     | URL returned               | Access control         | Use when                 |
+| -------- | -------------------------- | ---------------------- | ------------------------ |
+| `cdn`    | public CDN URL             | none at fetch time     | public marketing assets  |
+| `signed` | time-limited presigned URL | enforced at issue time | gated/paid media         |
+| `proxy`  | `@kernel/server` route     | re-checked per request | per-user document access |
 
 `proxy` mode is the only one that re-evaluates collection access control on every byte served, because it routes through the server. It is the correct choice when a file's visibility depends on the requesting user — exactly the scenario Strapi and Payload handle awkwardly because their media URLs are effectively public once known. With `proxy`, a `read` access function on the `media` collection gates the binary, not just the metadata.
 

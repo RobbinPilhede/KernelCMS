@@ -47,15 +47,15 @@ function Panel() {
 
 ### Color
 
-Colors are authored as primitives in perceptual space (OKLCH) so that ramps stay even and contrast is predictable across hues. Each hue ships a 12-step ramp (`50`–`950` plus `0`/`1000` endpoints), mirroring the Radix-style scale Sanity also leans on, where steps map to *roles* — backgrounds, borders, solids, text — not arbitrary lightness.
+Colors are authored as primitives in perceptual space (OKLCH) so that ramps stay even and contrast is predictable across hues. Each hue ships a 12-step ramp (`50`–`950` plus `0`/`1000` endpoints), mirroring the Radix-style scale Sanity also leans on, where steps map to _roles_ — backgrounds, borders, solids, text — not arbitrary lightness.
 
-| Step | Role | Example system token |
-|------|------|----------------------|
-| 50–100 | app & subtle backgrounds | `color.bg.canvas`, `color.bg.subtle` |
-| 200–300 | UI element backgrounds, hover | `color.bg.element`, `color.bg.hover` |
-| 400–500 | borders, separators | `color.border.default`, `color.border.strong` |
-| 600–700 | solid fills (buttons, accents) | `color.accent.solid` |
-| 800–950 | high-contrast text | `color.fg.default`, `color.fg.muted` |
+| Step    | Role                           | Example system token                          |
+| ------- | ------------------------------ | --------------------------------------------- |
+| 50–100  | app & subtle backgrounds       | `color.bg.canvas`, `color.bg.subtle`          |
+| 200–300 | UI element backgrounds, hover  | `color.bg.element`, `color.bg.hover`          |
+| 400–500 | borders, separators            | `color.border.default`, `color.border.strong` |
+| 600–700 | solid fills (buttons, accents) | `color.accent.solid`                          |
+| 800–950 | high-contrast text             | `color.fg.default`, `color.fg.muted`          |
 
 Semantic color tokens are grouped by surface and foreground, plus intent ramps (`accent`, `success`, `warning`, `danger`, `info`). Because they are role-mapped, swapping the accent hue is one line — unlike Strapi, where deeper brand theming historically meant overriding component CSS, KernelCMS rebinds the role:
 
@@ -84,16 +84,16 @@ export default defineConfig({
 
 Spacing is a single geometric-ish scale on a 4px base, indexed by integer so math stays obvious in code review.
 
-| Token | Value (comfortable) | Typical use |
-|-------|--------------------|-------------|
-| `space.0` | 0 | reset |
-| `space.1` | 4px | icon gaps |
-| `space.2` | 8px | inline padding |
-| `space.3` | 12px | field padding |
-| `space.4` | 16px | card padding, default gutter |
-| `space.6` | 24px | section spacing |
-| `space.8` | 32px | page padding |
-| `space.12` | 48px | large layout gaps |
+| Token      | Value (comfortable) | Typical use                  |
+| ---------- | ------------------- | ---------------------------- |
+| `space.0`  | 0                   | reset                        |
+| `space.1`  | 4px                 | icon gaps                    |
+| `space.2`  | 8px                 | inline padding               |
+| `space.3`  | 12px                | field padding                |
+| `space.4`  | 16px                | card padding, default gutter |
+| `space.6`  | 24px                | section spacing              |
+| `space.8`  | 32px                | page padding                 |
+| `space.12` | 48px                | large layout gaps            |
 
 Layout primitives never take raw pixels — `<Stack>`, `<Inline>`, and `<Grid>` from `@kernel/ui` accept token indices and emit `gap`, never margins, per the project's CSS rules. Semantic aliases (`space.gutter`, `space.field-y`) point at scale steps and are what density modes retune.
 
@@ -102,12 +102,12 @@ Layout primitives never take raw pixels — `<Stack>`, `<Inline>`, and `<Grid>` 
 Typography is a fluid ramp built with `clamp()` so it scales with viewport without breakpoint-based font sizes. Sizes, line-heights, weights, and letter-spacing are bundled into composite `text.*` tokens — you consume a role, not a pile of loose values, which keeps long documents and dense tables internally consistent.
 
 ```ts
-text.display   // clamp(1.75rem, 1.4rem + 1.5vw, 2.25rem) / 1.1  / 600
-text.heading   // clamp(1.25rem, 1.1rem + 0.6vw, 1.5rem)   / 1.2  / 600
-text.body.md   // 0.875rem / 1.5 / 400        ← admin default
-text.body.sm   // 0.8125rem / 1.45 / 400
-text.code      // 0.8125rem / 1.5 / 450  (mono, tabular-nums)
-text.label     // 0.75rem / 1.3 / 500  (uppercase tracking)
+text.display // clamp(1.75rem, 1.4rem + 1.5vw, 2.25rem) / 1.1  / 600
+text.heading // clamp(1.25rem, 1.1rem + 0.6vw, 1.5rem)   / 1.2  / 600
+text.body.md // 0.875rem / 1.5 / 400        ← admin default
+text.body.sm // 0.8125rem / 1.45 / 400
+text.code // 0.8125rem / 1.5 / 450  (mono, tabular-nums)
+text.label // 0.75rem / 1.3 / 500  (uppercase tracking)
 ```
 
 The default UI font stack is a system stack (`ui-sans-serif, system-ui, …`) with an opt-in variable font; code and the `code` field type use `ui-monospace` with `font-variant-numeric: tabular-nums` so numeric columns in TanStack Table align.
@@ -152,7 +152,7 @@ Dark mode is a first-class color mode, not a filter. Every semantic color token 
 :root[data-theme-mode="dark"]  { --k-color-bg-surface: oklch(20% 0.01 268); }
 ```
 
-Dark ramps are not inverted light ramps. They are authored as their own 12-step OKLCH scale so that the background→border→text progression keeps perceptually even steps and clears WCAG 2.2 AA at every text role. Elevation in dark mode is communicated by *lighter* surfaces (raised panels move up the ramp) rather than shadows, which read poorly on dark backgrounds.
+Dark ramps are not inverted light ramps. They are authored as their own 12-step OKLCH scale so that the background→border→text progression keeps perceptually even steps and clears WCAG 2.2 AA at every text role. Elevation in dark mode is communicated by _lighter_ surfaces (raised panels move up the ramp) rather than shadows, which read poorly on dark backgrounds.
 
 Mode selection respects `prefers-color-scheme` as the default, persists the user's explicit choice, and exposes a third `system` setting that re-follows the OS. The choice is stored per user and resolved during SSR to avoid a flash.
 
@@ -170,13 +170,13 @@ Where Strapi and Payload essentially maintain two palettes, KernelCMS's mode con
 
 Density retunes spacing and control sizing without touching color or type roles. Two modes ship — `comfortable` (default) and `compact` — and they are pure remaps of the spacing aliases and control-height tokens. The data-heavy surfaces (TanStack Table list views, version-history panels, the media library grid) gain meaningful rows-per-screen in compact mode, which is exactly where editors managing thousands of documents feel the difference.
 
-| Token | Comfortable | Compact |
-|-------|-------------|---------|
-| `control.height.md` | 36px | 30px |
-| `space.field-y` | `space.3` (12px) | `space.2` (8px) |
-| `space.gutter` | `space.4` (16px) | `space.3` (12px) |
-| `table.row.height` | 44px | 34px |
-| `text.body.md` line-height | 1.5 | 1.4 |
+| Token                      | Comfortable      | Compact          |
+| -------------------------- | ---------------- | ---------------- |
+| `control.height.md`        | 36px             | 30px             |
+| `space.field-y`            | `space.3` (12px) | `space.2` (8px)  |
+| `space.gutter`             | `space.4` (16px) | `space.3` (12px) |
+| `table.row.height`         | 44px             | 34px             |
+| `text.body.md` line-height | 1.5              | 1.4              |
 
 Density is a root `data-density` attribute, so toggling it is a single attribute write and a CSS cascade — no React re-render, no layout recomputation in JS. The 44px comfortable touch target satisfies the accessibility target-size rule; compact mode is gated behind a pointer/precision check and a user opt-in so it is never the default on touch devices. Neither Payload nor Sanity ships a built-in density switch; for KernelCMS it falls out of the token architecture for free because density only ever rebinds aliases, never primitives.
 

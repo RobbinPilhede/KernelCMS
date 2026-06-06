@@ -10,24 +10,24 @@ The recurring complaints are predictable: schema lives half in code and half in 
 
 Strapi's `content-types/*/schema.json` files map cleanly onto KernelCMS collections. A Strapi collection type becomes a `collection`; a single type becomes a `global`. The attribute keys translate to fields, but the field vocabulary is richer and the semantics are stricter.
 
-| Strapi attribute | KernelCMS field | Notes |
-| --- | --- | --- |
-| `string`, `uid` | `text` | `uid` becomes `text` with a `slug` validate hook |
-| `text`, `blocks` | `textarea`, `richText` | Strapi Blocks → `@kernel/richtext` block editor |
-| `richtext` (markdown) | `richText` or `code` | choose based on whether you keep Markdown |
-| `integer`, `biginteger`, `decimal`, `float` | `number` | `number` carries `min`/`max`/`step` |
-| `boolean` | `boolean` | |
-| `date`, `datetime`, `time` | `date` | one field type, format via admin config |
-| `email` | `email` | built-in validation |
-| `enumeration` | `select` or `radio` | options become typed unions |
-| `json` | `json` | |
-| `media` (single) | `upload` | references a `@kernel/storage` adapter |
-| `media` (multiple) | `array` of `upload`, or `upload` with `hasMany: true` | |
-| `relation` | `relationship` | `hasMany` / `hasOne` set explicitly |
-| `component` (repeatable) | `array` | |
-| `component` (single) | `group` | |
-| `dynamiczone` | `blocks` | the closest 1:1 mapping in any CMS |
-| `password` | handled by `@kernel/auth` | do not model auth in a content collection |
+| Strapi attribute                            | KernelCMS field                                       | Notes                                            |
+| ------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
+| `string`, `uid`                             | `text`                                                | `uid` becomes `text` with a `slug` validate hook |
+| `text`, `blocks`                            | `textarea`, `richText`                                | Strapi Blocks → `@kernel/richtext` block editor  |
+| `richtext` (markdown)                       | `richText` or `code`                                  | choose based on whether you keep Markdown        |
+| `integer`, `biginteger`, `decimal`, `float` | `number`                                              | `number` carries `min`/`max`/`step`              |
+| `boolean`                                   | `boolean`                                             |                                                  |
+| `date`, `datetime`, `time`                  | `date`                                                | one field type, format via admin config          |
+| `email`                                     | `email`                                               | built-in validation                              |
+| `enumeration`                               | `select` or `radio`                                   | options become typed unions                      |
+| `json`                                      | `json`                                                |                                                  |
+| `media` (single)                            | `upload`                                              | references a `@kernel/storage` adapter           |
+| `media` (multiple)                          | `array` of `upload`, or `upload` with `hasMany: true` |                                                  |
+| `relation`                                  | `relationship`                                        | `hasMany` / `hasOne` set explicitly              |
+| `component` (repeatable)                    | `array`                                               |                                                  |
+| `component` (single)                        | `group`                                               |                                                  |
+| `dynamiczone`                               | `blocks`                                              | the closest 1:1 mapping in any CMS               |
+| `password`                                  | handled by `@kernel/auth`                             | do not model auth in a content collection        |
 
 Strapi's dynamic zones are the standout. They translate directly to KernelCMS `blocks`, which is the same primitive Payload exposes and one Sanity only approximates through arrays of objects. A Strapi article with a dynamic zone becomes:
 
@@ -74,7 +74,9 @@ Two Strapi behaviors need explicit decisions during mapping:
 const Article = collection({
   slug: 'articles',
   versions: { drafts: true, autosave: { interval: 800 } },
-  fields: [/* ... */],
+  fields: [
+    /* ... */
+  ],
 })
 ```
 
@@ -141,16 +143,16 @@ For large datasets, batch with `kernel.create` inside a transaction and disable 
 
 Strapi's plugin marketplace covers gaps that KernelCMS fills in core or through first-party `@kernel/*` packages. Most of what teams install in Strapi is already built in.
 
-| Strapi plugin | KernelCMS equivalent | Where it lives |
-| --- | --- | --- |
-| Users & Permissions | `@kernel/auth` + access control | core, server-side |
-| i18n | field-level `localized: true` | `@kernel/core` |
-| GraphQL | `@kernel/graphql` | auto-generated |
-| Documentation (REST) | `@kernel/rest` OpenAPI output | auto-generated |
-| Upload providers (S3, Cloudinary) | `@kernel/storage` adapters | swappable adapter |
-| SEO | `group` field + plugin via `@kernel/plugin-sdk` | config-level |
-| Email | `@kernel/auth` email + email adapter | swappable adapter |
-| Sentry / monitoring | KernelCMS Cloud observability or your own | deployment |
+| Strapi plugin                     | KernelCMS equivalent                            | Where it lives    |
+| --------------------------------- | ----------------------------------------------- | ----------------- |
+| Users & Permissions               | `@kernel/auth` + access control                 | core, server-side |
+| i18n                              | field-level `localized: true`                   | `@kernel/core`    |
+| GraphQL                           | `@kernel/graphql`                               | auto-generated    |
+| Documentation (REST)              | `@kernel/rest` OpenAPI output                   | auto-generated    |
+| Upload providers (S3, Cloudinary) | `@kernel/storage` adapters                      | swappable adapter |
+| SEO                               | `group` field + plugin via `@kernel/plugin-sdk` | config-level      |
+| Email                             | `@kernel/auth` email + email adapter            | swappable adapter |
+| Sentry / monitoring               | KernelCMS Cloud observability or your own       | deployment        |
 
 The architectural difference is the adapter contract. In Strapi, the S3 upload provider is a bespoke plugin with its own config surface; in KernelCMS, **storage** is one of seven swappable concerns (database, storage, email, auth, search, cache, queue), all implementing a uniform Adapter interface. Swapping S3 for R2 is a one-line change, and the same is true for the database — something neither Strapi nor Sanity offers, since Sanity hosts your content store and Strapi couples you to its own database layer.
 

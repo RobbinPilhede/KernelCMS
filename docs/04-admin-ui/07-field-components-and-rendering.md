@@ -28,12 +28,12 @@ See [Document Forms](./06-document-edit-view.md) for the form lifecycle and [Col
 
 The registry is a `Map<FieldType, FieldComponent>` plus a resolver. For any field node, the resolver picks a component in priority order:
 
-| Priority | Source | Example |
-|---|---|---|
-| 1 | `admin.components.Field` on the field config | A bespoke color picker on one field |
-| 2 | A registered **custom field type** | `field('rating')` → your `RatingField` |
-| 3 | A `kernel.config.ts` global override for a built-in type | Replace every `text` field app-wide |
-| 4 | The built-in `@kernel/ui` component | Default `TextField`, `SelectField`, … |
+| Priority | Source                                                   | Example                                |
+| -------- | -------------------------------------------------------- | -------------------------------------- |
+| 1        | `admin.components.Field` on the field config             | A bespoke color picker on one field    |
+| 2        | A registered **custom field type**                       | `field('rating')` → your `RatingField` |
+| 3        | A `kernel.config.ts` global override for a built-in type | Replace every `text` field app-wide    |
+| 4        | The built-in `@kernel/ui` component                      | Default `TextField`, `SelectField`, …  |
 
 This four-tier fallback is the core difference from Strapi, whose custom field plugins must register against a fixed set of extension points and ship a Webpack/Vite plugin, and from Sanity, where the equivalent is `components.input` inside the schema. KernelCMS keeps all four tiers in one registry so a single resolver call answers "what renders this node?" with no special cases.
 
@@ -73,14 +73,14 @@ A `FieldComponent` has a fixed, typed contract. It never receives the whole form
 ```ts
 // @kernel/admin
 export interface FieldComponentProps<TValue = unknown, TConfig = FieldConfig> {
-  path: FieldPath          // 'meta.seo.title'
-  config: TConfig          // the compiled field config (label, required, admin, …)
+  path: FieldPath // 'meta.seo.title'
+  config: TConfig // the compiled field config (label, required, admin, …)
   value: TValue
   onChange: (next: TValue) => void
   onBlur: () => void
-  errors: FieldError[]     // resolved validation errors for this path
-  disabled: boolean        // from access control or condition
-  locale: string | null    // active locale for localized fields
+  errors: FieldError[] // resolved validation errors for this path
+  disabled: boolean // from access control or condition
+  locale: string | null // active locale for localized fields
 }
 
 export type FieldComponent<V = unknown> = (props: FieldComponentProps<V>) => JSX.Element
@@ -153,7 +153,9 @@ fields: [
     admin: {
       condition: (doc, { user }) => user.roles.includes('editor'),
     },
-    fields: [/* … */],
+    fields: [
+      /* … */
+    ],
   }),
 ]
 ```
@@ -176,8 +178,8 @@ field('text', {
   name: 'brandColor',
   admin: {
     components: {
-      Field: ColorPickerField,   // a FieldComponent you wrote
-      Cell: ColorSwatchCell,     // optional: list-view (TanStack Table) cell
+      Field: ColorPickerField, // a FieldComponent you wrote
+      Cell: ColorSwatchCell, // optional: list-view (TanStack Table) cell
     },
   },
 })
@@ -193,14 +195,13 @@ import { defineFieldType } from '@kernel/plugin-sdk'
 
 export const rating = defineFieldType<number, { max?: number }>({
   type: 'rating',
-  Field: RatingField,              // FieldComponentProps<number>
+  Field: RatingField, // FieldComponentProps<number>
   Cell: RatingStarsCell,
   defaultValue: () => 0,
   // How this field maps onto the storage adapter (Drizzle / Mongo)
   column: ({ config }) => integer({ check: `value <= ${config.max ?? 5}` }),
   // Shared across REST, GraphQL, RPC, and admin
-  validate: (value, { config }) =>
-    value >= 0 && value <= (config.max ?? 5) ? true : 'Rating out of range',
+  validate: (value, { config }) => (value >= 0 && value <= (config.max ?? 5) ? true : 'Rating out of range'),
   graphQLType: 'Int',
 })
 ```

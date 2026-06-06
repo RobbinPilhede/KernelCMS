@@ -23,15 +23,15 @@ Most modern headless CMSs make you adopt their whole world: a specific framework
 heavy dependency tree, a particular database, and a build pipeline you do not control.
 KernelCMS takes the opposite stance.
 
-| | KernelCMS | Typical heavyweight CMS |
-| --- | --- | --- |
-| **Framework coupling** | None. A web-standard `Request` to `Response` server that runs on Node, edge, or any container. | Often welded to one framework that then owns your whole app. |
-| **Default database** | SQLite via Node's built-in `node:sqlite`. Zero native dependencies. | Mongo or Postgres, with heavier setup. |
-| **Install and cold start** | Light and fast. | Large dependency tree, slow boots. |
-| **Dev loop** | `npx kernel dev` plus a single inlined admin bundle. | A full framework build pipeline. |
-| **Migrations** | Diff-based, risk-classified, deterministic. | Frequently a pain point. |
-| **Deploy** | One container, anywhere. | Often tied to one host shape. |
-| **Heavy features** | Optional adapters (email, image, OAuth). Core stays tiny. | Batteries baked into the core install. |
+|                            | KernelCMS                                                                                      | Typical heavyweight CMS                                      |
+| -------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| **Framework coupling**     | None. A web-standard `Request` to `Response` server that runs on Node, edge, or any container. | Often welded to one framework that then owns your whole app. |
+| **Default database**       | SQLite via Node's built-in `node:sqlite`. Zero native dependencies.                            | Mongo or Postgres, with heavier setup.                       |
+| **Install and cold start** | Light and fast.                                                                                | Large dependency tree, slow boots.                           |
+| **Dev loop**               | `npx kernel dev` plus a single inlined admin bundle.                                           | A full framework build pipeline.                             |
+| **Migrations**             | Diff-based, risk-classified, deterministic.                                                    | Frequently a pain point.                                     |
+| **Deploy**                 | One container, anywhere.                                                                       | Often tied to one host shape.                                |
+| **Heavy features**         | Optional adapters (email, image, OAuth). Core stays tiny.                                      | Batteries baked into the core install.                       |
 
 The guiding rule of the whole codebase: heavy or opinionated dependencies live behind
 optional adapters, never in `@kernel/core`. The lean default is the product.
@@ -107,6 +107,7 @@ two-factor, REST and GraphQL endpoints, and a full admin UI for the model above.
 ## What is in the box
 
 ### Content modeling
+
 - Collections and singleton globals, defined as code with full type inference.
 - A rich field set: text, textarea, email, slug, code, number, boolean, checkbox,
   date, select, radio, json, point, group, array, blocks (a page builder), rich text,
@@ -119,6 +120,7 @@ two-factor, REST and GraphQL endpoints, and a full admin UI for the model above.
   sidebar field positioning.
 
 ### Data and APIs
+
 - Collection-level and field-level access control that returns a boolean or a row-level
   filter, with role-based rules.
 - Lifecycle hooks: `beforeChange`, `afterChange`, `afterRead`, `beforeDelete`, and
@@ -130,6 +132,7 @@ two-factor, REST and GraphQL endpoints, and a full admin UI for the model above.
 - Versions and drafts, including a draft and publish lifecycle and scheduled publishing.
 
 ### Auth
+
 - Scrypt password hashing and stateless, JWT-compatible tokens.
 - Per-document API keys for machine clients.
 - Brute-force protection on login.
@@ -139,12 +142,14 @@ two-factor, REST and GraphQL endpoints, and a full admin UI for the model above.
 - OAuth sign-in through a small provider adapter, with Google and GitHub presets.
 
 ### Media
+
 - Uploads with local disk and S3 or R2 storage adapters.
 - Optional image transforms (multiple sizes, focal point, format re-encode) through the
   `@kernel/image-sharp` adapter. Install it only if you need it; the core stays
   native-dependency-free.
 
 ### Admin panel
+
 - A React app on TanStack Router, Query, and Table.
 - A welcoming dashboard, list views with search, a filter builder, bulk actions, and
   column visibility, plus a config-driven editor for every field type.
@@ -154,6 +159,7 @@ two-factor, REST and GraphQL endpoints, and a full admin UI for the model above.
 - Custom field components through a small registration hook.
 
 ### Tooling and operations
+
 - A `kernel` CLI: `migrate`, `migrate:status`, `migrate:snapshot`, `seed`, `dev`,
   `start`, `jobs:run`, `generate:types`, `import`, `info`, and `doctor`.
 - Diff-based, risk-classified, deterministic schema migrations.
@@ -179,24 +185,24 @@ storage, email, image processor, and auth all swappable adapters.
 
 ## Packages
 
-| Package | Responsibility |
-| --- | --- |
-| `kernelcms` | The published meta-package. Re-exports core plus adapters under subpaths. |
-| `@kernel/core` | Config, fields, operations, validation, access, auth, jobs, codegen, Local API. |
-| `@kernel/db` | The database adapter contract and query AST. |
-| `@kernel/db-sqlite` | SQLite adapter built on `node:sqlite`. |
-| `@kernel/db-postgres` | Pooled PostgreSQL adapter. |
-| `@kernel/server` | Web-standard `Request` to `Response` REST handler plus a Node http adapter. |
-| `@kernel/graphql` | GraphQL schema generation and executor. |
-| `@kernel/client` | Typed fetch client. |
-| `@kernel/cli` | The `kernel` command-line tool. |
-| `@kernel/storage` | Storage adapter contract with local, S3 or R2, and memory adapters, plus the image-processor contract. |
-| `@kernel/image-sharp` | Optional `sharp`-backed image processor. |
-| `@kernel/richtext` | Rich text schema, sanitization, and rendering. |
-| `@kernel/admin-app` | The React and TanStack admin panel. |
-| `@kernel/plugin-seo` | Example plugin: SEO fields with optional auto-generation. |
-| `@kernel/testing` | Test utilities. |
-| `@kernel/create-kernel` | The `npm create kernel` scaffolder. |
+| Package                 | Responsibility                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `kernelcms`             | The published meta-package. Re-exports core plus adapters under subpaths.                              |
+| `@kernel/core`          | Config, fields, operations, validation, access, auth, jobs, codegen, Local API.                        |
+| `@kernel/db`            | The database adapter contract and query AST.                                                           |
+| `@kernel/db-sqlite`     | SQLite adapter built on `node:sqlite`.                                                                 |
+| `@kernel/db-postgres`   | Pooled PostgreSQL adapter.                                                                             |
+| `@kernel/server`        | Web-standard `Request` to `Response` REST handler plus a Node http adapter.                            |
+| `@kernel/graphql`       | GraphQL schema generation and executor.                                                                |
+| `@kernel/client`        | Typed fetch client.                                                                                    |
+| `@kernel/cli`           | The `kernel` command-line tool.                                                                        |
+| `@kernel/storage`       | Storage adapter contract with local, S3 or R2, and memory adapters, plus the image-processor contract. |
+| `@kernel/image-sharp`   | Optional `sharp`-backed image processor.                                                               |
+| `@kernel/richtext`      | Rich text schema, sanitization, and rendering.                                                         |
+| `@kernel/admin-app`     | The React and TanStack admin panel.                                                                    |
+| `@kernel/plugin-seo`    | Example plugin: SEO fields with optional auto-generation.                                              |
+| `@kernel/testing`       | Test utilities.                                                                                        |
+| `@kernel/create-kernel` | The `npm create kernel` scaffolder.                                                                    |
 
 ---
 

@@ -8,7 +8,7 @@ Uploads are configured on a collection (see [Uploads & Storage Adapters](./01-st
 
 ## Focal point selection
 
-A focal point is a normalized coordinate `{ x: number; y: number }` in the range `0..1`, where `0,0` is the top-left of the original image. It answers one question: when this image must be cropped to an aspect ratio that differs from the source, which point must remain visible and centered? This is the part Payload gets right with its focal-point UI and Strapi largely punts on — Strapi's Media Library has no editorial focal point at all, so non-square crops drift toward the geometric center. Sanity stores a `hotspot` plus a `crop` rect on the asset reference, which is powerful but couples the crop to the *reference*, not the asset, and leaks `@sanity/image-url` math into every frontend. KernelCMS stores the focal point on the upload document and resolves crops server-side, so frontends never do trigonometry.
+A focal point is a normalized coordinate `{ x: number; y: number }` in the range `0..1`, where `0,0` is the top-left of the original image. It answers one question: when this image must be cropped to an aspect ratio that differs from the source, which point must remain visible and centered? This is the part Payload gets right with its focal-point UI and Strapi largely punts on — Strapi's Media Library has no editorial focal point at all, so non-square crops drift toward the geometric center. Sanity stores a `hotspot` plus a `crop` rect on the asset reference, which is powerful but couples the crop to the _reference_, not the asset, and leaks `@sanity/image-url` math into every frontend. KernelCMS stores the focal point on the upload document and resolves crops server-side, so frontends never do trigonometry.
 
 The focal point lives in a reserved field that the upload feature injects:
 
@@ -20,7 +20,7 @@ interface UploadFocalPoint {
 }
 ```
 
-In the admin, focal point is set via a draggable marker overlaid on the image preview. The marker is a TanStack Store-backed control so the value stays reactive across the crop previews shown beside it — drag the dot, and every named-crop thumbnail re-renders its framing live. Editors can also let an adapter that supports it propose a focal point (face/saliency detection); the proposal is a *suggestion* written into the field, never an irreversible bake. The stored coordinate is the single source of truth; derivatives are recomputed from it.
+In the admin, focal point is set via a draggable marker overlaid on the image preview. The marker is a TanStack Store-backed control so the value stays reactive across the crop previews shown beside it — drag the dot, and every named-crop thumbnail re-renders its framing live. Editors can also let an adapter that supports it propose a focal point (face/saliency detection); the proposal is a _suggestion_ written into the field, never an irreversible bake. The stored coordinate is the single source of truth; derivatives are recomputed from it.
 
 ```ts
 // kernel.config.ts — opt into automatic focal-point suggestion
@@ -30,8 +30,8 @@ export const Media = defineCollection({
   slug: 'media',
   upload: {
     focalPoint: {
-      enabled: true,        // adds the draggable marker (default true for image uploads)
-      suggest: 'saliency',  // 'none' | 'saliency' | 'face' — adapter capability, advisory only
+      enabled: true, // adds the draggable marker (default true for image uploads)
+      suggest: 'saliency', // 'none' | 'saliency' | 'face' — adapter capability, advisory only
     },
   },
   fields: [{ name: 'alt', type: 'text', required: true }],
@@ -42,7 +42,7 @@ Validation clamps `x` and `y` into `0..1` at the operation boundary; an out-of-r
 
 ## Named crops
 
-A named crop is a declared aspect ratio plus rules for how it derives from the source using the focal point. Crops are config-as-code, defined once per upload collection so every document of that type produces a consistent, predictable set of derivatives. This is the key divergence from Sanity (where crop geometry is decided per-usage on the frontend) and from Payload (whose `imageSizes` are fixed pixel boxes, not focal-aware aspect ratios). KernelCMS crops are aspect-ratio-first and focal-aware: you declare the *shape*, the engine computes the *box* from the focal point.
+A named crop is a declared aspect ratio plus rules for how it derives from the source using the focal point. Crops are config-as-code, defined once per upload collection so every document of that type produces a consistent, predictable set of derivatives. This is the key divergence from Sanity (where crop geometry is decided per-usage on the frontend) and from Payload (whose `imageSizes` are fixed pixel boxes, not focal-aware aspect ratios). KernelCMS crops are aspect-ratio-first and focal-aware: you declare the _shape_, the engine computes the _box_ from the focal point.
 
 ```ts
 // kernel.config.ts
@@ -52,9 +52,9 @@ export const Media = defineCollection({
   slug: 'media',
   upload: {
     crops: [
-      { name: 'square',    aspectRatio: '1:1' },
-      { name: 'hero',      aspectRatio: '16:9', minWidth: 1280 },
-      { name: 'portrait',  aspectRatio: '3:4' },
+      { name: 'square', aspectRatio: '1:1' },
+      { name: 'hero', aspectRatio: '16:9', minWidth: 1280 },
+      { name: 'portrait', aspectRatio: '3:4' },
       { name: 'thumbnail', aspectRatio: '1:1', fit: 'cover', widths: [80, 160] },
     ],
     formats: ['avif', 'webp', 'jpeg'], // negotiated per request; see Image Processing doc
@@ -65,14 +65,14 @@ export const Media = defineCollection({
 
 Each crop entry resolves against this contract:
 
-| Property | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `name` | `string` | — | Stable key used in helpers and the typed `media.crops[name]` map. |
-| `aspectRatio` | `` `${number}:${number}` `` | required | Target shape; the box is computed to honor it. |
-| `fit` | `'cover' \| 'contain' \| 'inside'` | `'cover'` | How the source fills the box. |
-| `widths` | `number[]` | derived | Explicit `srcset` widths; if omitted, defaults apply (below). |
-| `minWidth` | `number` | `0` | Skip generating widths the source cannot satisfy without upscaling. |
-| `gravity` | `'focal' \| 'center'` | `'focal'` | Whether the crop box is positioned by the focal point. |
+| Property      | Type                               | Default   | Meaning                                                             |
+| ------------- | ---------------------------------- | --------- | ------------------------------------------------------------------- |
+| `name`        | `string`                           | —         | Stable key used in helpers and the typed `media.crops[name]` map.   |
+| `aspectRatio` | `` `${number}:${number}` ``        | required  | Target shape; the box is computed to honor it.                      |
+| `fit`         | `'cover' \| 'contain' \| 'inside'` | `'cover'` | How the source fills the box.                                       |
+| `widths`      | `number[]`                         | derived   | Explicit `srcset` widths; if omitted, defaults apply (below).       |
+| `minWidth`    | `number`                           | `0`       | Skip generating widths the source cannot satisfy without upscaling. |
+| `gravity`     | `'focal' \| 'center'`              | `'focal'` | Whether the crop box is positioned by the focal point.              |
 
 The crop box is computed by centering the largest rectangle of the target aspect ratio on the focal point, then clamping it inside the source bounds so it never reads outside the image:
 
@@ -118,9 +118,9 @@ The signature binds the transform parameters so a client cannot fabricate an unb
 import { srcSet } from '@kernel/client'
 
 const img = srcSet(media, {
-  crop: 'hero',                 // ← autocompleted & type-checked from config
+  crop: 'hero', // ← autocompleted & type-checked from config
   sizes: '(min-width: 1024px) 800px, 100vw',
-  formats: ['avif', 'webp'],    // optional override of collection formats
+  formats: ['avif', 'webp'], // optional override of collection formats
 })
 
 // img => { src, srcSet, sizes, width, height, alt, fetchPriority? }

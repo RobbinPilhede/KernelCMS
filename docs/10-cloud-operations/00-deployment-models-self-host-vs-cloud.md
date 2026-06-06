@@ -64,15 +64,15 @@ Deployment targets are deliberately broad. The server runs on Node, Bun, or edge
 
 What you own — and therefore what you operate — in self-host:
 
-| Concern             | Who runs it (self-host) | First-party help                          |
-| ------------------- | ----------------------- | ----------------------------------------- |
-| Database            | You                     | `@kernel/db-*` adapters, generated migrations |
-| File storage / CDN  | You                     | `@kernel/storage` (S3, local, custom)     |
-| TLS / ingress       | You                     | Docker/K8s recipes                        |
-| Backups             | You                     | `kernel db dump` / restore commands       |
-| Scaling             | You                     | stateless server; scale horizontally      |
-| Observability       | You                     | structured logs, OpenTelemetry hooks      |
-| Upgrades            | You                     | semver-pinned `@kernel/*` packages        |
+| Concern            | Who runs it (self-host) | First-party help                              |
+| ------------------ | ----------------------- | --------------------------------------------- |
+| Database           | You                     | `@kernel/db-*` adapters, generated migrations |
+| File storage / CDN | You                     | `@kernel/storage` (S3, local, custom)         |
+| TLS / ingress      | You                     | Docker/K8s recipes                            |
+| Backups            | You                     | `kernel db dump` / restore commands           |
+| Scaling            | You                     | stateless server; scale horizontally          |
+| Observability      | You                     | structured logs, OpenTelemetry hooks          |
+| Upgrades           | You                     | semver-pinned `@kernel/*` packages            |
 
 Self-host is the right call when data residency is contractual, when you already run a platform team, or when the content lives behind a VPC next to services that must read it directly via the Local API. The trade is operational: every box in that table is now your pager.
 
@@ -96,7 +96,9 @@ export default defineConfig({
     project: 'acme-marketing',
     region: 'eu-west',
     // escape hatch: override any managed adapter if you must
-    overrides: { /* db, storage, search ... */ },
+    overrides: {
+      /* db, storage, search ... */
+    },
   }),
   collections: [Posts, Media],
 })
@@ -104,15 +106,15 @@ export default defineConfig({
 
 What Cloud operates so you don't:
 
-| Concern            | KernelCMS Cloud                                  |
-| ------------------ | ------------------------------------------------ |
-| Database           | Managed Postgres, point-in-time recovery         |
-| Storage + CDN      | Global content CDN, signed URLs, image transforms |
-| Scaling            | Autoscaled, multi-tenant isolation               |
-| Backups            | Automated, retained, restorable per-project      |
-| Observability      | Built-in metrics, traces, request logs           |
-| Billing            | Usage-based, per-project                          |
-| Upgrades           | Rolling, version-pinned per project              |
+| Concern       | KernelCMS Cloud                                   |
+| ------------- | ------------------------------------------------- |
+| Database      | Managed Postgres, point-in-time recovery          |
+| Storage + CDN | Global content CDN, signed URLs, image transforms |
+| Scaling       | Autoscaled, multi-tenant isolation                |
+| Backups       | Automated, retained, restorable per-project       |
+| Observability | Built-in metrics, traces, request logs            |
+| Billing       | Usage-based, per-project                          |
+| Upgrades      | Rolling, version-pinned per project               |
 
 Cloud wins where Sanity and Strapi Cloud win — you ship content models, not infrastructure — but without the lock-in tax. Because the storage layer is plain Postgres + object storage rather than a proprietary lake, the [Local API](../05-api/03-typed-rpc-and-local-api.md) and the typed RPC client (`@kernel/client`) behave identically whether they hit a Cloud endpoint or a container you run. Strapi Cloud, by contrast, exposes a managed control plane you cannot reproduce locally; Cloud's control plane is operational sugar, never a gate on your data.
 
@@ -127,8 +129,8 @@ Two common shapes:
 ```ts
 export default defineConfig({
   db: postgresAdapter({ connectionString: process.env.DATABASE_URL }), // yours
-  storage: cloud.storage({ project: 'acme-marketing' }),               // managed CDN
-  search: cloud.search({ project: 'acme-marketing' }),                 // managed search
+  storage: cloud.storage({ project: 'acme-marketing' }), // managed CDN
+  search: cloud.search({ project: 'acme-marketing' }), // managed search
   collections: [Posts, Media],
 })
 ```
@@ -177,12 +179,12 @@ kernel import ./snapshot --db "$DATABASE_URL"
 
 An export is a content snapshot plus a media manifest, not an opaque blob. You can read it, diff it, and load it into a database we never touch. There is no API key that, once revoked, strands your content — the canonical copy is always something you can hold.
 
-| Guarantee                  | Self-Host | Cloud | Hybrid |
-| -------------------------- | --------- | ----- | ------ |
-| Config in your repo        | Yes       | Yes   | Yes    |
-| Open content schema        | Yes       | Yes   | Yes    |
-| One-command export         | Yes       | Yes   | Yes    |
-| Switch model, no rewrite   | Yes       | Yes   | Yes    |
+| Guarantee                | Self-Host | Cloud | Hybrid |
+| ------------------------ | --------- | ----- | ------ |
+| Config in your repo      | Yes       | Yes   | Yes    |
+| Open content schema      | Yes       | Yes   | Yes    |
+| One-command export       | Yes       | Yes   | Yes    |
+| Switch model, no rewrite | Yes       | Yes   | Yes    |
 
 See [Migrating Between Models](./02-self-hosting-guide-docker-and-k8s.md) and [Backups and Recovery](./06-backups-and-disaster-recovery.md) for operational detail.
 

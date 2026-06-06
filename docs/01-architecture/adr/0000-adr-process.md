@@ -8,7 +8,7 @@ A headless CMS accumulates load-bearing decisions fast. KernelCMS exposes REST, 
 
 Payload, Sanity, and Strapi mostly do not do this in the open. Their architectural rationale lives in maintainers' heads, closed RFC repos, or scattered GitHub discussions. That is a defensible choice for a company-owned product, but KernelCMS is open-source core under MIT with a deliberately swappable architecture. Our wedge — "choose everything" — only holds if the contract each adapter implements is documented and the reasoning behind that contract is permanent. ADRs are how we make the reasoning permanent.
 
-An ADR captures one decision: the context that forced it, the options considered, the choice, and the consequences we accept. It is not a design doc, not a tutorial, and not a spec. A spec tells you *what the Adapter contract is*; the ADR tells you *why it looks like that and what we gave up*.
+An ADR captures one decision: the context that forced it, the options considered, the choice, and the consequences we accept. It is not a design doc, not a tutorial, and not a spec. A spec tells you _what the Adapter contract is_; the ADR tells you _why it looks like that and what we gave up_.
 
 ## The ADR format
 
@@ -45,15 +45,15 @@ The required sections are **Context**, **Decision**, and **Consequences**. **Alt
 
 We enforce a few rules:
 
-| Rule | Reason |
-| --- | --- |
-| Title is imperative and concrete | "Use Drizzle as default SQL ORM" not "ORM choice" |
-| One decision per ADR | Keeps supersession clean; you can replace one without unraveling five |
-| Status line is machine-readable | The docs site and CI parse it |
-| ADRs are immutable once Accepted | You supersede, you do not silently rewrite history |
-| Prose over diagrams, but diagrams welcome | ASCII diagrams render everywhere, including `git log` |
+| Rule                                      | Reason                                                                |
+| ----------------------------------------- | --------------------------------------------------------------------- |
+| Title is imperative and concrete          | "Use Drizzle as default SQL ORM" not "ORM choice"                     |
+| One decision per ADR                      | Keeps supersession clean; you can replace one without unraveling five |
+| Status line is machine-readable           | The docs site and CI parse it                                         |
+| ADRs are immutable once Accepted          | You supersede, you do not silently rewrite history                    |
+| Prose over diagrams, but diagrams welcome | ASCII diagrams render everywhere, including `git log`                 |
 
-Immutability is the rule contributors find surprising. Once an ADR is **Accepted**, its Context, Decision, and Alternatives sections are frozen. You may append a dated note, and you may flip its status to Superseded, but you do not edit the original argument. The record is a historical fact: *this is what we believed and why, on that date*. Rewriting it destroys the audit trail that makes the corpus trustworthy.
+Immutability is the rule contributors find surprising. Once an ADR is **Accepted**, its Context, Decision, and Alternatives sections are frozen. You may append a dated note, and you may flip its status to Superseded, but you do not edit the original argument. The record is a historical fact: _this is what we believed and why, on that date_. Rewriting it destroys the audit trail that makes the corpus trustworthy.
 
 ## Lifecycle: proposed, accepted, superseded
 
@@ -81,7 +81,7 @@ An ADR moves through a small state machine. Most ADRs only ever touch three stat
 
 **Accepted.** When the PR merges, status becomes `Accepted` with the merge date. From this point the decision is binding: code reviews can reject a change for violating an Accepted ADR, and the decision is fair to cite in commit messages and comments. Acceptance requires sign-off from a maintainer who owns the affected area — a database ADR needs a `@kernel/db` owner, an admin-routing ADR needs an admin owner.
 
-**Superseded.** Decisions expire. When a new ADR reverses or replaces an older one, the *new* ADR is written, debated, and accepted normally. On merge, the old ADR's status flips to `Superseded by ADR-MMMM` and gains a one-line dated note at the top pointing forward; the new ADR's Context section explains what changed and links back. The chain is bidirectional and never broken. A reader landing on an old ADR via a stale search result always finds the trail to the current truth.
+**Superseded.** Decisions expire. When a new ADR reverses or replaces an older one, the _new_ ADR is written, debated, and accepted normally. On merge, the old ADR's status flips to `Superseded by ADR-MMMM` and gains a one-line dated note at the top pointing forward; the new ADR's Context section explains what changed and links back. The chain is bidirectional and never broken. A reader landing on an old ADR via a stale search result always finds the trail to the current truth.
 
 **Rejected** is the terminal state for a Proposed ADR whose PR closes without merging. We keep rejected ADRs — they are valuable. The next person who proposes "let's make MongoDB the default backend instead of Postgres" should find the prior rejection and its reasoning before re-litigating it.
 
@@ -107,37 +107,37 @@ Filenames follow `NNNN-kebab-title.md`. The number is a **zero-padded four-digit
 
 Number collisions happen when two PRs claim the same next number concurrently. The rule is simple: **the second PR to merge renumbers.** This is a trivial rename plus a link fixup, and CI catches the collision before merge.
 
-ADRs are part of the published documentation, surfaced under the Architecture section of the KernelCMS docs site, and indexed so they cross-link. They sit beside the rest of the architecture docs — the Adapter contract, the query language reference, and the API surfaces overview — and those documents link *down* into the ADRs that justify their shape, while the ADRs link *up* to the living spec.
+ADRs are part of the published documentation, surfaced under the Architecture section of the KernelCMS docs site, and indexed so they cross-link. They sit beside the rest of the architecture docs — the Adapter contract, the query language reference, and the API surfaces overview — and those documents link _down_ into the ADRs that justify their shape, while the ADRs link _up_ to the living spec.
 
 ### Machine-readable index
 
 Because the status line is structured, we generate the ADR index rather than hand-maintaining it. The generator runs in CI and is itself written against `@kernel/core` utilities so the docs pipeline reuses the same parsing the product ships:
 
 ```typescript
-import { parseFrontmatterStatus } from "@kernel/core/docs";
-import { glob } from "node:fs/promises";
+import { parseFrontmatterStatus } from '@kernel/core/docs'
+import { glob } from 'node:fs/promises'
 
 interface AdrEntry {
-  readonly number: number;
-  readonly title: string;
-  readonly status: "proposed" | "accepted" | "superseded" | "rejected";
-  readonly supersededBy: number | null;
-  readonly path: string;
+  readonly number: number
+  readonly title: string
+  readonly status: 'proposed' | 'accepted' | 'superseded' | 'rejected'
+  readonly supersededBy: number | null
+  readonly path: string
 }
 
 async function buildAdrIndex(root: string): Promise<readonly AdrEntry[]> {
-  const entries: AdrEntry[] = [];
+  const entries: AdrEntry[] = []
   for await (const file of glob(`${root}/[0-9][0-9][0-9][0-9]-*.md`)) {
-    const parsed = await parseFrontmatterStatus(file);
+    const parsed = await parseFrontmatterStatus(file)
     entries.push({
       number: parsed.number,
       title: parsed.title,
       status: parsed.status,
       supersededBy: parsed.supersededBy ?? null,
       path: file,
-    });
+    })
   }
-  return entries.sort((a, b) => a.number - b.number);
+  return entries.sort((a, b) => a.number - b.number)
 }
 ```
 
@@ -147,24 +147,26 @@ CI fails the build when an ADR references a superseding number that does not exi
 
 Write an ADR when a decision is **costly to reverse** and **affects more than one package**. Concretely, for KernelCMS that means: the Adapter contract and any change to it; the shape of the shared `where` / `sort` / pagination / `depth` query language; how drafts, versions, and autosave are persisted; the boundary between the Local API and its RPC projection; default choices (Postgres as default backend, Drizzle as default ORM); and anything that changes the portability guarantee between self-host and KernelCMS Cloud.
 
-Do *not* write an ADR for routine code that lives comfortably inside one package, for choices a single owner can reverse in an afternoon, or for naming bikesheds. The brief already fixes the canonical names; that is not an ADR's job.
+Do _not_ write an ADR for routine code that lives comfortably inside one package, for choices a single owner can reverse in an afternoon, or for naming bikesheds. The brief already fixes the canonical names; that is not an ADR's job.
 
 A useful smell test: if the decision will show up in a `kernel.config.ts` that thousands of users depend on, it is probably ADR-worthy.
 
 ```typescript
-import { defineConfig } from "@kernel/core";
-import { postgres } from "@kernel/db-postgres";
+import { defineConfig } from '@kernel/core'
+import { postgres } from '@kernel/db-postgres'
 
 // The defaults below — Postgres as the backend, Drizzle as the ORM
 // underneath it, and depth-based relationship resolution — are each
 // backed by an Accepted ADR. The config is downstream of the record.
 export default defineConfig({
   db: postgres({ url: process.env.DATABASE_URL! }),
-  collections: [/* ... */],
+  collections: [
+    /* ... */
+  ],
   api: {
     depth: 2, // see ADR-0004: shared query language
   },
-});
+})
 ```
 
 This is the difference between KernelCMS and a CMS where defaults are folklore. When a user asks why `depth` defaults to `2` and not `0`, the answer is a link, not a shrug.

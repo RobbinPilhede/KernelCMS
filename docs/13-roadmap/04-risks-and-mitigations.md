@@ -4,16 +4,16 @@ KernelCMS makes two large bets: that betting the entire stack on the TanStack ec
 
 ## Risk register at a glance
 
-| ID | Risk | Likelihood | Impact | Primary mitigation |
-|----|------|------------|--------|--------------------|
-| T1 | Adapter contract leaks DB-specific behavior | High | High | Conformance test suite every adapter must pass |
-| T2 | Auto-generated GraphQL/REST schemas drift from config | Medium | High | Single operation core; generators are pure functions of config |
-| T3 | Type inference cost explodes editor/build performance | Medium | High | Performance budgets in CI; codegen fallback path |
-| T4 | Migration generation produces destructive diffs | Medium | Critical | Diff classification + mandatory review gate |
-| M1 | Payload/Sanity/Strapi out-execute on mindshare | High | High | Wedge on TanStack-native + portability |
-| M2 | Cloud cannibalizes or distracts from OSS core | Medium | Medium | Strict open-core boundary, portability guarantee |
-| M3 | Slow adoption starves the plugin ecosystem | Medium | High | First-party adapters cover 90% of needs |
-| D1 | TanStack breaking changes / abandonment | Low–Medium | High | Thin internal facades, version pinning, contribution |
+| ID  | Risk                                                  | Likelihood | Impact   | Primary mitigation                                             |
+| --- | ----------------------------------------------------- | ---------- | -------- | -------------------------------------------------------------- |
+| T1  | Adapter contract leaks DB-specific behavior           | High       | High     | Conformance test suite every adapter must pass                 |
+| T2  | Auto-generated GraphQL/REST schemas drift from config | Medium     | High     | Single operation core; generators are pure functions of config |
+| T3  | Type inference cost explodes editor/build performance | Medium     | High     | Performance budgets in CI; codegen fallback path               |
+| T4  | Migration generation produces destructive diffs       | Medium     | Critical | Diff classification + mandatory review gate                    |
+| M1  | Payload/Sanity/Strapi out-execute on mindshare        | High       | High     | Wedge on TanStack-native + portability                         |
+| M2  | Cloud cannibalizes or distracts from OSS core         | Medium     | Medium   | Strict open-core boundary, portability guarantee               |
+| M3  | Slow adoption starves the plugin ecosystem            | Medium     | High     | First-party adapters cover 90% of needs                        |
+| D1  | TanStack breaking changes / abandonment               | Low–Medium | High     | Thin internal facades, version pinning, contribution           |
 
 ## Technical risks
 
@@ -52,7 +52,7 @@ kernel.config.ts ──▶ Collection/Global schema (canonical)
               (@kernel/rest) (@kernel/graphql) (@kernel/rpc)
 ```
 
-The generators are pure functions of the canonical schema and never re-derive validation, access control, or shape independently. The Local API *is* the operation core called in-process; RPC is that same core exposed over TanStack Start server functions. One shared query language (`where` / `sort` / pagination / `depth`) spans all of them, which is enforced by a cross-surface contract test that issues the identical logical query through REST, GraphQL, and RPC and asserts byte-equivalent results.
+The generators are pure functions of the canonical schema and never re-derive validation, access control, or shape independently. The Local API _is_ the operation core called in-process; RPC is that same core exposed over TanStack Start server functions. One shared query language (`where` / `sort` / pagination / `depth`) spans all of them, which is enforced by a cross-surface contract test that issues the identical logical query through REST, GraphQL, and RPC and asserts byte-equivalent results.
 
 ### T3 — Type inference becomes the bottleneck
 
@@ -116,7 +116,7 @@ Mitigation: we do not depend on the community for table-stakes infrastructure. F
 
 This is the bet that defines KernelCMS, so it deserves the most candor. We are coupled to nine TanStack libraries. If TanStack ships a hostile breaking change, slows maintenance, or a core library is abandoned, our differentiation becomes our liability.
 
-We assess the *likelihood* as low-to-medium — TanStack is actively maintained, widely adopted, and several libraries are stable — but the *impact* is high, so we engineer as if a breaking change is a when, not an if.
+We assess the _likelihood_ as low-to-medium — TanStack is actively maintained, widely adopted, and several libraries are stable — but the _impact_ is high, so we engineer as if a breaking change is a when, not an if.
 
 **Facade isolation.** No `@kernel/*` package imports TanStack libraries directly across the codebase at large. Each is wrapped behind a thin internal facade so a breaking upgrade is contained to one module.
 
@@ -126,16 +126,16 @@ export { useQuery, useMutation, queryOptions } from '@tanstack/react-query'
 // The rest of @kernel/admin imports from here. A v6 migration touches one file.
 ```
 
-| TanStack lib | Our usage | Blast radius if it breaks | Fallback |
-|--------------|-----------|---------------------------|----------|
-| Start | SSR, server fns, routing host | High | Self-host on Node/Bun adapters directly |
-| Router | Admin routing, search-param state | Medium | Facade swap |
-| Query | All admin/client fetching | Medium | Facade swap |
-| Table | Collection list views | Low | Isolated to list components |
-| Form | Document edit forms | Medium | Facade swap |
-| Store | Reactive UI state | Low | Trivially replaceable |
-| Virtual | Long lists/documents | Low | Isolated |
-| DB | Optional reactive collections | Low | Opt-in; degrades gracefully |
+| TanStack lib | Our usage                         | Blast radius if it breaks | Fallback                                |
+| ------------ | --------------------------------- | ------------------------- | --------------------------------------- |
+| Start        | SSR, server fns, routing host     | High                      | Self-host on Node/Bun adapters directly |
+| Router       | Admin routing, search-param state | Medium                    | Facade swap                             |
+| Query        | All admin/client fetching         | Medium                    | Facade swap                             |
+| Table        | Collection list views             | Low                       | Isolated to list components             |
+| Form         | Document edit forms               | Medium                    | Facade swap                             |
+| Store        | Reactive UI state                 | Low                       | Trivially replaceable                   |
+| Virtual      | Long lists/documents              | Low                       | Isolated                                |
+| DB           | Optional reactive collections     | Low                       | Opt-in; degrades gracefully             |
 
 **Version pinning and a tested upgrade lane.** We pin exact versions and run the full conformance and e2e suite against the next TanStack release candidate in a scheduled CI lane, so we learn about breakage before users do, not after.
 

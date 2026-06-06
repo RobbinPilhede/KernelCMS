@@ -4,7 +4,7 @@ KernelCMS renders your real front end inside the admin, hydrated with unsaved dr
 
 ## The live-preview iframe
 
-Live preview is an `<iframe>` that points at *your* application — the Next.js, Astro, SvelteKit, or TanStack Start site you already deploy — running in a special draft mode. KernelCMS does not re-implement your front end or ask you to rebuild components inside the admin. That is the same stance Sanity took with Presentation and the opposite of Strapi's older preview, which only ever embedded a single configured URL with no two-way channel.
+Live preview is an `<iframe>` that points at _your_ application — the Next.js, Astro, SvelteKit, or TanStack Start site you already deploy — running in a special draft mode. KernelCMS does not re-implement your front end or ask you to rebuild components inside the admin. That is the same stance Sanity took with Presentation and the opposite of Strapi's older preview, which only ever embedded a single configured URL with no two-way channel.
 
 You opt a collection into preview by giving it a URL resolver in `kernel.config.ts`:
 
@@ -19,8 +19,7 @@ export default defineConfig({
       admin: {
         livePreview: livePreview({
           // Resolve a preview URL from the in-progress document.
-          url: ({ doc, locale }) =>
-            `https://app.example.com/${locale}/${doc.slug}?preview=1`,
+          url: ({ doc, locale }) => `https://app.example.com/${locale}/${doc.slug}?preview=1`,
           // Breakpoints the editor can toggle in the preview toolbar.
           breakpoints: [
             { label: 'Mobile', width: 375, height: 667 },
@@ -32,8 +31,20 @@ export default defineConfig({
       fields: [
         { name: 'title', type: 'text', required: true },
         { name: 'slug', type: 'text', required: true },
-        { name: 'hero', type: 'group', fields: [/* ... */] },
-        { name: 'body', type: 'blocks', blocks: [/* ... */] },
+        {
+          name: 'hero',
+          type: 'group',
+          fields: [
+            /* ... */
+          ],
+        },
+        {
+          name: 'body',
+          type: 'blocks',
+          blocks: [
+            /* ... */
+          ],
+        },
       ],
     },
   ],
@@ -61,10 +72,10 @@ Because the iframe loads a cross-origin app, the security posture matters. The f
 
 The hard part of live preview is showing content that has not been saved yet — and certainly not published. KernelCMS supports two delivery modes, and you choose per project based on how aggressively your front end is cached.
 
-| Mode | Mechanism | Latency | Best for |
-|------|-----------|---------|----------|
-| **Server draft fetch** | Front end reads drafts from `@kernel/client` using a draft token | One round-trip per change | SSR / RSC apps, server components |
-| **postMessage push** | Editor streams the in-memory form doc to the iframe | Per-keystroke, no network | SPA / islands front ends that can re-render from props |
+| Mode                   | Mechanism                                                        | Latency                   | Best for                                               |
+| ---------------------- | ---------------------------------------------------------------- | ------------------------- | ------------------------------------------------------ |
+| **Server draft fetch** | Front end reads drafts from `@kernel/client` using a draft token | One round-trip per change | SSR / RSC apps, server components                      |
+| **postMessage push**   | Editor streams the in-memory form doc to the iframe              | Per-keystroke, no network | SPA / islands front ends that can re-render from props |
 
 ### Server draft fetch
 
@@ -105,7 +116,7 @@ form.subscribe((state) => {
     collection: 'pages',
     id: doc.id,
     locale,
-    data: state.values,   // the unsaved draft, fully typed
+    data: state.values, // the unsaved draft, fully typed
   })
 })
 ```
@@ -157,13 +168,13 @@ export function Hero({ doc }) {
 
 Clicking an overlay does three things: focuses the corresponding TanStack Form field, scrolls it into view in the left pane, and sends `kernel:focus` back so the iframe outlines the live element. Hovering a field in the editor reverse-highlights its rendered output. Array and `blocks` items get richer affordances — the overlay surfaces add / remove / reorder controls bound to the same TanStack Form array helpers used in the normal editor, so a drag in the preview is the identical mutation as a drag in the field UI.
 
-| Capability | Bound to | Notes |
-|------------|----------|-------|
-| Click → focus field | TanStack Form `setFocus` | Resolves dotted path to field node |
-| Hover field → highlight el | `kernel:focus` message | Debounced, outline only |
-| Reorder `array`/`blocks` | Form array helpers | Same op as field-UI drag |
-| Add/remove block | Block registry + Form | Insert at clicked position |
-| Localized field badge | Field config `localized` | Shows active locale, see [Localization](../02-data-modeling/09-localization-and-i18n.md) |
+| Capability                 | Bound to                 | Notes                                                                                    |
+| -------------------------- | ------------------------ | ---------------------------------------------------------------------------------------- |
+| Click → focus field        | TanStack Form `setFocus` | Resolves dotted path to field node                                                       |
+| Hover field → highlight el | `kernel:focus` message   | Debounced, outline only                                                                  |
+| Reorder `array`/`blocks`   | Form array helpers       | Same op as field-UI drag                                                                 |
+| Add/remove block           | Block registry + Form    | Insert at clicked position                                                               |
+| Localized field badge      | Field config `localized` | Shows active locale, see [Localization](../02-data-modeling/09-localization-and-i18n.md) |
 
 Overlays degrade gracefully: a front end that ships zero `edit()` calls still gets full live preview, just without click-to-edit. This keeps adoption incremental — wire preview first, sprinkle `edit()` in later.
 
@@ -171,18 +182,18 @@ Overlays degrade gracefully: a front end that ships zero `edit()` calls still ge
 
 Sanity's Presentation tool established the modern pattern: an iframe of the real site, drafts delivered via a content source map / stega-encoded strings, and click-to-edit overlays driven by `@sanity/visual-editing`. KernelCMS adopts the same shape on purpose, then diverges where the architecture lets us do better.
 
-| Dimension | Sanity Presentation | KernelCMS |
-|-----------|--------------------|-----------|
-| Draft delivery | Perspective + content source map; stega-encoded strings | Explicit `draft: true` query *or* typed `postMessage` push |
-| Provenance | Invisible stega chars embedded in string values | Explicit `edit()` → `data-kernel-*` attributes |
-| Editor state | Sanity Studio (Structure) | TanStack Form, same model as the field UI |
-| Field binding | Path resolution back into Studio | Direct TanStack Form node focus |
-| Live updates | Loader + listen query | TanStack Query invalidation or push channel |
-| Type safety | Typed via GROQ codegen | End-to-end inference from `kernel.config.ts` |
+| Dimension      | Sanity Presentation                                     | KernelCMS                                                  |
+| -------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
+| Draft delivery | Perspective + content source map; stega-encoded strings | Explicit `draft: true` query _or_ typed `postMessage` push |
+| Provenance     | Invisible stega chars embedded in string values         | Explicit `edit()` → `data-kernel-*` attributes             |
+| Editor state   | Sanity Studio (Structure)                               | TanStack Form, same model as the field UI                  |
+| Field binding  | Path resolution back into Studio                        | Direct TanStack Form node focus                            |
+| Live updates   | Loader + listen query                                   | TanStack Query invalidation or push channel                |
+| Type safety    | Typed via GROQ codegen                                  | End-to-end inference from `kernel.config.ts`               |
 
-The substantive difference is provenance. Sanity's stega approach hides zero-width characters inside string content so any rendered string carries its own edit metadata — clever, framework-agnostic, but it leaks invisible characters into your DOM, breaks on `===` comparisons and `.length`, and can't tag non-string output (an image, a number, a boolean toggle) without extra work. KernelCMS uses explicit attributes via `edit()`. It costs one prop per editable element, but it tags *anything*, never mutates your content, and survives copy-paste and string comparison untouched. For teams that genuinely want zero front-end changes, the `postMessage` push mode plus a build-time codemod that injects `edit()` is on the roadmap.
+The substantive difference is provenance. Sanity's stega approach hides zero-width characters inside string content so any rendered string carries its own edit metadata — clever, framework-agnostic, but it leaks invisible characters into your DOM, breaks on `===` comparisons and `.length`, and can't tag non-string output (an image, a number, a boolean toggle) without extra work. KernelCMS uses explicit attributes via `edit()`. It costs one prop per editable element, but it tags _anything_, never mutates your content, and survives copy-paste and string comparison untouched. For teams that genuinely want zero front-end changes, the `postMessage` push mode plus a build-time codemod that injects `edit()` is on the roadmap.
 
-The second difference is the editor model. In Sanity, the iframe talks to Studio's document store; in KernelCMS the overlay talks to the *same TanStack Form instance* that powers the normal editor. There is no second source of truth to reconcile — autosave, [version history](../02-data-modeling/10-versioning-drafts-and-autosave.md), validation, and access control behave identically whether the edit originated from a field input or an overlay click.
+The second difference is the editor model. In Sanity, the iframe talks to Studio's document store; in KernelCMS the overlay talks to the _same TanStack Form instance_ that powers the normal editor. There is no second source of truth to reconcile — autosave, [version history](../02-data-modeling/10-versioning-drafts-and-autosave.md), validation, and access control behave identically whether the edit originated from a field input or an overlay click.
 
 ## Open questions
 

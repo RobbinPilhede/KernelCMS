@@ -45,10 +45,7 @@ export interface PostgresAdapterOptions {
 
 /** The subset of pg's Pool/PoolClient surface this adapter relies on. */
 interface Queryable {
-  query(
-    text: string,
-    params?: unknown[],
-  ): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }>
+  query(text: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }>
 }
 
 const SQL_TYPE: Record<ColumnSchema['type'], string> = {
@@ -172,9 +169,7 @@ class PostgresAdapter implements DatabaseAdapter {
       for (const col of table.columns) {
         if (col.indexed && !col.unique) {
           const idx = `idx_${table.table}_${col.name}`
-          await pool.query(
-            `CREATE INDEX IF NOT EXISTS ${quote(idx)} ON ${quote(table.table)} (${quote(col.name)});`,
-          )
+          await pool.query(`CREATE INDEX IF NOT EXISTS ${quote(idx)} ON ${quote(table.table)} (${quote(col.name)});`)
         }
       }
     }

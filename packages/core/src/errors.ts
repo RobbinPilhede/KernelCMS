@@ -44,12 +44,7 @@ export class ValidationError extends KernelError {
   readonly errors: FieldError[]
 
   constructor(errors: FieldError[]) {
-    super(
-      `Validation failed: ${errors.map((e) => e.path).join(', ')}`,
-      'VALIDATION',
-      400,
-      errors,
-    )
+    super(`Validation failed: ${errors.map((e) => e.path).join(', ')}`, 'VALIDATION', 400, errors)
     this.name = 'ValidationError'
     this.errors = errors
   }

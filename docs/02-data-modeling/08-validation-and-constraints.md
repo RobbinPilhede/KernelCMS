@@ -51,21 +51,21 @@ export const Products = defineCollection({
 
 The declarative constraints map to validators per type:
 
-| Field type     | Built-in constraints                                                |
-| -------------- | ------------------------------------------------------------------ |
-| `text`         | `required`, `minLength`, `maxLength`, `pattern`, `unique`          |
-| `textarea`     | `required`, `minLength`, `maxLength`                                |
-| `number`       | `required`, `min`, `max`, `integer`, `step`                        |
-| `boolean`      | `required` (must be explicitly set)                                |
-| `date`         | `required`, `before`, `after`                                       |
-| `email`        | `required`, RFC-5322 shape, `unique`                               |
-| `select`/`radio` | `required`, value ∈ `options`, `hasMany` cardinality             |
-| `relationship` | `required`, target exists, `min`/`max` for `hasMany`               |
-| `upload`       | `required`, `mimeTypes`, `maxFileSize`, target exists              |
-| `array`        | `minRows`, `maxRows`                                                |
-| `blocks`       | `minRows`, `maxRows`, block type ∈ allowed set                     |
-| `json`/`code`  | `required`, JSON-schema or parse validity                          |
-| `point`        | `required`, `[lng, lat]` range bounds                              |
+| Field type       | Built-in constraints                                      |
+| ---------------- | --------------------------------------------------------- |
+| `text`           | `required`, `minLength`, `maxLength`, `pattern`, `unique` |
+| `textarea`       | `required`, `minLength`, `maxLength`                      |
+| `number`         | `required`, `min`, `max`, `integer`, `step`               |
+| `boolean`        | `required` (must be explicitly set)                       |
+| `date`           | `required`, `before`, `after`                             |
+| `email`          | `required`, RFC-5322 shape, `unique`                      |
+| `select`/`radio` | `required`, value ∈ `options`, `hasMany` cardinality      |
+| `relationship`   | `required`, target exists, `min`/`max` for `hasMany`      |
+| `upload`         | `required`, `mimeTypes`, `maxFileSize`, target exists     |
+| `array`          | `minRows`, `maxRows`                                      |
+| `blocks`         | `minRows`, `maxRows`, block type ∈ allowed set            |
+| `json`/`code`    | `required`, JSON-schema or parse validity                 |
+| `point`          | `required`, `[lng, lat]` range bounds                     |
 
 `unique` constraints are pushed down to the database where the adapter supports it — a Drizzle unique index on Postgres/SQLite/MySQL, a unique index on MongoDB — so the guarantee holds even under concurrent writes, not just at the application layer. KernelCMS validates application-side first for a friendly error, then relies on the constraint as the race-safe backstop. Payload performs uniqueness as an application query, which leaves a thin window under concurrency; pushing the index down closes it.
 
@@ -97,11 +97,11 @@ export const Posts = defineCollection({
 
 The context object gives a custom validator everything it needs without reaching into globals:
 
-| Context key   | Meaning                                                       |
+| Context key   | Meaning                                                      |
 | ------------- | ------------------------------------------------------------ |
 | `siblingData` | The other fields in the same group/row/array item            |
 | `data`        | The full incoming document                                   |
-| `operation`   | `'create'` or `'update'`                                      |
+| `operation`   | `'create'` or `'update'`                                     |
 | `req`         | Request context: `user`, `locale`, `t` (i18n), `payload` API |
 | `id`          | Document id on update, `undefined` on create                 |
 | `path`        | Dot-path to the field, e.g. `variants.2.price`               |
@@ -193,10 +193,10 @@ All validation errors share one wire format across REST, GraphQL, and RPC, so cl
 
 ```ts
 type ValidationError = {
-  message: string            // top-level summary
+  message: string // top-level summary
   errors: {
-    path: string             // 'variants.2.price'
-    message: string          // localized via req.t
+    path: string // 'variants.2.price'
+    message: string // localized via req.t
     code: 'required' | 'pattern' | 'unique' | 'custom' | string
   }[]
 }

@@ -55,10 +55,10 @@ upload     cover          →          { blockType: 'quote', … }
 
 The `_id` strategy is a real decision, not a default to ignore.
 
-| `useObjectIds` | `_id` type | Pros | Cons |
-| --- | --- | --- | --- |
-| `false` (default) | string ULID | Portable to SQL adapters, lexically sortable, no driver-specific casting in the API | 26-char string index, slightly larger |
-| `true` | `ObjectId` | Native Mongo, smallest index, embedded timestamp | Leaks BSON types into the wire format; harder to migrate to Postgres |
+| `useObjectIds`    | `_id` type  | Pros                                                                                | Cons                                                                 |
+| ----------------- | ----------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `false` (default) | string ULID | Portable to SQL adapters, lexically sortable, no driver-specific casting in the API | 26-char string index, slightly larger                                |
+| `true`            | `ObjectId`  | Native Mongo, smallest index, embedded timestamp                                    | Leaks BSON types into the wire format; harder to migrate to Postgres |
 
 We default to string ULIDs because content portability between adapters and between self-host and KernelCMS Cloud is a core tenet — a ULID `_id` round-trips into a Postgres `text` primary key without rewriting every relationship reference. Payload, by contrast, leans on `ObjectId` in its Mongo adapter and string UUIDs only in Postgres, which makes its two backends subtly non-interchangeable at the id level. KernelCMS keeps one id shape across all adapters by default.
 
@@ -69,7 +69,14 @@ Localized fields are stored as a nested object keyed by locale, embedded in the 
 ```jsonc
 {
   "title": { "en": "Launch day", "de": "Tag des Starts" },
-  "body":  { "en": { /* lexical */ }, "de": { /* lexical */ } }
+  "body": {
+    "en": {
+      /* lexical */
+    },
+    "de": {
+      /* lexical */
+    },
+  },
 }
 ```
 
@@ -94,15 +101,15 @@ where: {                          Mongo filter:
 }                                 }
 ```
 
-| KernelCMS operator | Mongo |
-| --- | --- |
-| `equals` / `not_equals` | `$eq` / `$ne` |
+| KernelCMS operator           | Mongo                                        |
+| ---------------------------- | -------------------------------------------- |
+| `equals` / `not_equals`      | `$eq` / `$ne`                                |
 | `greater_than` / `less_than` | `$gt` / `$lt` (and `_equal` → `$gte`/`$lte`) |
-| `in` / `not_in` | `$in` / `$nin` |
-| `like` / `contains` | `$regex` with `$options: 'i'` |
-| `exists` | `$exists` |
-| `near` (point fields) | `$geoNear` / `$near` with a `2dsphere` index |
-| `and` / `or` | `$and` / `$or` |
+| `in` / `not_in`              | `$in` / `$nin`                               |
+| `like` / `contains`          | `$regex` with `$options: 'i'`                |
+| `exists`                     | `$exists`                                    |
+| `near` (point fields)        | `$geoNear` / `$near` with a `2dsphere` index |
+| `and` / `or`                 | `$and` / `$or`                               |
 
 Nested field access uses Mongo's dot-path syntax, so `where: { 'seo.description': { like: 'kernel' } }` compiles to `{ 'seo.description': { $regex: … } }` and queries inside the embedded array for free — no join required. This is the structural advantage of the document model and the main reason a team would pick it.
 
@@ -115,17 +122,21 @@ Relationships are stored as bare ids. Resolving them (`depth: 1` and deeper) is 
 
 ```ts
 // depth: 2 on Posts → author → author.avatar
-[
+;[
   { $match: { _status: 'published' } },
   { $sort: { createdAt: -1 } },
-  { $skip: 0 }, { $limit: 20 },
-  { $lookup: {
-      from: 'authors', localField: 'author',
-      foreignField: '_id', as: 'author',
-  }},
+  { $skip: 0 },
+  { $limit: 20 },
+  {
+    $lookup: {
+      from: 'authors',
+      localField: 'author',
+      foreignField: '_id',
+      as: 'author',
+    },
+  },
   { $unwind: { path: '$author', preserveNullAndEmptyArrays: true } },
-  { $lookup: { from: 'media', localField: 'author.avatar',
-      foreignField: '_id', as: 'author.avatar' }},
+  { $lookup: { from: 'media', localField: 'author.avatar', foreignField: '_id', as: 'author.avatar' } },
   { $unwind: { path: '$author.avatar', preserveNullAndEmptyArrays: true } },
 ]
 ```
@@ -144,11 +155,8 @@ Multi-document operations — a publish that writes the document plus a version 
 const session = client.startSession()
 await session.withTransaction(async () => {
   await posts.updateOne({ _id }, { $set: next }, { session })
-  await versions.insertOne({ parent: _id, version: snapshot,
-    latest: true, autosave: false }, { session })
-  await versions.updateMany(
-    { parent: _id, _id: { $ne: snapshotId } },
-    { $set: { latest: false } }, { session })
+  await versions.insertOne({ parent: _id, version: snapshot, latest: true, autosave: false }, { session })
+  await versions.updateMany({ parent: _id, _id: { $ne: snapshotId } }, { $set: { latest: false } }, { session })
 })
 ```
 

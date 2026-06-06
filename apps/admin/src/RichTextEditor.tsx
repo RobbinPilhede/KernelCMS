@@ -256,13 +256,47 @@ export function RichTextEditor({ meta, value, onChange, readOnly }: Props) {
     const cmds: SlashCommand[] = []
     for (const level of [2, 3, 4] as const) {
       if (meta.headingLevels.includes(level)) {
-        cmds.push({ id: `h${level}`, label: `Heading ${level}`, hint: `H${level}`, keywords: `heading h${level} title`, run: () => setBlock(`<h${level}>`) })
+        cmds.push({
+          id: `h${level}`,
+          label: `Heading ${level}`,
+          hint: `H${level}`,
+          keywords: `heading h${level} title`,
+          run: () => setBlock(`<h${level}>`),
+        })
       }
     }
-    if (meta.lists.unordered) cmds.push({ id: 'ul', label: 'Bulleted list', hint: '•', keywords: 'bullet unordered list ul', run: () => exec('insertUnorderedList') })
-    if (meta.lists.ordered) cmds.push({ id: 'ol', label: 'Numbered list', hint: '1.', keywords: 'number ordered list ol', run: () => exec('insertOrderedList') })
-    if (node('quote')) cmds.push({ id: 'quote', label: 'Quote', hint: '❝', keywords: 'quote blockquote', run: () => setBlock('<blockquote>') })
-    if (node('hr')) cmds.push({ id: 'hr', label: 'Divider', hint: '—', keywords: 'divider hr horizontal rule line', run: () => exec('insertHorizontalRule') })
+    if (meta.lists.unordered)
+      cmds.push({
+        id: 'ul',
+        label: 'Bulleted list',
+        hint: '•',
+        keywords: 'bullet unordered list ul',
+        run: () => exec('insertUnorderedList'),
+      })
+    if (meta.lists.ordered)
+      cmds.push({
+        id: 'ol',
+        label: 'Numbered list',
+        hint: '1.',
+        keywords: 'number ordered list ol',
+        run: () => exec('insertOrderedList'),
+      })
+    if (node('quote'))
+      cmds.push({
+        id: 'quote',
+        label: 'Quote',
+        hint: '❝',
+        keywords: 'quote blockquote',
+        run: () => setBlock('<blockquote>'),
+      })
+    if (node('hr'))
+      cmds.push({
+        id: 'hr',
+        label: 'Divider',
+        hint: '—',
+        keywords: 'divider hr horizontal rule line',
+        run: () => exec('insertHorizontalRule'),
+      })
     return cmds
     // exec/setBlock are stable enough for this menu; deps on schema shape only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,7 +319,13 @@ export function RichTextEditor({ meta, value, onChange, readOnly }: Props) {
     const m = /(?:^|\s)\/([a-z0-9]*)$/i.exec(textBefore)
     if (!m) return setSlash(SLASH_CLOSED)
     const rect = range.getBoundingClientRect()
-    setSlash((prev) => ({ open: true, query: m[1] ?? '', index: prev.open ? Math.min(prev.index, 99) : 0, top: rect.bottom || rect.top, left: rect.left }))
+    setSlash((prev) => ({
+      open: true,
+      query: m[1] ?? '',
+      index: prev.open ? Math.min(prev.index, 99) : 0,
+      top: rect.bottom || rect.top,
+      left: rect.left,
+    }))
   }
 
   const closeSlash = () => setSlash(SLASH_CLOSED)
@@ -324,9 +364,11 @@ export function RichTextEditor({ meta, value, onChange, readOnly }: Props) {
     const onSelectionChange = () => {
       const el = ref.current
       const sel = window.getSelection()
-      if (!el || !sel || sel.rangeCount === 0 || sel.isCollapsed) return setBubble((b) => (b.visible ? { ...b, visible: false } : b))
+      if (!el || !sel || sel.rangeCount === 0 || sel.isCollapsed)
+        return setBubble((b) => (b.visible ? { ...b, visible: false } : b))
       const range = sel.getRangeAt(0)
-      if (!el.contains(range.commonAncestorContainer)) return setBubble((b) => (b.visible ? { ...b, visible: false } : b))
+      if (!el.contains(range.commonAncestorContainer))
+        return setBubble((b) => (b.visible ? { ...b, visible: false } : b))
       const rect = range.getBoundingClientRect()
       if (rect.width === 0 && rect.height === 0) return
       setBubble({ visible: true, top: rect.top, left: rect.left + rect.width / 2 })
@@ -348,7 +390,9 @@ export function RichTextEditor({ meta, value, onChange, readOnly }: Props) {
         {meta.headingLevels.includes(4) && <ToolButton label="Heading 4" mono="H4" onClick={() => setBlock('<h4>')} />}
         <ToolButton label="Paragraph" mono="¶" onClick={() => setBlock('<p>')} />
         {(node('list') || node('quote')) && <span className="rte-sep" />}
-        {meta.lists.unordered && <ToolButton label="Bulleted list" mono="•—" onClick={() => exec('insertUnorderedList')} />}
+        {meta.lists.unordered && (
+          <ToolButton label="Bulleted list" mono="•—" onClick={() => exec('insertUnorderedList')} />
+        )}
         {meta.lists.ordered && <ToolButton label="Numbered list" mono="1." onClick={() => exec('insertOrderedList')} />}
         {node('quote') && <ToolButton label="Quote" mono="❝" onClick={() => setBlock('<blockquote>')} />}
         {node('hr') && <ToolButton label="Divider" mono="—" onClick={() => exec('insertHorizontalRule')} />}
@@ -364,7 +408,12 @@ export function RichTextEditor({ meta, value, onChange, readOnly }: Props) {
       </div>
 
       {bubble.visible && (
-        <div className="rte-bubble" role="toolbar" aria-label="Selection formatting" style={{ top: bubble.top, left: bubble.left }}>
+        <div
+          className="rte-bubble"
+          role="toolbar"
+          aria-label="Selection formatting"
+          style={{ top: bubble.top, left: bubble.left }}
+        >
           {has('bold') && <ToolButton label="Bold" mono="B" onClick={() => exec('bold')} />}
           {has('italic') && <ToolButton label="Italic" mono="I" italic onClick={() => exec('italic')} />}
           {has('underline') && <ToolButton label="Underline" mono="U" underline onClick={() => exec('underline')} />}

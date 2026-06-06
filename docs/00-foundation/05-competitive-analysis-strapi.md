@@ -60,14 +60,14 @@ Strapi added a typegen step (`strapi ts:generate-types`) that emits `Schema.Attr
 
 Strapi's field set is solid: text, rich text (Blocks), media, relations, components, dynamic zones (their version of blocks), JSON, enumeration. KernelCMS matches and extends this with `text`, `textarea`, `number`, `boolean`, `date`, `email`, `json`, `code`, `point`, `select`, `radio`, `checkbox`, `relationship`, `upload`, `array`, `blocks`, `group`, `tabs`, `row`, `richText`, `ui`, and custom field types. Two practical wins: KernelCMS treats **field-level localization** as a first-class flag (`localized: true`) rather than Strapi's plugin-gated i18n, and **field-level access control** evaluates on read and write, which Strapi only approximates through role-based content-type permissions.
 
-| Capability | Strapi | KernelCMS |
-| --- | --- | --- |
-| Schema source of truth | JSON + DB (builder-owned) | `kernel.config.ts` (code) |
-| Builder in production | Disabled by design | N/A — no runtime builder |
-| Type generation | Separate `ts:generate-types` step | Inferred, no codegen |
-| Field-level access | Role-based, content-type granularity | Per-field, per-operation callbacks |
-| Localization | i18n plugin | Built-in `localized` flag |
-| Migrations | DB lifecycle + ad hoc | Generated from schema diff (Drizzle) |
+| Capability             | Strapi                               | KernelCMS                            |
+| ---------------------- | ------------------------------------ | ------------------------------------ |
+| Schema source of truth | JSON + DB (builder-owned)            | `kernel.config.ts` (code)            |
+| Builder in production  | Disabled by design                   | N/A — no runtime builder             |
+| Type generation        | Separate `ts:generate-types` step    | Inferred, no codegen                 |
+| Field-level access     | Role-based, content-type granularity | Per-field, per-operation callbacks   |
+| Localization           | i18n plugin                          | Built-in `localized` flag            |
+| Migrations             | DB lifecycle + ad hoc                | Generated from schema diff (Drizzle) |
 
 ## Plugin Marketplace
 
@@ -84,9 +84,12 @@ export const seo = definePlugin({
   setup(kernel) {
     kernel.extendCollections((c) => ({
       ...c,
-      fields: [...c.fields, fields.group('seo', {
-        fields: [fields.text('metaTitle'), fields.textarea('metaDescription')],
-      })],
+      fields: [
+        ...c.fields,
+        fields.group('seo', {
+          fields: [fields.text('metaTitle'), fields.textarea('metaDescription')],
+        }),
+      ],
     }))
     kernel.admin.addRoute({ path: '/seo-audit', component: () => import('./SeoAudit') })
     kernel.hooks.beforeChange('articles', validateSeo)
@@ -102,14 +105,14 @@ Strapi's community is its strongest asset and the bar we have to clear. Tens of 
 
 Where Strapi's ecosystem fragments is the front end. It is backend-only and deliberately frontend-agnostic, so every team rebuilds data fetching, caching, and preview from scratch — usually a hand-rolled fetch layer plus whatever client they like. KernelCMS is **TanStack-native end to end**, which collapses that work:
 
-| Concern | Strapi | KernelCMS |
-| --- | --- | --- |
-| Data fetching / cache | Bring your own | TanStack Query, shared with admin |
-| List views | Custom in your app | TanStack Table (sort, filter, virtualize) |
-| Edit forms | Admin only | TanStack Form (per-field binding/validation) |
-| Routing / search state | Custom | TanStack Router |
-| Live / offline collections | None | TanStack DB (optional reactive client) |
-| Typed client | Generated SDK (community) | `@kernel/client` inferred from config |
+| Concern                    | Strapi                    | KernelCMS                                    |
+| -------------------------- | ------------------------- | -------------------------------------------- |
+| Data fetching / cache      | Bring your own            | TanStack Query, shared with admin            |
+| List views                 | Custom in your app        | TanStack Table (sort, filter, virtualize)    |
+| Edit forms                 | Admin only                | TanStack Form (per-field binding/validation) |
+| Routing / search state     | Custom                    | TanStack Router                              |
+| Live / offline collections | None                      | TanStack DB (optional reactive client)       |
+| Typed client               | Generated SDK (community) | `@kernel/client` inferred from config        |
 
 A frontend developer consuming KernelCMS uses the same `where`/`sort`/pagination/`depth` query language across REST, GraphQL, and typed RPC, with `@kernel/client` returning inferred types. That is one query language and one type system spanning every surface — something neither Strapi's REST plus separate GraphQL plugin nor Sanity's GROQ-only model offers.
 
@@ -142,5 +145,5 @@ Strapi taught the market that an open-source headless CMS needs a low-friction m
 ## Open Questions
 
 - **Migration on-ramp from Strapi.** Should `@kernel/cli` ship a `kernel import strapi` that reads `schema.json` files and emits a starter `kernel.config.ts`? The schemas are mechanical to translate, but dynamic zones, components, and i18n state need careful mapping.
-- **No-code modeling parity.** Some teams genuinely want a click-to-build experience. Do we offer an optional admin "config composer" that *writes* `kernel.config.ts` (and opens a PR) without ever mutating a running system — keeping config-as-code intact?
+- **No-code modeling parity.** Some teams genuinely want a click-to-build experience. Do we offer an optional admin "config composer" that _writes_ `kernel.config.ts` (and opens a PR) without ever mutating a running system — keeping config-as-code intact?
 - **Marketplace governance.** A plugin marketplace needs trust signals. What is the verification, security review, and versioning policy for third-party `@kernel/plugin-sdk` packages, and how do we avoid Strapi's cross-major breakage?

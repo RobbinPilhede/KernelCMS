@@ -138,7 +138,8 @@ describe('sanitize — security & allow-list', () => {
     const make = (url: string) =>
       doc({ type: 'paragraph', children: [{ type: 'link', url, children: [textNode('x')] }] })
     for (const url of ['https://example.com', 'mailto:a@b.c', 'tel:+1', '/about', '#anchor']) {
-      const link = (sanitizeRichText(make(url), standard).doc.children[0] as { children: { url: string }[] }).children[0]
+      const link = (sanitizeRichText(make(url), standard).doc.children[0] as { children: { url: string }[] })
+        .children[0]
       expect(link.url).toBe(url)
     }
   })
@@ -174,7 +175,11 @@ describe('sanitize — security & allow-list', () => {
     const { warnings } = sanitizeRichText(input, full)
     expect(warnings.some((w) => w.code === 'dropped-node')).toBe(true)
     const ok = doc({ type: 'block', blockType: 'callout', data: { text: 'hi' } } as never)
-    expect(sanitizeRichText(ok, full).doc.children[0]).toEqual({ type: 'block', blockType: 'callout', data: { text: 'hi' } })
+    expect(sanitizeRichText(ok, full).doc.children[0]).toEqual({
+      type: 'block',
+      blockType: 'callout',
+      data: { text: 'hi' },
+    })
   })
 })
 
@@ -205,7 +210,11 @@ describe('toHTML', () => {
   it('renders headings, lists, quotes, hr, and code blocks', () => {
     const d = doc(
       { type: 'heading', level: 3, children: [textNode('H')] },
-      { type: 'list', ordered: true, children: [{ type: 'listItem', children: [{ type: 'paragraph', children: [textNode('one')] }] }] },
+      {
+        type: 'list',
+        ordered: true,
+        children: [{ type: 'listItem', children: [{ type: 'paragraph', children: [textNode('one')] }] }],
+      },
       { type: 'hr' },
       { type: 'codeBlock', language: 'ts', code: 'const x = 1 < 2' },
     )
@@ -230,10 +239,10 @@ describe('toHTML', () => {
   })
 
   it('renders embedded blocks/uploads via host resolvers and skips them otherwise', () => {
-    const d = doc(
-      { type: 'block', blockType: 'callout', data: { text: 'hi' } } as never,
-      { type: 'paragraph', children: [textNode('after')] },
-    )
+    const d = doc({ type: 'block', blockType: 'callout', data: { text: 'hi' } } as never, {
+      type: 'paragraph',
+      children: [textNode('after')],
+    })
     const withResolver = renderNodes(d, {
       createElement: h,
       resolvers: { block: (n) => h('div', { 'data-block': n.blockType }) },
@@ -248,7 +257,15 @@ describe('toHTML', () => {
     const { doc: clean } = sanitizeRichText(
       doc({
         type: 'paragraph',
-        children: [{ type: 'link', url: '#', newTab: true, doc: { relationTo: 'pages', value: 'home' }, children: [textNode('Home')] }],
+        children: [
+          {
+            type: 'link',
+            url: '#',
+            newTab: true,
+            doc: { relationTo: 'pages', value: 'home' },
+            children: [textNode('Home')],
+          },
+        ],
       }),
       full,
     )

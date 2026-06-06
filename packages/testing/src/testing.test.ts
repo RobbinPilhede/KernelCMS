@@ -10,7 +10,9 @@ afterEach(async () => {
 describe('createTestKernel', () => {
   it('boots a migrated in-memory kernel with sensible defaults', async () => {
     kernel = await createTestKernel({
-      collections: [{ slug: 'posts', access: { read: () => true }, fields: [{ name: 'title', type: 'text', required: true }] }],
+      collections: [
+        { slug: 'posts', access: { read: () => true }, fields: [{ name: 'title', type: 'text', required: true }] },
+      ],
     })
     const doc = await kernel.create({ collection: 'posts', data: { title: 'Hi' }, ...asSystem })
     expect(doc.title).toBe('Hi')
@@ -47,7 +49,9 @@ describe('seed', () => {
 describe('expectRejection', () => {
   it('captures a rejection and matches the error class', async () => {
     kernel = await createTestKernel({
-      collections: [{ slug: 'posts', access: { read: () => true }, fields: [{ name: 'title', type: 'text', required: true }] }],
+      collections: [
+        { slug: 'posts', access: { read: () => true }, fields: [{ name: 'title', type: 'text', required: true }] },
+      ],
     })
     const err = await expectRejection(kernel.create({ collection: 'posts', data: {}, ...asSystem }), ValidationError)
     expect(err).toBeInstanceOf(ValidationError)

@@ -26,9 +26,9 @@ A `richText` value is a `RichTextDocument`: a root node holding an array of bloc
 ```ts
 // @kernel/richtext
 export interface RichTextDocument {
-  type: 'root';
-  version: 1;
-  children: BlockNode[];
+  type: 'root'
+  version: 1
+  children: BlockNode[]
 }
 
 export type BlockNode =
@@ -38,23 +38,22 @@ export type BlockNode =
   | BlockquoteNode
   | CodeBlockNode
   | EmbedNode
-  | CustomBlockNode;
+  | CustomBlockNode
 
 export interface ParagraphNode {
-  type: 'paragraph';
-  children: InlineNode[];
+  type: 'paragraph'
+  children: InlineNode[]
 }
 
-export type InlineNode = TextNode | LinkNode | CustomInlineNode;
+export type InlineNode = TextNode | LinkNode | CustomInlineNode
 
 export interface TextNode {
-  type: 'text';
-  text: string;
-  marks?: Mark[]; // e.g. ['bold', 'code']
+  type: 'text'
+  text: string
+  marks?: Mark[] // e.g. ['bold', 'code']
 }
 
-export type Mark =
-  | 'bold' | 'italic' | 'underline' | 'strike' | 'code' | 'subscript' | 'superscript';
+export type Mark = 'bold' | 'italic' | 'underline' | 'strike' | 'code' | 'subscript' | 'superscript'
 ```
 
 Three deliberate constraints distinguish this from a raw editor dump:
@@ -67,8 +66,8 @@ You configure the field in `kernel.config.ts` and constrain exactly what authors
 
 ```ts
 // kernel.config.ts
-import { defineCollection } from '@kernel/core';
-import { richText, lexicalCompatPreset } from '@kernel/richtext';
+import { defineCollection } from '@kernel/core'
+import { richText, lexicalCompatPreset } from '@kernel/richtext'
 
 export const Posts = defineCollection({
   slug: 'posts',
@@ -83,21 +82,21 @@ export const Posts = defineCollection({
       localized: true, // per-locale trees; see field-level localization
     }),
   ],
-});
+})
 ```
 
 Because the allow-list is part of config-as-code, it doubles as the validation schema. The same definition powers the editor toolbar, the write-path sanitizer, and the generated GraphQL/REST types — there is no second source of truth, which is the recurring tax in Strapi setups where the admin and the API can disagree about what a field may contain.
 
 ## Comparison to Portable Text and Lexical
 
-| Concern | KernelCMS `@kernel/richtext` | Sanity Portable Text | Payload Lexical |
-| --- | --- | --- | --- |
-| On-disk shape | Versioned `RichTextDocument` tree | Flat array of blocks + spans | Lexical editor state JSON |
-| Inline formatting | Flat `marks` set | `marks` + `markDefs` | Nested format bitmasks |
-| Editor coupling | None — editor is swappable | None — Portable Text is editor-agnostic | Tight — state mirrors Lexical internals |
-| Custom blocks | `embeds` referencing field configs | `_type` + schema | Custom Lexical nodes (+ converters) |
-| Serializers shipped | HTML, Markdown, JSX, RN, text | Community renderers per framework | HTML/JSX converters |
-| Internal link resolution | First-class `relationship` node | Via `markDefs` + GROQ | Via custom node + populate |
+| Concern                  | KernelCMS `@kernel/richtext`       | Sanity Portable Text                    | Payload Lexical                         |
+| ------------------------ | ---------------------------------- | --------------------------------------- | --------------------------------------- |
+| On-disk shape            | Versioned `RichTextDocument` tree  | Flat array of blocks + spans            | Lexical editor state JSON               |
+| Inline formatting        | Flat `marks` set                   | `marks` + `markDefs`                    | Nested format bitmasks                  |
+| Editor coupling          | None — editor is swappable         | None — Portable Text is editor-agnostic | Tight — state mirrors Lexical internals |
+| Custom blocks            | `embeds` referencing field configs | `_type` + schema                        | Custom Lexical nodes (+ converters)     |
+| Serializers shipped      | HTML, Markdown, JSX, RN, text      | Community renderers per framework       | HTML/JSX converters                     |
+| Internal link resolution | First-class `relationship` node    | Via `markDefs` + GROQ                   | Via custom node + populate              |
 
 The honest summary: KernelCMS borrows Portable Text's editor-agnostic, span-and-marks philosophy because it has aged well, and rejects Lexical's "serialize the editor state" approach because it leaks editor internals into your database. Payload users have been burned by Lexical state shape changing across versions; our `version` field and migration runner exist precisely so a tree written in 2025 deserializes deterministically in 2030.
 
@@ -108,25 +107,24 @@ We ship `lexicalCompatPreset` and a Portable Text importer in `@kernel/richtext`
 A serializer is a pure function `(RichTextDocument, Options) => Output`. Each node type maps to a render function; unknown types fall through to a configurable handler instead of throwing, so a forward-compatible reader never crashes on a node it predates.
 
 ```ts
-import { serializeHTML, serializeMarkdown, serializeJSX } from '@kernel/richtext';
+import { serializeHTML, serializeMarkdown, serializeJSX } from '@kernel/richtext'
 
 const html = serializeHTML(doc, {
   // Override or extend per node type.
   nodes: {
-    heading: (node, render) =>
-      `<h${node.level} class="prose-h">${render(node.children)}</h${node.level}>`,
+    heading: (node, render) => `<h${node.level} class="prose-h">${render(node.children)}</h${node.level}>`,
   },
   // Resolve internal links via the typed client.
   resolveLink: (node) => resolveInternal(node.relationship),
-});
+})
 
-const md = serializeMarkdown(doc); // GFM by default
+const md = serializeMarkdown(doc) // GFM by default
 ```
 
 `serializeHTML` runs server-side and escapes text content by default; raw HTML never enters the tree, so there is no XSS surface from stored content — output is encoded for the HTML context per the security baseline. For React frontends, `serializeJSX` returns a component, not a string, which avoids `dangerouslySetInnerHTML` entirely:
 
 ```tsx
-import { RichText } from '@kernel/client/react';
+import { RichText } from '@kernel/client/react'
 
 export function PostBody({ doc }: { doc: RichTextDocument }) {
   return (
@@ -138,7 +136,7 @@ export function PostBody({ doc }: { doc: RichTextDocument }) {
         link: ({ node, children }) => <Link to={node.relationship}>{children}</Link>,
       }}
     />
-  );
+  )
 }
 ```
 
@@ -150,8 +148,8 @@ An embed is a block node whose `data` conforms to a named field config — effec
 
 ```ts
 // kernel.config.ts
-import { defineEmbed } from '@kernel/richtext';
-import { upload, relationship, select } from '@kernel/core';
+import { defineEmbed } from '@kernel/richtext'
+import { upload, relationship, select } from '@kernel/core'
 
 export const Callout = defineEmbed({
   name: 'callout',
@@ -159,12 +157,12 @@ export const Callout = defineEmbed({
     select('variant', { options: ['info', 'warn', 'danger'] }),
     richText('body', { nodes: ['paragraph'], marks: ['bold', 'code'] }), // nested, depth-limited
   ],
-});
+})
 
 export const ProductCard = defineEmbed({
   name: 'productCard',
   fields: [relationship('product', { to: 'products' })], // resolved at query depth
-});
+})
 ```
 
 On the wire an embed is just a node:
@@ -173,7 +171,7 @@ On the wire an embed is just a node:
 {
   "type": "embed",
   "embed": "productCard",
-  "data": { "product": "prod_8f12" } // relationship id, populated per `depth`
+  "data": { "product": "prod_8f12" }, // relationship id, populated per `depth`
 }
 ```
 
@@ -188,17 +186,19 @@ Custom inline nodes (mentions, footnote references, math spans) follow the same 
 ```ts
 defineEmbed({
   name: 'callout',
-  fields: [/* ... */],
+  fields: [
+    /* ... */
+  ],
   serialize: {
     html: (data, render) => `<aside data-variant="${data.variant}">${render(data.body)}</aside>`,
     markdown: (data, render) => `> ${render(data.body)}`,
     jsx: Callout, // component reference
   },
-});
+})
 ```
 
 ## Open questions
 
 - **Collaborative editing model.** The version-history/autosave path is settled, but whether multiplayer editing uses a CRDT over the tree or OT against `@kernel/rpc` server functions is undecided. A CRDT changes the on-disk merge semantics and may warrant a `version: 2` shape.
 - **Footnotes and cross-references** are currently expressible as custom inline nodes, but a built-in, serializer-aware footnote system (with automatic numbering across HTML/Markdown/JSX) may deserve to be canonical rather than user-defined.
-- **Portable Text export.** We import Portable Text; whether we also ship a lossy *export* serializer (for teams migrating *to* Sanity) is a maintenance-cost question we have not resolved.
+- **Portable Text export.** We import Portable Text; whether we also ship a lossy _export_ serializer (for teams migrating _to_ Sanity) is a maintenance-cost question we have not resolved.

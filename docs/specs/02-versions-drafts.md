@@ -22,6 +22,7 @@ builder + live preview we already have.
 ## 2. Goals / Non-goals
 
 **Goals**
+
 - Per-collection/global opt-in `versions` with three escalating modes:
   history-only, drafts, drafts+autosave.
 - A **separate versions store** per collection (no change to the main row shape) —
@@ -35,6 +36,7 @@ builder + live preview we already have.
 - Deterministic, well-typed APIs across Local/REST(/GraphQL).
 
 **Non-goals (v1)**
+
 - Branching/merge workflows or per-field approval. (Design leaves room; not v1.)
 - Multiplayer co-editing (separate; document locking covers concurrency v1).
 
@@ -46,8 +48,8 @@ interface CollectionConfig {
   versions?: boolean | VersionsOptions
 }
 interface VersionsOptions {
-  drafts?: boolean | DraftsOptions   // default false (history-only)
-  maxPerDoc?: number                 // ring-buffer cap, default 100 (0 = unlimited)
+  drafts?: boolean | DraftsOptions // default false (history-only)
+  maxPerDoc?: number // ring-buffer cap, default 100 (0 = unlimited)
 }
 interface DraftsOptions {
   autosave?: boolean | { interval?: number /* ms, default 800 */ }
@@ -59,6 +61,7 @@ interface DraftsOptions {
 ```
 
 **Modes**
+
 1. `versions: true` → **history-only**: every successful update snapshots a version;
    the newest is always "live." Good for audit (e.g. users).
 2. `versions: { drafts: true }` → **drafts**: documents carry `_status`; you can save
@@ -71,32 +74,37 @@ zero-config footprint small; the scaffolder enables drafts on content collection
 ## 4. Data model
 
 ### 4.1 Main collection row
+
 - History-only: unchanged.
 - Drafts: add a system column **`_status`** (`'draft' | 'published'`, indexed).
   The main row always holds the **latest published** snapshot (what public reads
   get by default). Draft-only changes live in the versions store until published.
 
 ### 4.2 Versions store
+
 One table per versioned collection: `_versions_<slug>` (globals: `_versions_global_<slug>`).
+
 ```ts
 interface VersionRow {
-  id: string                 // version id
-  parent: string             // the document id this version belongs to (indexed)
-  version: Row               // full serialized document snapshot at this point
+  id: string // version id
+  parent: string // the document id this version belongs to (indexed)
+  version: Row // full serialized document snapshot at this point
   status: 'draft' | 'published'
-  autosave: boolean          // true if produced by autosave (collapsible in UI)
-  createdAt: string          // when this version was captured (indexed, desc)
-  createdBy?: string         // user id (audit)
-  publishedAt?: string       // set when this version became the published one
+  autosave: boolean // true if produced by autosave (collapsible in UI)
+  createdAt: string // when this version was captured (indexed, desc)
+  createdBy?: string // user id (audit)
+  publishedAt?: string // set when this version became the published one
   snapshotMeta?: { previewHash?: string } // for rendered-diff caching
 }
 ```
+
 Rationale for full snapshots (not deltas): simple, robust restore, trivial diffing,
 and "versions don't change the shape of your data." `maxPerDoc` trims oldest
 non-published, non-autosave-pinned rows (ring buffer). Autosave versions are
 coalesced (keep latest autosave per editing session) to avoid unbounded growth.
 
 ### 4.3 Schema compilation
+
 `compileSchema` emits the `_versions_<slug>` table (columns: id, parent, version
 [json], status, autosave [bool], createdAt, createdBy, publishedAt, snapshotMeta
 [json]) whenever the collection has versions enabled. `parent` + `createdAt`
@@ -138,6 +146,7 @@ New Local API ops: `findVersions`, `findVersionByID`, `restoreVersion`,
 update/create` gain `draft?: boolean`.
 
 ## 6. Read resolution (the important subtlety)
+
 - **Published read** (`draft:false`): query main rows where `_status='published'`
   (or status absent for history-only). Fast path, cacheable, what the live site uses.
 - **Draft read** (`draft:true`): start from published main row, **overlay** the
@@ -147,8 +156,9 @@ update/create` gain `draft?: boolean`.
 - Live preview and the admin editor always read `draft:true`.
 
 ## 7. Autosave
+
 - Admin: debounced (`interval`, default 800ms) PATCH with `draft:true,
-  autosave:true`. Server coalesces consecutive autosaves in the same session
+autosave:true`. Server coalesces consecutive autosaves in the same session
   (replace the latest autosave version rather than append) to bound growth.
 - **Conflict handling:** each editor load gets the `updatedAt`/version id it based
   on; autosave/publish send `If-Match: <versionId>`. If the server's latest draft
@@ -159,6 +169,7 @@ update/create` gain `draft?: boolean`.
 - Indicator UI: “Saving… / Saved <time> / Unsaved changes / Conflict”.
 
 ## 8. Scheduled publish / unpublish
+
 - Requires the **jobs queue** (Spec 18). `schedulePublish: true` exposes, in the
   editor, “Publish on <date>” / “Unpublish on <date>”.
 - Mechanism: a `publishAt`/`unpublishAt` is stored on the draft version + a job is
@@ -177,10 +188,10 @@ update/create` gain `draft?: boolean`.
 - **Diff view:** select two versions →
   - **Field diff:** structured per-field changes (text/number/select shown inline;
     rich text shown via Spec 01 model diff; arrays/blocks show added/removed/moved
-    rows). 
+    rows).
   - **Rendered diff (differentiator):** side-by-side or overlay of the two versions
     rendered through live preview (uses `snapshotMeta.previewHash`), so editors see
-    *what the page looked like*, not just JSON.
+    _what the page looked like_, not just JSON.
 - **Restore:** restore a version → creates a new draft (or publishes, with confirm),
   never destroys history.
 - **Draft preview link:** shareable tokenized URL (`?draft=<token>`) that renders
@@ -191,6 +202,7 @@ update/create` gain `draft?: boolean`.
 ## 10. API surface
 
 REST (additive):
+
 - `GET /api/<slug>?draft=true` and `GET /api/<slug>/:id?draft=true`
 - `GET /api/<slug>/:id/versions` (+ filter/paginate), `GET .../versions/:vid`
 - `POST /api/<slug>/:id/versions/:vid/restore`
@@ -202,6 +214,7 @@ Local API mirrors all of the above with full types. GraphQL (future) adds
 `version(s)`, `restoreVersion`, `publish`, and a `draft` arg on queries.
 
 ## 11. Performance & scale
+
 - Published reads unaffected (single indexed `_status` filter); no joins on the hot
   path. Draft overlay is one batched versions query keyed by `parent`.
 - Versions table grows append-only; `maxPerDoc` ring-buffer + autosave coalescing
@@ -212,12 +225,14 @@ Local API mirrors all of the above with full types. GraphQL (future) adds
   draft overlay adds < 10ms to a 25-row list.
 
 ## 12. Security
+
 - Drafts are data: full access control applies; public can never read drafts.
 - Draft preview tokens are signed, scoped to one doc, short-TTL, revocable.
 - Restore/publish are privileged ops; audited (`createdBy`). Rate-limited.
 - Scheduled jobs run with system override but log the original requester.
 
 ## 13. Migration & rollout
+
 - Enabling versions on an existing collection: a migration creates `_versions_<slug>`
   and (drafts mode) adds `_status` defaulting existing rows to `'published'`, then
   backfills an initial `published` version per row (batched, idempotent).
@@ -231,6 +246,7 @@ Local API mirrors all of the above with full types. GraphQL (future) adds
   6. Draft preview links.
 
 ## 14. Testing strategy
+
 - **Pipeline:** create/update/publish/unpublish transitions write the correct
   version rows and `_status`; `draft:true` overlays newest draft; published reads
   never see drafts.
@@ -246,6 +262,7 @@ Local API mirrors all of the above with full types. GraphQL (future) adds
 - Coverage 80/70; access + concurrency tests required.
 
 ## 15. Acceptance criteria
+
 - [ ] `versions: { drafts: true, autosave: true }` yields: autosaving editor,
       Save-draft + Publish, status pill, versions list, diff, restore.
 - [ ] Public `GET /api/pages?...` returns only published; `?draft=true` (authed)
@@ -258,6 +275,7 @@ Local API mirrors all of the above with full types. GraphQL (future) adds
 - [ ] Rendered diff shows the visual before/after of a page. ✦ no-AI-feel review passed.
 
 ## 16. Open questions
+
 - Store drafts in the main row (overlay-free) vs versions-overlay? (Chosen:
   overlay, to keep public path clean — revisit if draft reads dominate.)
 - Per-field publish (granular) — defer to v2; model leaves room via per-field

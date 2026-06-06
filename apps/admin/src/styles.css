@@ -147,16 +147,31 @@ a {
   animation: aurora-drift-3 26s ease-in-out infinite;
 }
 @keyframes aurora-drift-1 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(8vmax, 6vmax) scale(1.12); }
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(8vmax, 6vmax) scale(1.12);
+  }
 }
 @keyframes aurora-drift-2 {
-  0%, 100% { transform: translate(0, 0) scale(1.05); }
-  50% { transform: translate(-7vmax, -5vmax) scale(0.92); }
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1.05);
+  }
+  50% {
+    transform: translate(-7vmax, -5vmax) scale(0.92);
+  }
 }
 @keyframes aurora-drift-3 {
-  0%, 100% { transform: translate(-50%, 0) scale(1); }
-  50% { transform: translate(-42%, -8vmax) scale(1.15); }
+  0%,
+  100% {
+    transform: translate(-50%, 0) scale(1);
+  }
+  50% {
+    transform: translate(-42%, -8vmax) scale(1.15);
+  }
 }
 /* A fine pixel matrix: a faint static grid (::before) plus light bands (::after)
    that glide across, revealed only through the same dot grid — light moving over
@@ -305,7 +320,9 @@ a {
   color: var(--muted);
   text-decoration: none;
   border-radius: 8px;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
 }
 .powered-by strong {
   color: var(--text);
@@ -718,32 +735,60 @@ a {
 }
 
 /* Sidebar buttons sweep top → bottom. */
-:root.theme-transition .nav-link:nth-child(1) { transition-delay: 0.04s; }
-:root.theme-transition .nav-link:nth-child(2) { transition-delay: 0.08s; }
-:root.theme-transition .nav-link:nth-child(3) { transition-delay: 0.12s; }
-:root.theme-transition .nav-link:nth-child(4) { transition-delay: 0.16s; }
-:root.theme-transition .nav-link:nth-child(5) { transition-delay: 0.2s; }
-:root.theme-transition .nav-link:nth-child(6) { transition-delay: 0.24s; }
-:root.theme-transition .nav-link:nth-child(7) { transition-delay: 0.28s; }
-:root.theme-transition .nav-link:nth-child(8) { transition-delay: 0.32s; }
-:root.theme-transition .nav-link:nth-child(n + 9) { transition-delay: 0.36s; }
+:root.theme-transition .nav-link:nth-child(1) {
+  transition-delay: 0.04s;
+}
+:root.theme-transition .nav-link:nth-child(2) {
+  transition-delay: 0.08s;
+}
+:root.theme-transition .nav-link:nth-child(3) {
+  transition-delay: 0.12s;
+}
+:root.theme-transition .nav-link:nth-child(4) {
+  transition-delay: 0.16s;
+}
+:root.theme-transition .nav-link:nth-child(5) {
+  transition-delay: 0.2s;
+}
+:root.theme-transition .nav-link:nth-child(6) {
+  transition-delay: 0.24s;
+}
+:root.theme-transition .nav-link:nth-child(7) {
+  transition-delay: 0.28s;
+}
+:root.theme-transition .nav-link:nth-child(8) {
+  transition-delay: 0.32s;
+}
+:root.theme-transition .nav-link:nth-child(n + 9) {
+  transition-delay: 0.36s;
+}
 
 /* Content blocks cascade after the sidebar (forms, sections, list rows). */
 :root.theme-transition .block-card:nth-of-type(1),
 :root.theme-transition .field:nth-of-type(1),
-:root.theme-transition .table tbody tr:nth-child(1) { transition-delay: 0.18s; }
+:root.theme-transition .table tbody tr:nth-child(1) {
+  transition-delay: 0.18s;
+}
 :root.theme-transition .block-card:nth-of-type(2),
 :root.theme-transition .field:nth-of-type(2),
-:root.theme-transition .table tbody tr:nth-child(2) { transition-delay: 0.24s; }
+:root.theme-transition .table tbody tr:nth-child(2) {
+  transition-delay: 0.24s;
+}
 :root.theme-transition .block-card:nth-of-type(3),
 :root.theme-transition .field:nth-of-type(3),
-:root.theme-transition .table tbody tr:nth-child(3) { transition-delay: 0.3s; }
+:root.theme-transition .table tbody tr:nth-child(3) {
+  transition-delay: 0.3s;
+}
 :root.theme-transition .block-card:nth-of-type(4),
 :root.theme-transition .field:nth-of-type(4),
-:root.theme-transition .table tbody tr:nth-child(4) { transition-delay: 0.36s; }
+:root.theme-transition .table tbody tr:nth-child(4) {
+  transition-delay: 0.36s;
+}
 :root.theme-transition .block-card:nth-of-type(n + 5),
 :root.theme-transition .field:nth-of-type(n + 5),
-:root.theme-transition .table tbody tr:nth-child(n + 5) { transition-delay: 0.42s; }
+:root.theme-transition .table tbody tr:nth-child(n + 5) {
+  transition-delay: 0.42s;
+}
 
 .main {
   padding: 28px clamp(16px, 4vw, 40px);
@@ -855,7 +900,10 @@ a {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .dash-card:hover {
   border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
@@ -915,7 +963,10 @@ a {
   color: var(--muted);
   opacity: 0;
   transform: translateX(-4px);
-  transition: opacity 0.15s ease, transform 0.15s ease, color 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    color 0.15s ease;
 }
 .dash-card:hover .dash-card-arrow {
   opacity: 1;
@@ -1172,7 +1223,9 @@ a {
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.12s ease, opacity 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    opacity 0.12s ease;
 }
 .btn:disabled {
   opacity: 0.55;
@@ -1412,7 +1465,9 @@ a {
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 .block-card:hover,
 .nested-row:hover {
@@ -1497,7 +1552,9 @@ a {
   color: var(--muted);
   border-radius: 6px;
   cursor: pointer;
-  transition: background-color 0.12s ease, color 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 .icon-btn:hover {
   background: color-mix(in srgb, var(--muted) 18%, transparent);
@@ -1599,7 +1656,10 @@ a {
   overflow: hidden;
   cursor: pointer;
   font: inherit;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.12s ease;
 }
 .lib-card:hover {
   border-color: var(--primary);
@@ -1704,9 +1764,7 @@ a {
 }
 .s-glow {
   position: relative;
-  background:
-    radial-gradient(60% 50% at 50% 0%, rgba(221, 198, 139, 0.08), transparent 70%),
-    var(--maroon);
+  background: radial-gradient(60% 50% at 50% 0%, rgba(221, 198, 139, 0.08), transparent 70%), var(--maroon);
 }
 .s-head {
   text-align: center;
@@ -2427,7 +2485,9 @@ a {
   color: var(--sidebar-fg);
   font-size: 13px;
   cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
 }
 .cmdk-trigger:hover {
   background: color-mix(in srgb, var(--primary) 12%, transparent);

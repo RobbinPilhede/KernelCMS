@@ -22,15 +22,15 @@ Because dispatch hangs off the operation core — not off a specific transport �
 
 Webhooks are declared in `kernel.config.ts` and bound to collections, globals, and event types. The event taxonomy mirrors the document lifecycle:
 
-| Event | Fires when |
-| --- | --- |
-| `document.created` | A new document is created (any status) |
-| `document.updated` | An existing document is updated |
-| `document.deleted` | A document is hard-deleted |
-| `document.published` | A draft transitions to published |
-| `document.unpublished` | A published document reverts to draft |
-| `document.restored` | A previous version is restored from history |
-| `global.updated` | A global singleton is saved |
+| Event                  | Fires when                                  |
+| ---------------------- | ------------------------------------------- |
+| `document.created`     | A new document is created (any status)      |
+| `document.updated`     | An existing document is updated             |
+| `document.deleted`     | A document is hard-deleted                  |
+| `document.published`   | A draft transitions to published            |
+| `document.unpublished` | A published document reverts to draft       |
+| `document.restored`    | A previous version is restored from history |
+| `global.updated`       | A global singleton is saved                 |
 
 Drafts and publish are distinct events on purpose. Sanity collapses everything into dataset mutations and leaves you to diff `_rev`s; Payload exposes `afterChange` with an `operation` discriminator but no native publish-vs-save distinction. KernelCMS separates `document.updated` (autosave/draft write) from `document.published` (the editorial gate) so a static-site rebuild can listen only for publishes and ignore the noise of autosave.
 
@@ -83,16 +83,16 @@ Every delivery is a `POST` with a JSON body and a stable envelope. The envelope 
 
 ```ts
 interface WebhookPayload<T = Record<string, unknown>> {
-  id: string                    // unique delivery id (idempotency key)
+  id: string // unique delivery id (idempotency key)
   apiVersion: '2026-01-01'
-  event: WebhookEvent           // 'document.published', etc.
-  createdAt: string             // ISO 8601, when the event fired
-  collection?: string           // present for collection events
-  global?: string               // present for global events
-  doc: T                        // current document (or transform output)
-  previousDoc?: T               // prior state for updates/deletes
+  event: WebhookEvent // 'document.published', etc.
+  createdAt: string // ISO 8601, when the event fired
+  collection?: string // present for collection events
+  global?: string // present for global events
+  doc: T // current document (or transform output)
+  previousDoc?: T // prior state for updates/deletes
   meta: {
-    userId: string | null       // actor who triggered it, null for system
+    userId: string | null // actor who triggered it, null for system
     locale?: string
     triggeredBy: 'rest' | 'graphql' | 'rpc' | 'local' | 'admin'
   }
@@ -103,13 +103,13 @@ interface WebhookPayload<T = Record<string, unknown>> {
 
 Bodies are signed with HMAC-SHA256 over the **raw request body** using the per-webhook `secret`. The signature ships in headers alongside a timestamp, so consumers can reject stale or replayed requests.
 
-| Header | Value |
-| --- | --- |
-| `Kernel-Signature` | `v1=<hex hmac-sha256 of "<timestamp>.<body>">` |
-| `Kernel-Timestamp` | Unix seconds when the request was signed |
-| `Kernel-Event` | The event name (cheap routing without parsing the body) |
-| `Kernel-Delivery` | The delivery `id`, also present in the body |
-| `Kernel-Webhook` | The configured webhook `name` |
+| Header             | Value                                                   |
+| ------------------ | ------------------------------------------------------- |
+| `Kernel-Signature` | `v1=<hex hmac-sha256 of "<timestamp>.<body>">`          |
+| `Kernel-Timestamp` | Unix seconds when the request was signed                |
+| `Kernel-Event`     | The event name (cheap routing without parsing the body) |
+| `Kernel-Delivery`  | The delivery `id`, also present in the body             |
+| `Kernel-Webhook`   | The configured webhook `name`                           |
 
 The signed string is `${timestamp}.${rawBody}` — binding the timestamp into the HMAC is what makes replay protection meaningful. This is the same construction Stripe uses, and we copy it deliberately so existing verification code ports over. Verify on the consumer with a constant-time compare:
 
@@ -126,9 +126,7 @@ export function verifyKernelSignature(
   const age = Math.abs(Date.now() / 1000 - Number(timestamp))
   if (Number.isNaN(age) || age > toleranceSeconds) return false
 
-  const expected = createHmac('sha256', secret)
-    .update(`${timestamp}.${rawBody}`)
-    .digest('hex')
+  const expected = createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex')
   const received = header.replace(/^v1=/, '')
 
   const a = Buffer.from(expected, 'hex')
@@ -145,13 +143,13 @@ KernelCMS guarantees **at-least-once** delivery. The dispatcher enqueues a job o
 
 A delivery is **successful** on a `2xx` response received within the timeout. Everything else is a failure:
 
-| Outcome | Treated as | Action |
-| --- | --- | --- |
-| `2xx` | success | mark `delivered` |
-| `3xx` | failure | retry (we do not follow redirects) |
-| `408`, `429`, `5xx` | retryable | retry with backoff; honor `Retry-After` on `429` |
-| Other `4xx` | permanent | mark `failed`, no retry (consumer rejected it) |
-| Timeout / connection error | retryable | retry with backoff |
+| Outcome                    | Treated as | Action                                           |
+| -------------------------- | ---------- | ------------------------------------------------ |
+| `2xx`                      | success    | mark `delivered`                                 |
+| `3xx`                      | failure    | retry (we do not follow redirects)               |
+| `408`, `429`, `5xx`        | retryable  | retry with backoff; honor `Retry-After` on `429` |
+| Other `4xx`                | permanent  | mark `failed`, no retry (consumer rejected it)   |
+| Timeout / connection error | retryable  | retry with backoff                               |
 
 Default backoff schedule (configurable per webhook via `retry`):
 

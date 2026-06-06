@@ -1,6 +1,6 @@
 # Vision & Mission
 
-KernelCMS is an open-source, TypeScript-first, TanStack-native headless CMS. Content is modeled in code, every infrastructure concern is a swappable adapter, and the same operation core drives REST, GraphQL, and a fully typed Local/RPC API. This document is the north star: what is broken in today's headless CMS landscape, why a TanStack-native CMS makes sense *now*, where we intend to be in three years, and — just as important — what we are deliberately refusing to build.
+KernelCMS is an open-source, TypeScript-first, TanStack-native headless CMS. Content is modeled in code, every infrastructure concern is a swappable adapter, and the same operation core drives REST, GraphQL, and a fully typed Local/RPC API. This document is the north star: what is broken in today's headless CMS landscape, why a TanStack-native CMS makes sense _now_, where we intend to be in three years, and — just as important — what we are deliberately refusing to build.
 
 ## The problem with the current landscape
 
@@ -8,21 +8,21 @@ Headless CMS has converged on three archetypes, and each forces a bad trade.
 
 **Payload** got the developer model right — config-as-code, TypeScript end to end, a Local API — but it owns its stack. The admin is a bespoke React app, the data layer is Payload's own, and the query/state primitives are hand-rolled. You inherit Payload's opinions about caching, forms, tables, and routing whether they fit your app or not. When you want to embed CMS-driven data into a product UI, you re-implement fetching and invalidation by hand.
 
-**Sanity** nailed the hosted experience and real-time editing, but the content lives in *their* datastore (the Content Lake) and is queried with *their* language (GROQ). Portability is a migration project. You don't own the database, you can't point it at your existing Postgres, and self-hosting the full editing experience is not a first-class path.
+**Sanity** nailed the hosted experience and real-time editing, but the content lives in _their_ datastore (the Content Lake) and is queried with _their_ language (GROQ). Portability is a migration project. You don't own the database, you can't point it at your existing Postgres, and self-hosting the full editing experience is not a first-class path.
 
 **Strapi** is the most "batteries-included," but it leans on a code-generated, partly-UI-driven schema, a plugin system with weaker type guarantees, and a REST/GraphQL layer that drifts from the admin. Type safety is bolted on, not foundational. Customizing the admin means fighting the framework.
 
 Underneath the branding, the same structural failures repeat:
 
-| Failure | What it costs you |
-| --- | --- |
-| Bundled, non-swappable infrastructure | You take their DB/storage/auth/search choices wholesale, or you fork |
-| Type safety as an afterthought | `any` leaks at the API boundary; refactors break silently at runtime |
-| Bespoke admin internals | Every data-fetching, form, and table concern is reinvented and under-tested |
-| Lock-in by datastore or query language | "Headless" but not portable; leaving is a migration, not a config change |
-| Self-host vs. hosted as a hard fork | The managed product and the OSS product diverge in capability |
+| Failure                                | What it costs you                                                           |
+| -------------------------------------- | --------------------------------------------------------------------------- |
+| Bundled, non-swappable infrastructure  | You take their DB/storage/auth/search choices wholesale, or you fork        |
+| Type safety as an afterthought         | `any` leaks at the API boundary; refactors break silently at runtime        |
+| Bespoke admin internals                | Every data-fetching, form, and table concern is reinvented and under-tested |
+| Lock-in by datastore or query language | "Headless" but not portable; leaving is a migration, not a config change    |
+| Self-host vs. hosted as a hard fork    | The managed product and the OSS product diverge in capability               |
 
-The market treats "headless" as a content-delivery shape. We treat it as a **portability and ownership guarantee**. A CMS should be a thin, typed orchestration layer over infrastructure *you* choose — not a walled datastore with a CMS bolted on top.
+The market treats "headless" as a content-delivery shape. We treat it as a **portability and ownership guarantee**. A CMS should be a thin, typed orchestration layer over infrastructure _you_ choose — not a walled datastore with a CMS bolted on top.
 
 ## Why TanStack, and why now
 
@@ -54,7 +54,7 @@ Concretely, TanStack does the work that competitors hand-roll:
 - **TanStack Store** holds lightweight reactive admin UI state; **TanStack Virtual** keeps long lists and long documents fast.
 - **TanStack DB** is the optional reactive client-side collection layer for live/offline admin and frontends — the same primitive your product app can use.
 
-Why now: TanStack Start has matured into a production SSR + server-functions framework, and the surrounding libraries are individually battle-tested at scale. The pieces a CMS needs — routing, fetching, tables, forms — finally exist as a coherent, typed family. Building *on* them means we ship less framework and more CMS, and any engineer who knows TanStack already knows half of KernelCMS.
+Why now: TanStack Start has matured into a production SSR + server-functions framework, and the surrounding libraries are individually battle-tested at scale. The pieces a CMS needs — routing, fetching, tables, forms — finally exist as a coherent, typed family. Building _on_ them means we ship less framework and more CMS, and any engineer who knows TanStack already knows half of KernelCMS.
 
 The second pillar is **choose everything**. Every infrastructure concern is an adapter behind one contract: database, storage, email, auth, search, cache, and queue. Drizzle is the default SQL ORM — Postgres (default), SQLite/libSQL, MySQL — with a MongoDB adapter for document workflows. Migrations are generated from schema diffs. See Architecture Overview and the [Adapter Contract](../03-persistence/00-persistence-overview-and-adapter-contract.md).
 
@@ -68,8 +68,8 @@ import { collections, globals } from './content'
 export default defineConfig({
   db: postgres({ url: process.env.DATABASE_URL! }),
   storage: s3({ bucket: 'kernel-media', region: 'eu-north-1' }),
-  collections,        // repeatable content types
-  globals,            // singletons: site settings, navigation
+  collections, // repeatable content types
+  globals, // singletons: site settings, navigation
   localization: { locales: ['en', 'sv', 'ar'], default: 'en' },
 })
 ```
@@ -116,11 +116,11 @@ Around that core: a block-based rich-text editor, a media library, live preview 
 
 A rough trajectory:
 
-| Horizon | Focus |
-| --- | --- |
-| Year 1 | OSS core: Drizzle adapters, REST/GraphQL/RPC, TanStack admin, drafts + versions, auth |
-| Year 2 | Live preview + visual editing, TanStack DB live collections, mature Plugin SDK, MongoDB GA |
-| Year 3 | KernelCMS Cloud GA, edge deploys, content CDN, enterprise auth/audit, ecosystem of plugins |
+| Horizon | Focus                                                                                      |
+| ------- | ------------------------------------------------------------------------------------------ |
+| Year 1  | OSS core: Drizzle adapters, REST/GraphQL/RPC, TanStack admin, drafts + versions, auth      |
+| Year 2  | Live preview + visual editing, TanStack DB live collections, mature Plugin SDK, MongoDB GA |
+| Year 3  | KernelCMS Cloud GA, edge deploys, content CDN, enterprise auth/audit, ecosystem of plugins |
 
 ## Non-goals
 

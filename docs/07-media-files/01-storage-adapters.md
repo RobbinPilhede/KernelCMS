@@ -103,20 +103,22 @@ storage: {
 
 ```ts
 // in a collection
-upload: { store: 'secure' }
+upload: {
+  store: 'secure'
+}
 ```
 
 ## Local, S3, R2, GCS, and Azure
 
 All five first-party adapters live in `@kernel/storage` and share the contract above. They differ only in credentials and a few delivery options.
 
-| Adapter | Import | Best for | Signed URLs | Direct upload |
-|---|---|---|---|---|
-| Local | `@kernel/storage/local` | dev, single-node self-host | served via API host | n/a |
-| S3 | `@kernel/storage/s3` | AWS, MinIO, any S3-compatible | SigV4 presign | yes |
-| R2 | `@kernel/storage/r2` | Cloudflare, zero egress fees | SigV4 presign | yes |
-| GCS | `@kernel/storage/gcs` | Google Cloud | V4 signed URL | yes |
-| Azure | `@kernel/storage/azure` | Azure Blob Storage | SAS token | yes |
+| Adapter | Import                  | Best for                      | Signed URLs         | Direct upload |
+| ------- | ----------------------- | ----------------------------- | ------------------- | ------------- |
+| Local   | `@kernel/storage/local` | dev, single-node self-host    | served via API host | n/a           |
+| S3      | `@kernel/storage/s3`    | AWS, MinIO, any S3-compatible | SigV4 presign       | yes           |
+| R2      | `@kernel/storage/r2`    | Cloudflare, zero egress fees  | SigV4 presign       | yes           |
+| GCS     | `@kernel/storage/gcs`   | Google Cloud                  | V4 signed URL       | yes           |
+| Azure   | `@kernel/storage/azure` | Azure Blob Storage            | SAS token           | yes           |
 
 **Local** writes to `rootDir` and serves through a TanStack Start server function at `servePath`. It is the only adapter where KernelCMS itself streams bytes, so it enforces access control per request before piping the file. It is not meant for multi-node deployments — two API hosts behind a load balancer will not share a local disk. Use it for development, single-VM self-host, or as a migration source/target.
 
@@ -217,6 +219,6 @@ Keys are content-addressed enough to be collision-safe across this process, and 
 
 ## Open questions
 
-- **Per-field stores vs. per-collection stores.** The current design binds a store at the collection's `upload` config. Should individual `upload` *fields* be allowed to target different stores, or is collection-level granularity enough?
+- **Per-field stores vs. per-collection stores.** The current design binds a store at the collection's `upload` config. Should individual `upload` _fields_ be allowed to target different stores, or is collection-level granularity enough?
 - **Server-side encryption ownership.** Do we expose SSE-KMS / customer-managed keys as first-class adapter options, or treat encryption as a bucket-policy concern outside the contract?
 - **Checksum strategy for verification.** ETag semantics differ across S3 multipart, GCS, and Azure. Should `--dry-run` fall back to a streamed SHA-256 when ETags are not comparable, accepting the extra egress cost?

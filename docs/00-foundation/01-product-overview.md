@@ -47,15 +47,15 @@ That config compiles into a running CMS. Payload pioneered this config-as-code m
 
 The capability surface is deliberately broad because a headless CMS is only useful if it covers the unglamorous middle — versioning, access control, localization — not just CRUD.
 
-| Capability | What it does | How it differs |
-| --- | --- | --- |
-| **Three API surfaces** | REST, GraphQL, and a typed Local/RPC API auto-generated from config | One shared query language (`where` / `sort` / pagination / `depth`) spans all three; Local API is the same operation core called in-process |
-| **Adapter-everything** | DB, storage, auth, email, search, cache, queue are swappable | Payload/Strapi assume a primary stack; KernelCMS makes each a contract you pick |
-| **Field-level localization** | Per-field translations with fallback chains | First-class, not a paid add-on as in some Strapi tiers |
-| **Drafts + version history** | Autosave, restore, diff between versions | Built into the operation core, available on every surface |
-| **Access control** | Evaluated at operation, document, and field level | Server-side by default; field-level access is rare among competitors |
-| **Validation** | Sync, async, and cross-field | Runs identically in Local API and over the wire |
-| **Admin UX** | Command palette, dark mode, live preview, media library | TanStack Table/Form/Virtual under the hood for real scale |
+| Capability                   | What it does                                                        | How it differs                                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Three API surfaces**       | REST, GraphQL, and a typed Local/RPC API auto-generated from config | One shared query language (`where` / `sort` / pagination / `depth`) spans all three; Local API is the same operation core called in-process |
+| **Adapter-everything**       | DB, storage, auth, email, search, cache, queue are swappable        | Payload/Strapi assume a primary stack; KernelCMS makes each a contract you pick                                                             |
+| **Field-level localization** | Per-field translations with fallback chains                         | First-class, not a paid add-on as in some Strapi tiers                                                                                      |
+| **Drafts + version history** | Autosave, restore, diff between versions                            | Built into the operation core, available on every surface                                                                                   |
+| **Access control**           | Evaluated at operation, document, and field level                   | Server-side by default; field-level access is rare among competitors                                                                        |
+| **Validation**               | Sync, async, and cross-field                                        | Runs identically in Local API and over the wire                                                                                             |
+| **Admin UX**                 | Command palette, dark mode, live preview, media library             | TanStack Table/Form/Virtual under the hood for real scale                                                                                   |
 
 The field-type system is the expressive core: `text`, `textarea`, `number`, `boolean`, `date`, `email`, `json`, `code`, `point`, `select`, `radio`, `checkbox`, `relationship`, `upload`, `array`, `blocks`, `group`, `tabs`, `row`, `richText`, `ui` (presentational), plus custom field types. The structural fields (`array`, `blocks`, `group`, `tabs`, `row`) let you model deeply nested documents without escaping into opaque JSON, and `blocks` powers the block-based rich-text editing that competes directly with Sanity's Portable Text.
 
@@ -82,15 +82,19 @@ const { docs } = await kernel.find('posts', {
 KernelCMS serves four overlapping groups, and the design trade-offs are tuned for them in this order.
 
 ### Product engineers shipping content-backed apps
+
 Teams already on the TanStack ecosystem (Start, Router, Query) get a CMS that speaks their language. The admin is a TanStack Start app, client fetching is TanStack Query, and the Local API drops into server functions with full inference. For these teams the win is zero impedance mismatch — see TanStack usage.
 
 ### Agencies and platform teams
+
 They need to spin up many sites with consistent governance. Config-as-code means a base config can be templated, shared, and white-labeled. The admin supports white-label theming, design tokens, and i18n with RTL out of the box, which Strapi historically gated or required plugins for.
 
 ### Enterprises with infrastructure mandates
+
 A bank that must run Postgres on-prem and a startup on edge SQLite should not need different CMSes. Because every backend implements one Adapter contract, the same config runs on either — see [the adapter model](../03-persistence/00-persistence-overview-and-adapter-contract.md).
 
 ### Solo developers and OSS users
+
 The MIT core, the `create-kernel` scaffolder, and SQLite-by-default mean you can be running locally in minutes with `npx create-kernel@latest` and the `kernel` CLI, then graduate to Postgres or Cloud without rewrites.
 
 ## High-Level Architecture

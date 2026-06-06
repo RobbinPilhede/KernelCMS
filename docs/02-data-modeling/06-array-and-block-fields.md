@@ -146,28 +146,32 @@ Because `blockType` is a literal discriminant, downstream rendering is exhaustiv
 ```tsx
 function renderBlock(block: PageLayout[number]) {
   switch (block.blockType) {
-    case 'hero':     return <Hero {...block} />
-    case 'richText': return <Prose value={block.content} />
-    case 'gallery':  return <Gallery images={block.images} />
-    default:         return assertNever(block) // compile error if a case is missing
+    case 'hero':
+      return <Hero {...block} />
+    case 'richText':
+      return <Prose value={block.content} />
+    case 'gallery':
+      return <Gallery images={block.images} />
+    default:
+      return assertNever(block) // compile error if a case is missing
   }
 }
 ```
 
-This is the concrete win over Strapi's dynamic zones, where the component shape is resolved at runtime and the frontend leans on `any`-typed payloads. It also beats hand-rolled Sanity unions, where you must keep a separate TypeScript type in sync with the GROQ schema by convention. In KernelCMS the config *is* the type.
+This is the concrete win over Strapi's dynamic zones, where the component shape is resolved at runtime and the frontend leans on `any`-typed payloads. It also beats hand-rolled Sanity unions, where you must keep a separate TypeScript type in sync with the GROQ schema by convention. In KernelCMS the config _is_ the type.
 
 ### Block reuse and a shared registry
 
 Blocks are defined once and shared across collections, globals, and even nested inside other blocks (a `columns` block whose `fields` contain a nested `blocks` field). Define your block library in one module, import it where needed. A block registered in `kernel.config.ts` is available to the REST/GraphQL schema generators and the admin's insert menu without further wiring.
 
-| Concern | `array` | `blocks` |
-| --- | --- | --- |
-| Row shape | One fixed schema | One of N named schemas |
-| Discriminator | none | `blockType` literal |
-| Editor UX | repeating row form | insert-menu + layout builder |
-| Typical use | galleries, link lists, FAQs | page layouts, flexible content |
-| Inferred type | `T[]` | `(A \| B \| C)[]` |
-| Nesting | full recursion | full recursion |
+| Concern       | `array`                     | `blocks`                       |
+| ------------- | --------------------------- | ------------------------------ |
+| Row shape     | One fixed schema            | One of N named schemas         |
+| Discriminator | none                        | `blockType` literal            |
+| Editor UX     | repeating row form          | insert-menu + layout builder   |
+| Typical use   | galleries, link lists, FAQs | page layouts, flexible content |
+| Inferred type | `T[]`                       | `(A \| B \| C)[]`              |
+| Nesting       | full recursion              | full recursion                 |
 
 ## The layout builder UX
 
@@ -217,11 +221,19 @@ Normalization keeps relationship and upload columns as real foreign keys, so ref
 The MongoDB adapter stores arrays and blocks as embedded sub-documents inline on the parent, preserving order naturally and reading the whole document in one fetch. Each row still carries `id` and `blockType` for parity with the relational path; the operation core never sees the difference.
 
 ```jsonc
-{ "title": "Home",
+{
+  "title": "Home",
   "layout": [
     { "id": "01J…", "blockType": "hero", "heading": "…" },
-    { "id": "01J…", "blockType": "gallery", "images": [ /* … */ ] }
-  ] }
+    {
+      "id": "01J…",
+      "blockType": "gallery",
+      "images": [
+        /* … */
+      ],
+    },
+  ],
+}
 ```
 
 ### One query language across both

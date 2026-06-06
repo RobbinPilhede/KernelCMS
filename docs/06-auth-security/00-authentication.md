@@ -30,12 +30,12 @@ export default defineConfig({
 })
 ```
 
-| Strategy | Audience | Use case | Notes |
-| --- | --- | --- | --- |
-| `local` | Admin + API | Email/password login | Default; `allowSignup` is off by default |
-| `oauth` | Admin | SSO via GitHub, Google, OIDC | Identity linking by verified email |
-| `apiKey` | API | Server-to-server, CI, build hooks | Long-lived, scoped, revocable |
-| `magicLink` | Admin | Passwordless, low-friction teams | Single-use, short TTL |
+| Strategy    | Audience    | Use case                          | Notes                                    |
+| ----------- | ----------- | --------------------------------- | ---------------------------------------- |
+| `local`     | Admin + API | Email/password login              | Default; `allowSignup` is off by default |
+| `oauth`     | Admin       | SSO via GitHub, Google, OIDC      | Identity linking by verified email       |
+| `apiKey`    | API         | Server-to-server, CI, build hooks | Long-lived, scoped, revocable            |
+| `magicLink` | Admin       | Passwordless, low-friction teams  | Single-use, short TTL                    |
 
 Strategies are additive. A user can hold a `local` password and a linked `oauth` identity and several `apiKey` rows simultaneously. The auth collection (any collection flagged `auth: true`, conventionally `users`) stores password hashes and verification state; OAuth identities and API keys live in adapter-managed satellite tables so the user document stays clean.
 
@@ -47,7 +47,7 @@ export const Users = defineCollection({
   slug: 'users',
   auth: {
     strategies: ['local', 'oauth'],
-    verify: true,        // require verified email before login
+    verify: true, // require verified email before login
     maxLoginAttempts: 5, // lock after N failures
     lockTime: '10m',
   },
@@ -106,13 +106,13 @@ When a user authenticates against a bcrypt hash (imported from another CMS) but 
 
 The single most important auth decision is session transport. KernelCMS supports both and lets you choose per deployment via `sessionStrategy`. The trade-off is revocation versus statelessness.
 
-| | Sessions (default) | Tokens (JWT) |
-| --- | --- | --- |
-| Storage | Server-side record + opaque cookie | Stateless, signed claims |
-| Revocation | Instant (delete the row) | Hard; needs a denylist |
-| Best for | Admin panel, browsers | Edge, multi-service, mobile |
-| Cookie | `Secure` + `HttpOnly` + `SameSite=Lax` | Same, or `Authorization` header |
-| Cost | One DB read per request | Signature verify, no DB read |
+|            | Sessions (default)                     | Tokens (JWT)                    |
+| ---------- | -------------------------------------- | ------------------------------- |
+| Storage    | Server-side record + opaque cookie     | Stateless, signed claims        |
+| Revocation | Instant (delete the row)               | Hard; needs a denylist          |
+| Best for   | Admin panel, browsers                  | Edge, multi-service, mobile     |
+| Cookie     | `Secure` + `HttpOnly` + `SameSite=Lax` | Same, or `Authorization` header |
+| Cost       | One DB read per request                | Signature verify, no DB read    |
 
 The admin panel defaults to **server-side sessions**. A login creates a `sessions` row keyed by a high-entropy opaque token; the browser receives it as an `HttpOnly`, `Secure`, `SameSite=Lax` cookie. TanStack Query attaches it automatically because cookies ride along with same-origin requests. Because the session is a database row, revocation is immediate — logging out, rotating, or an admin force-killing a session takes effect on the next request. This is how KernelCMS beats stateless-JWT CMS setups where a stolen token stays valid until expiry.
 
@@ -163,9 +163,9 @@ Email-bearing flows route through the email adapter (`@kernel/email`), so verifi
 **Reset.** A reset request always returns `202 Accepted` regardless of whether the email exists — no enumeration leak. A valid request mints a single-use, short-TTL token; consuming it sets the new password (re-hashed with the active hasher) and, critically, **revokes all existing sessions and refresh-token families** so a compromised account can't keep a stolen session alive.
 
 ```ts
-await kernel.auth.requestPasswordReset({ email })           // always 202
-await kernel.auth.resetPassword({ token, newPassword })      // single-use, revokes sessions
-await kernel.auth.verifyEmail({ token })                     // single-use, flips verified flag
+await kernel.auth.requestPasswordReset({ email }) // always 202
+await kernel.auth.resetPassword({ token, newPassword }) // single-use, revokes sessions
+await kernel.auth.verifyEmail({ token }) // single-use, flips verified flag
 ```
 
 All tokens are stored hashed, are single-use, and are rate-limited per identifier and per IP. Reset and verification share one `auth_tokens` table with a `purpose` discriminator, indexed for cheap cleanup of expired rows.

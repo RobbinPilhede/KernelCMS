@@ -39,14 +39,14 @@ The `privacy` metadata is the single source of truth. `pii` classifies the field
 
 CCPA frames the same rights differently — the right to know, the right to delete, the right to correct, and the right to opt out of sale or sharing. KernelCMS exposes a per-subject `doNotSell` flag and a sharing ledger so that downstream integrations (analytics, ad pixels, third-party sync plugins) can check status before processing.
 
-| Right | GDPR | CCPA/CPRA | KernelCMS API |
-|---|---|---|---|
-| Access / Know | Art. 15 | §1798.100 | `kernel.privacy.export(subject)` |
-| Portability | Art. 20 | — | `export({ format: 'json' \| 'csv' })` |
-| Erasure / Delete | Art. 17 | §1798.105 | `kernel.privacy.erase(subject)` |
-| Rectification / Correct | Art. 16 | §1798.106 | standard `update` op + audit |
-| Restriction | Art. 18 | — | `kernel.privacy.restrict(subject)` |
-| Opt out of sale | — | §1798.120 | `subject.doNotSell = true` |
+| Right                   | GDPR    | CCPA/CPRA | KernelCMS API                         |
+| ----------------------- | ------- | --------- | ------------------------------------- |
+| Access / Know           | Art. 15 | §1798.100 | `kernel.privacy.export(subject)`      |
+| Portability             | Art. 20 | —         | `export({ format: 'json' \| 'csv' })` |
+| Erasure / Delete        | Art. 17 | §1798.105 | `kernel.privacy.erase(subject)`       |
+| Rectification / Correct | Art. 16 | §1798.106 | standard `update` op + audit          |
+| Restriction             | Art. 18 | —         | `kernel.privacy.restrict(subject)`    |
+| Opt out of sale         | —       | §1798.120 | `subject.doNotSell = true`            |
 
 Payload and Strapi require you to hand-roll these endpoints against their data layer. Sanity exposes a GROQ-driven dataset you can query but offers no subject resolution or erasure orchestration. KernelCMS resolves a subject across every collection that references them and runs the request as one atomic operation.
 
@@ -74,9 +74,9 @@ import { kernel } from '@kernel/server'
 
 const bundle = await kernel.privacy.export({
   subject: { collection: 'users', id: userId },
-  format: 'json',          // 'json' | 'csv' | 'ndjson'
-  include: 'related',      // 'self' | 'related' | 'all'
-  signedUrlTtl: '15m',     // delivered via storage adapter as a signed URL
+  format: 'json', // 'json' | 'csv' | 'ndjson'
+  include: 'related', // 'self' | 'related' | 'all'
+  signedUrlTtl: '15m', // delivered via storage adapter as a signed URL
 })
 // bundle: { manifest, records, media[], generatedAt, requestId }
 ```
@@ -87,11 +87,11 @@ The export runs through the same access-control evaluation as a normal read, so 
 
 Erasure is the hard part, because foreign keys, version history, drafts, and audit trails all hold copies of personal data. KernelCMS supports three strategies, chosen per collection or per request:
 
-| Strategy | What happens | When to use |
-|---|---|---|
-| `hard-delete` | Row removed; relationships nulled or cascaded | No legal retention obligation |
-| `anonymize` | PII fields overwritten with tombstones; non-PII kept | Analytics/order history must survive |
-| `crypto-shred` | Per-subject encryption key destroyed | High-volume, encrypted-at-rest data |
+| Strategy       | What happens                                         | When to use                          |
+| -------------- | ---------------------------------------------------- | ------------------------------------ |
+| `hard-delete`  | Row removed; relationships nulled or cascaded        | No legal retention obligation        |
+| `anonymize`    | PII fields overwritten with tombstones; non-PII kept | Analytics/order history must survive |
+| `crypto-shred` | Per-subject encryption key destroyed                 | High-volume, encrypted-at-rest data  |
 
 ```ts
 const result = await kernel.privacy.erase({
@@ -129,15 +129,15 @@ Each entry records the actor, the operation, the target document, a structured f
 ```ts
 interface AuditEntry {
   id: string
-  at: string                    // ISO-8601, UTC
+  at: string // ISO-8601, UTC
   actor: { id: string; type: 'user' | 'apiKey' | 'system' }
   op: 'create' | 'update' | 'delete' | 'login' | 'export' | 'erase'
   target: { collection: string; documentId: string } | null
-  diff?: FieldDiff[]            // before/after, redacted fields masked
+  diff?: FieldDiff[] // before/after, redacted fields masked
   decision: 'allow' | 'deny'
   context: { ip: string; userAgent: string; requestId: string }
   prevHash: string
-  hash: string                  // sha256(prevHash + canonical(entry))
+  hash: string // sha256(prevHash + canonical(entry))
 }
 ```
 
@@ -164,7 +164,7 @@ import { postgres } from '@kernel/db-postgres'
 import { s3 } from '@kernel/storage'
 
 export default defineConfig({
-  region: 'eu-central-1',          // policy assertion; mismatches fail at boot
+  region: 'eu-central-1', // policy assertion; mismatches fail at boot
   db: postgres({ url: env.DATABASE_URL, region: 'eu-central-1' }),
   storage: s3({ bucket: 'kernel-eu', region: 'eu-central-1', enforceRegion: true }),
 })

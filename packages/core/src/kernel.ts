@@ -9,14 +9,12 @@ const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const
 
 export function createLogger(level: keyof typeof LEVELS = 'info'): Logger {
   const min = LEVELS[level]
-  const emit =
-    (lvl: keyof typeof LEVELS, stream: 'log' | 'warn' | 'error') =>
-    (msg: string, meta?: unknown) => {
-      if (LEVELS[lvl] < min) return
-      const line = `[kernel] ${lvl.toUpperCase()} ${msg}`
-      if (meta === undefined) console[stream](line)
-      else console[stream](line, meta)
-    }
+  const emit = (lvl: keyof typeof LEVELS, stream: 'log' | 'warn' | 'error') => (msg: string, meta?: unknown) => {
+    if (LEVELS[lvl] < min) return
+    const line = `[kernel] ${lvl.toUpperCase()} ${msg}`
+    if (meta === undefined) console[stream](line)
+    else console[stream](line, meta)
+  }
   return {
     debug: emit('debug', 'log'),
     info: emit('info', 'log'),

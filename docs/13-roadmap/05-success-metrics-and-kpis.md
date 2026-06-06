@@ -12,16 +12,16 @@ acquisition ──> activation ──> retention ──> expansion
  npm installs    via admin       active project  / paid plan
 ```
 
-The single most important number is **Time-to-First-Publish (TTFP)**: from `pnpm create kernel` to the first document published through the admin. Payload and Strapi both win the install race; we intend to win the *working CMS* race because the typed Local API and generated REST/GraphQL mean a developer is productive the moment the schema compiles.
+The single most important number is **Time-to-First-Publish (TTFP)**: from `pnpm create kernel` to the first document published through the admin. Payload and Strapi both win the install race; we intend to win the _working CMS_ race because the typed Local API and generated REST/GraphQL mean a developer is productive the moment the schema compiles.
 
-| Metric | Definition | Instrument | Target (12mo) | Alert threshold |
-| --- | --- | --- | --- | --- |
-| Weekly new projects | Unique `create-kernel` scaffolds telemetry-on | `create-kernel` opt-in ping | 1,500/wk | < 60% of trailing 8-wk avg |
-| Activation rate | Scaffolds reaching first publish | admin event `document.publish` | 45% | < 35% |
-| TTFP (median) | Scaffold → first publish | event delta | < 20 min | > 45 min |
-| 30-day retention | Projects with a write op at day 30 | server heartbeat | 55% | < 40% |
-| Adapter mix | Share by `@kernel/db-*` | config telemetry | Postgres ≥ 50% | any adapter 0 for 90d |
-| Cloud conversion | Self-host → KernelCMS Cloud | billing | 4% of active | < 2% |
+| Metric              | Definition                                    | Instrument                     | Target (12mo)  | Alert threshold            |
+| ------------------- | --------------------------------------------- | ------------------------------ | -------------- | -------------------------- |
+| Weekly new projects | Unique `create-kernel` scaffolds telemetry-on | `create-kernel` opt-in ping    | 1,500/wk       | < 60% of trailing 8-wk avg |
+| Activation rate     | Scaffolds reaching first publish              | admin event `document.publish` | 45%            | < 35%                      |
+| TTFP (median)       | Scaffold → first publish                      | event delta                    | < 20 min       | > 45 min                   |
+| 30-day retention    | Projects with a write op at day 30            | server heartbeat               | 55%            | < 40%                      |
+| Adapter mix         | Share by `@kernel/db-*`                       | config telemetry               | Postgres ≥ 50% | any adapter 0 for 90d      |
+| Cloud conversion    | Self-host → KernelCMS Cloud                   | billing                        | 4% of active   | < 2%                       |
 
 Telemetry is opt-in and anonymous, configured in `kernel.config.ts`. We do not ship analytics that can't be turned off — that is a hard product rule, not a metric.
 
@@ -30,8 +30,8 @@ import { defineConfig } from '@kernel/core'
 
 export default defineConfig({
   telemetry: {
-    enabled: true,            // opt-in; false by default in self-host
-    anonymousId: 'auto',      // hashed install id, no PII, no content
+    enabled: true, // opt-in; false by default in self-host
+    anonymousId: 'auto', // hashed install id, no PII, no content
     events: ['scaffold', 'first_publish', 'adapter', 'deploy_target'],
     endpoint: 'https://metrics.kernelcms.dev/v1/ingest',
   },
@@ -48,13 +48,13 @@ Developer experience is our durable advantage, so we instrument it directly inst
 
 "End-to-end type safety, zero any" is a tenet, so it gets a number. CI fails the build if `any` count regresses, and we publish the count.
 
-| KPI | Instrument | Gate |
-| --- | --- | --- |
-| `any` occurrences in shipped `@kernel/*` | `tsc` + custom AST rule | must be 0 |
-| Public API type-coverage | `type-coverage --strict` | ≥ 99.5% |
-| Generated types drift | snapshot diff of `kernel types` output | 0 unexpected |
-| `kernel dev` cold start | CLI timing | p95 < 3.0s |
-| HMR round-trip (schema edit → admin) | dev-server timing | p95 < 800ms |
+| KPI                                      | Instrument                             | Gate         |
+| ---------------------------------------- | -------------------------------------- | ------------ |
+| `any` occurrences in shipped `@kernel/*` | `tsc` + custom AST rule                | must be 0    |
+| Public API type-coverage                 | `type-coverage --strict`               | ≥ 99.5%      |
+| Generated types drift                    | snapshot diff of `kernel types` output | 0 unexpected |
+| `kernel dev` cold start                  | CLI timing                             | p95 < 3.0s   |
+| HMR round-trip (schema edit → admin)     | dev-server timing                      | p95 < 800ms  |
 
 The Local API is the proof surface — a developer edits `kernel.config.ts` and gets inferred operations in-process with no codegen step required for types:
 
@@ -86,16 +86,16 @@ We run a short in-CLI prompt after first publish (skippable, opt-in) asking one 
 
 Performance budgets are enforced and measured — failing a budget fails CI, the same way a failing test does. We separate **admin** (the React/TanStack Start app), **API** (REST/GraphQL/RPC operation latency), and **build/migration** (developer-time operations). Numbers below are p75/p95 against a reference dataset (10k documents, 25 fields, one relationship two levels deep) on the Postgres adapter; other adapters have their own baselines.
 
-| Surface | Metric | Budget (p95) | Owner | Tool |
-| --- | --- | --- | --- | --- |
-| Admin | List view TTI (TanStack Table, virtualized) | < 1.2s | admin | Lighthouse CI + RUM |
-| Admin | Document load → editable (TanStack Form) | < 700ms | admin | RUM |
-| Admin | Command palette open | < 100ms | admin | perf marks |
-| API | `find` (depth 1, 25 rows) | < 80ms | server | k6 + traces |
-| API | `create`/`update` single doc | < 120ms | server | k6 |
-| API | GraphQL N+1 guard (resolver fanout) | 0 unbatched | server | query plan assert |
-| Build | `kernel build` (admin bundle) | < 25s | core | Turbo cache hit ≥ 85% |
-| Migrate | Schema-diff migration gen | < 2s | db | bench |
+| Surface | Metric                                      | Budget (p95) | Owner  | Tool                  |
+| ------- | ------------------------------------------- | ------------ | ------ | --------------------- |
+| Admin   | List view TTI (TanStack Table, virtualized) | < 1.2s       | admin  | Lighthouse CI + RUM   |
+| Admin   | Document load → editable (TanStack Form)    | < 700ms      | admin  | RUM                   |
+| Admin   | Command palette open                        | < 100ms      | admin  | perf marks            |
+| API     | `find` (depth 1, 25 rows)                   | < 80ms       | server | k6 + traces           |
+| API     | `create`/`update` single doc                | < 120ms      | server | k6                    |
+| API     | GraphQL N+1 guard (resolver fanout)         | 0 unbatched  | server | query plan assert     |
+| Build   | `kernel build` (admin bundle)               | < 25s        | core   | Turbo cache hit ≥ 85% |
+| Migrate | Schema-diff migration gen                   | < 2s         | db     | bench                 |
 
 Budgets live next to the config so they are reviewable and diffable:
 
@@ -106,7 +106,7 @@ export default defineConfig({
   performance: {
     budgets: {
       admin: { listViewTti: '1200ms', docLoad: '700ms' },
-      api:   { find: '80ms', mutate: '120ms' },
+      api: { find: '80ms', mutate: '120ms' },
       build: { adminBundle: '25s' },
     },
     onBudgetExceeded: 'fail', // 'fail' in CI, 'warn' locally
@@ -126,15 +126,15 @@ Two things make these enforceable. First, the operation core is shared across al
 
 A CMS with a swappable-everything promise lives or dies on whether the community writes adapters and plugins we don't. So community health is measured as **contribution throughput and sustainability**, not raw popularity. The risk we watch for is bus-factor: if only the core team can merge, the "choose everything" promise is hollow.
 
-| Metric | Definition | Target | Why it matters |
-| --- | --- | --- | --- |
-| Median time-to-first-response (issues) | open → first maintainer reply | < 24h | Strapi's slow triage is a known pain point |
-| Median PR time-to-merge | non-trivial PRs | < 5 days | predicts external contributor retention |
-| External contributor ratio | non-core merged PRs / total | ≥ 40% | bus-factor and sustainability |
-| Community adapters/plugins | published `@kernel/plugin-sdk` packages | 50 in year 1 | validates the adapter contract |
-| Adapter contract conformance | community adapters passing the shared test suite | 100% of listed | "no lock-in" must be real |
-| Docs coverage | public APIs with a doc page + example | ≥ 95% | DX compounding |
-| Discord/forum resolved ratio | questions marked answered | ≥ 80% | community self-sufficiency |
+| Metric                                 | Definition                                       | Target         | Why it matters                             |
+| -------------------------------------- | ------------------------------------------------ | -------------- | ------------------------------------------ |
+| Median time-to-first-response (issues) | open → first maintainer reply                    | < 24h          | Strapi's slow triage is a known pain point |
+| Median PR time-to-merge                | non-trivial PRs                                  | < 5 days       | predicts external contributor retention    |
+| External contributor ratio             | non-core merged PRs / total                      | ≥ 40%          | bus-factor and sustainability              |
+| Community adapters/plugins             | published `@kernel/plugin-sdk` packages          | 50 in year 1   | validates the adapter contract             |
+| Adapter contract conformance           | community adapters passing the shared test suite | 100% of listed | "no lock-in" must be real                  |
+| Docs coverage                          | public APIs with a doc page + example            | ≥ 95%          | DX compounding                             |
+| Discord/forum resolved ratio           | questions marked answered                        | ≥ 80%          | community self-sufficiency                 |
 
 The conformance number is the one that keeps us honest. We ship a single adapter test suite via `@kernel/plugin-sdk`; any storage, db, auth, email, search, cache, or queue adapter — ours or community — must pass it to be listed. This is how "every infrastructure concern is a swappable adapter" stays a guarantee instead of a slogan.
 

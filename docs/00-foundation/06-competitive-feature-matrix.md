@@ -12,12 +12,12 @@ For the underlying philosophy behind these comparisons, see [Positioning & Wedge
 
 The matrix uses a four-level scale. A feature is only as good as its weakest realistic production path, so we score against shipping a real, multi-environment project — not against a marketing page.
 
-| Symbol | Meaning | Bar to clear |
-| --- | --- | --- |
-| `Full` | First-class, documented, typed | Works end-to-end with type inference; covered by tests; no plugin required |
-| `Partial` | Exists with caveats | Works, but needs a plugin, manual wiring, or loses type safety |
-| `Plugin` | Available only via third-party/community add-on | Not in core; quality and maintenance vary |
-| `None` | Not available | No supported path |
+| Symbol    | Meaning                                         | Bar to clear                                                               |
+| --------- | ----------------------------------------------- | -------------------------------------------------------------------------- |
+| `Full`    | First-class, documented, typed                  | Works end-to-end with type inference; covered by tests; no plugin required |
+| `Partial` | Exists with caveats                             | Works, but needs a plugin, manual wiring, or loses type safety             |
+| `Plugin`  | Available only via third-party/community add-on | Not in core; quality and maintenance vary                                  |
+| `None`    | Not available                                   | No supported path                                                          |
 
 Two rules keep the scoring honest:
 
@@ -30,30 +30,30 @@ Scores reflect the products as of this writing: Payload 3.x (Next.js-native, Typ
 
 ### Core platform & language
 
-| Capability | KernelCMS | Payload | Sanity | Strapi |
-| --- | --- | --- | --- | --- |
-| Language | TS-first, zero `any` | TS-first | TS in Studio, JS content API | JS-first, TS supported |
-| Config-as-code | `kernel.config.ts` | `payload.config.ts` | `sanity.config.ts` (Studio) + schema | Mixed: code + admin UI |
-| Admin framework | TanStack Start | Next.js | Custom (Sanity Studio) | Custom (React) |
-| Self-host | Full | Full | Partial (Studio only; data is hosted) | Full |
-| Managed cloud | KernelCMS Cloud | Payload Cloud | Sanity (primary model) | Strapi Cloud |
-| Content portability self-host ↔ cloud | Full | Partial | None (data lives in Content Lake) | Partial |
+| Capability                            | KernelCMS            | Payload             | Sanity                                | Strapi                 |
+| ------------------------------------- | -------------------- | ------------------- | ------------------------------------- | ---------------------- |
+| Language                              | TS-first, zero `any` | TS-first            | TS in Studio, JS content API          | JS-first, TS supported |
+| Config-as-code                        | `kernel.config.ts`   | `payload.config.ts` | `sanity.config.ts` (Studio) + schema  | Mixed: code + admin UI |
+| Admin framework                       | TanStack Start       | Next.js             | Custom (Sanity Studio)                | Custom (React)         |
+| Self-host                             | Full                 | Full                | Partial (Studio only; data is hosted) | Full                   |
+| Managed cloud                         | KernelCMS Cloud      | Payload Cloud       | Sanity (primary model)                | Strapi Cloud           |
+| Content portability self-host ↔ cloud | Full                 | Partial             | None (data lives in Content Lake)     | Partial                |
 
 The decisive line here is the Sanity row: Sanity's content lives in a hosted Content Lake, so "self-host" means self-hosting the Studio against someone else's database. KernelCMS guarantees content and config portability in both directions — the same `kernel.config.ts` and the same adapters run locally, in Docker, and on KernelCMS Cloud. That is the no-lock-in promise made concrete.
 
 ### Data layer & adapters
 
-| Capability | KernelCMS | Payload | Sanity | Strapi |
-| --- | --- | --- | --- | --- |
-| Postgres | Full (Drizzle, default) | Full | None | Full |
-| SQLite / libSQL | Full | Full | None | Full |
-| MySQL | Full | Partial | None | Full |
-| MongoDB | Full | Full | None | None |
-| Swappable DB adapter contract | Full | Partial | None | Partial |
-| Pluggable storage adapter | Full | Plugin | Built-in (hosted) | Plugin |
-| Pluggable search adapter | Full | Plugin | Built-in (hosted) | Plugin |
-| Pluggable cache / queue adapter | Full | None | None | None |
-| Migrations from schema diff | Full | Full | N/A (schemaless) | Partial |
+| Capability                      | KernelCMS               | Payload | Sanity            | Strapi  |
+| ------------------------------- | ----------------------- | ------- | ----------------- | ------- |
+| Postgres                        | Full (Drizzle, default) | Full    | None              | Full    |
+| SQLite / libSQL                 | Full                    | Full    | None              | Full    |
+| MySQL                           | Full                    | Partial | None              | Full    |
+| MongoDB                         | Full                    | Full    | None              | None    |
+| Swappable DB adapter contract   | Full                    | Partial | None              | Partial |
+| Pluggable storage adapter       | Full                    | Plugin  | Built-in (hosted) | Plugin  |
+| Pluggable search adapter        | Full                    | Plugin  | Built-in (hosted) | Plugin  |
+| Pluggable cache / queue adapter | Full                    | None    | None              | None    |
+| Migrations from schema diff     | Full                    | Full    | N/A (schemaless)  | Partial |
 
 KernelCMS implements one `Adapter` contract that every backend satisfies, and extends the same swappable model to storage, email, auth, search, cache, and queue. Payload and Strapi let you swap the database but treat storage and search as plugins and offer no first-class cache/queue abstraction. Sanity does not have this axis at all — the data layer is the product.
 
@@ -74,42 +74,42 @@ export default defineConfig({
 
 ### Field types & modeling
 
-| Capability | KernelCMS | Payload | Sanity | Strapi |
-| --- | --- | --- | --- | --- |
-| Primitive fields (text, number, date, etc.) | Full | Full | Full | Full |
-| `relationship` | Full | Full | Full (references) | Full |
-| `array` / repeatable | Full | Full | Full | Full |
-| `blocks` (polymorphic) | Full | Full | Full (portable text) | Partial (dynamic zones) |
-| `tabs` / `group` / `row` layout | Full | Full | Partial | None |
-| `point` (geo) | Full | Full | Plugin | None |
-| `code` / `json` fields | Full | Full | Partial | Partial |
-| Custom field types | Full | Full | Full | Partial |
-| Globals (singletons) | Full | Full | Full (documents) | Full (single types) |
+| Capability                                  | KernelCMS | Payload | Sanity               | Strapi                  |
+| ------------------------------------------- | --------- | ------- | -------------------- | ----------------------- |
+| Primitive fields (text, number, date, etc.) | Full      | Full    | Full                 | Full                    |
+| `relationship`                              | Full      | Full    | Full (references)    | Full                    |
+| `array` / repeatable                        | Full      | Full    | Full                 | Full                    |
+| `blocks` (polymorphic)                      | Full      | Full    | Full (portable text) | Partial (dynamic zones) |
+| `tabs` / `group` / `row` layout             | Full      | Full    | Partial              | None                    |
+| `point` (geo)                               | Full      | Full    | Plugin               | None                    |
+| `code` / `json` fields                      | Full      | Full    | Partial              | Partial                 |
+| Custom field types                          | Full      | Full    | Full                 | Partial                 |
+| Globals (singletons)                        | Full      | Full    | Full (documents)     | Full (single types)     |
 
 Modeling is the most mature area across all four products, and KernelCMS matches Payload here closely on purpose — Payload's field model is the strongest of the incumbents and is the right bar. Strapi's dynamic zones are its blocks analogue but are weaker on nesting and layout fields.
 
 ### Content workflow
 
-| Capability | KernelCMS | Payload | Sanity | Strapi |
-| --- | --- | --- | --- | --- |
-| Drafts / publish | Full | Full | Full | Full |
-| Version history | Full (autosave) | Full | Full (hosted) | Partial |
-| Field-level localization | Full | Full | Plugin | Partial |
-| Sync + async + cross-field validation | Full | Full | Partial | Partial |
-| Access control: operation / document / field | Full | Full | Partial | Partial (RBAC) |
-| Live preview + visual editing | Full | Full | Full (Presentation) | Plugin |
+| Capability                                   | KernelCMS       | Payload | Sanity              | Strapi         |
+| -------------------------------------------- | --------------- | ------- | ------------------- | -------------- |
+| Drafts / publish                             | Full            | Full    | Full                | Full           |
+| Version history                              | Full (autosave) | Full    | Full (hosted)       | Partial        |
+| Field-level localization                     | Full            | Full    | Plugin              | Partial        |
+| Sync + async + cross-field validation        | Full            | Full    | Partial             | Partial        |
+| Access control: operation / document / field | Full            | Full    | Partial             | Partial (RBAC) |
+| Live preview + visual editing                | Full            | Full    | Full (Presentation) | Plugin         |
 
 Access control is where KernelCMS and Payload separate from the pack. Both evaluate access at three granularities — the operation, the document, and the individual field — server-side and on by default. Strapi's RBAC is role-centric and weaker at the document and field level; Sanity's strength is its real-time collaboration model rather than fine-grained programmatic field access in self-host setups.
 
 ### APIs & query language
 
-| Capability | KernelCMS | Payload | Sanity | Strapi |
-| --- | --- | --- | --- | --- |
-| Auto-generated REST | Full | Full | None (uses GROQ) | Full |
-| Auto-generated GraphQL | Full | Full | Partial | Full |
-| Typed in-process Local API | Full | Full | None | Partial |
-| Typed RPC over the wire | Full (Start server fns) | None | None | None |
-| One shared query language across surfaces | Full (`where`/`sort`/depth) | Partial | GROQ (its own) | Partial |
+| Capability                                | KernelCMS                   | Payload | Sanity           | Strapi  |
+| ----------------------------------------- | --------------------------- | ------- | ---------------- | ------- |
+| Auto-generated REST                       | Full                        | Full    | None (uses GROQ) | Full    |
+| Auto-generated GraphQL                    | Full                        | Full    | Partial          | Full    |
+| Typed in-process Local API                | Full                        | Full    | None             | Partial |
+| Typed RPC over the wire                   | Full (Start server fns)     | None    | None             | None    |
+| One shared query language across surfaces | Full (`where`/`sort`/depth) | Partial | GROQ (its own)   | Partial |
 
 This row is a genuine KernelCMS differentiator. The Local API is the same operation core as REST/GraphQL, called in-process with full type inference, and exposed over the wire as typed RPC through TanStack Start server functions. The exact same `where`/`sort`/pagination/`depth` query language spans REST, GraphQL, RPC, and Local.
 
@@ -129,17 +129,17 @@ const { docs } = await kernel.find('posts', {
 
 ### Admin experience
 
-| Capability | KernelCMS | Payload | Sanity | Strapi |
-| --- | --- | --- | --- | --- |
-| Config-driven UI | Full | Full | Full | Partial |
-| Dark mode | Full | Full | Full | Full |
-| Command palette / keyboard UX | Full | Partial | Partial | None |
-| Virtualized list & long-document rendering | Full (TanStack Virtual) | Partial | Partial | None |
-| Block-based rich-text editor | Full | Full | Full (Portable Text) | Partial |
-| Media library | Full | Full | Full (hosted) | Full |
-| WCAG 2.2 AA | Full | Partial | Partial | Partial |
-| i18n + RTL admin | Full | Full | Partial | Partial |
-| White-label theming | Full | Partial | Partial | Plugin |
+| Capability                                 | KernelCMS               | Payload | Sanity               | Strapi  |
+| ------------------------------------------ | ----------------------- | ------- | -------------------- | ------- |
+| Config-driven UI                           | Full                    | Full    | Full                 | Partial |
+| Dark mode                                  | Full                    | Full    | Full                 | Full    |
+| Command palette / keyboard UX              | Full                    | Partial | Partial              | None    |
+| Virtualized list & long-document rendering | Full (TanStack Virtual) | Partial | Partial              | None    |
+| Block-based rich-text editor               | Full                    | Full    | Full (Portable Text) | Partial |
+| Media library                              | Full                    | Full    | Full (hosted)        | Full    |
+| WCAG 2.2 AA                                | Full                    | Partial | Partial              | Partial |
+| i18n + RTL admin                           | Full                    | Full    | Partial              | Partial |
+| White-label theming                        | Full                    | Partial | Partial              | Plugin  |
 
 The TanStack foundation pays off in this section. List views are TanStack Table (sorting, filtering, column sizing, virtualization); edit forms are TanStack Form with per-field binding; long lists and documents use TanStack Virtual. Accessibility to WCAG 2.2 AA is a non-negotiable tenet, not a checkbox — the others sit at `Partial` because their admin UIs ship known gaps in keyboard and screen-reader coverage.
 

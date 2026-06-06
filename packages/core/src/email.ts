@@ -26,7 +26,6 @@ export function consoleEmail(opts: { from?: string } = {}): EmailAdapter {
   return {
     name: 'console',
     async send(message) {
-      // eslint-disable-next-line no-console
       console.log(
         `\n[KernelCMS email] (console adapter — not actually sent)\n` +
           `  from:    ${message.from ?? from}\n` +

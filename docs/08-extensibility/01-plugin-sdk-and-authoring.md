@@ -10,95 +10,98 @@ A plugin is authored with `definePlugin` from `@kernel/plugin-sdk`. It returns a
 
 ```ts
 // @acme/kernel-plugin-audit/src/index.ts
-import { definePlugin } from "@kernel/plugin-sdk";
-import type { CollectionConfig } from "@kernel/core";
+import { definePlugin } from '@kernel/plugin-sdk'
+import type { CollectionConfig } from '@kernel/core'
 
 export interface AuditOptions {
   /** Collections to record an immutable audit trail for. */
-  collections: string[];
+  collections: string[]
   /** Where to persist the trail. Defaults to the app's primary db adapter. */
-  storage?: "db" | "queue";
+  storage?: 'db' | 'queue'
 }
 
 export const auditPlugin = definePlugin<AuditOptions>((options) => ({
-  name: "@acme/kernel-plugin-audit",
-  version: "1.4.0",
+  name: '@acme/kernel-plugin-audit',
+  version: '1.4.0',
   // Declared so the host can warn on incompatible cores before setup runs.
-  kernelVersion: "^1.0.0",
+  kernelVersion: '^1.0.0',
   setup(ctx) {
     for (const slug of options.collections) {
-      ctx.extendCollection(slug, (collection): CollectionConfig => ({
-        ...collection,
-        hooks: {
-          ...collection.hooks,
-          afterChange: [
-            ...(collection.hooks?.afterChange ?? []),
-            async ({ doc, previousDoc, req, operation }) => {
-              await ctx.services.db.create("_audit_log", {
-                collection: slug,
-                operation,
-                actor: req.user?.id ?? null,
-                before: previousDoc ?? null,
-                after: doc,
-                at: new Date(),
-              });
-              return doc;
-            },
-          ],
-        },
-      }));
+      ctx.extendCollection(
+        slug,
+        (collection): CollectionConfig => ({
+          ...collection,
+          hooks: {
+            ...collection.hooks,
+            afterChange: [
+              ...(collection.hooks?.afterChange ?? []),
+              async ({ doc, previousDoc, req, operation }) => {
+                await ctx.services.db.create('_audit_log', {
+                  collection: slug,
+                  operation,
+                  actor: req.user?.id ?? null,
+                  before: previousDoc ?? null,
+                  after: doc,
+                  at: new Date(),
+                })
+                return doc
+              },
+            ],
+          },
+        }),
+      )
     }
 
     ctx.addCollection({
-      slug: "_audit_log",
-      access: { read: ({ req }) => req.user?.role === "admin", create: () => false },
+      slug: '_audit_log',
+      access: { read: ({ req }) => req.user?.role === 'admin', create: () => false },
       fields: [
-        { name: "collection", type: "text" },
-        { name: "operation", type: "select", options: ["create", "update", "delete"] },
-        { name: "actor", type: "text" },
-        { name: "before", type: "json" },
-        { name: "after", type: "json" },
-        { name: "at", type: "date" },
+        { name: 'collection', type: 'text' },
+        { name: 'operation', type: 'select', options: ['create', 'update', 'delete'] },
+        { name: 'actor', type: 'text' },
+        { name: 'before', type: 'json' },
+        { name: 'after', type: 'json' },
+        { name: 'at', type: 'date' },
       ],
-    });
+    })
   },
-}));
+}))
 ```
 
 Wiring it into an app is one line in `kernel.config.ts`:
 
 ```ts
-import { defineConfig } from "@kernel/core";
-import { postgresAdapter } from "@kernel/db-postgres";
-import { auditPlugin } from "@acme/kernel-plugin-audit";
+import { defineConfig } from '@kernel/core'
+import { postgresAdapter } from '@kernel/db-postgres'
+import { auditPlugin } from '@acme/kernel-plugin-audit'
 
 export default defineConfig({
   db: postgresAdapter({ url: process.env.DATABASE_URL! }),
-  plugins: [
-    auditPlugin({ collections: ["posts", "orders"] }),
+  plugins: [auditPlugin({ collections: ['posts', 'orders'] })],
+  collections: [
+    /* ... */
   ],
-  collections: [/* ... */],
-});
+})
 ```
 
 ### The setup context
 
 The `ctx` object passed to `setup` is the entire extension surface. It is strongly typed against the resolved config, so `ctx.extendCollection("posts", ...)` is type-checked against the actual `posts` shape — there is no stringly-typed registry to get wrong at runtime.
 
-| Method | Purpose |
-| --- | --- |
-| `ctx.addCollection(config)` | Register a new collection. |
-| `ctx.extendCollection(slug, fn)` | Transform an existing collection (fields, hooks, access). |
-| `ctx.addGlobal(config)` / `ctx.extendGlobal` | Same for globals (singletons). |
-| `ctx.addField(type, definition)` | Register a custom field type usable in any collection. |
-| `ctx.addEndpoint({ method, path, handler })` | Mount a REST route on the API host. |
-| `ctx.addServerFn(name, fn)` | Expose a typed RPC server function via TanStack Start. |
-| `ctx.admin.addView({ path, component })` | Register a TanStack Router admin route. |
-| `ctx.admin.addNavItem(item)` | Add an entry to the admin nav / command palette. |
-| `ctx.admin.addFieldComponent(type, component)` | Provide the React editor for a custom field. |
-| `ctx.hooks.on(event, handler)` | Subscribe to global lifecycle events. |
-| `ctx.services` | Access `db`, `storage`, `auth`, `email`, `cache`, `queue`, `search` adapters. |
-| `ctx.logger` | Namespaced logger scoped to the plugin. |
+| Method                                         | Purpose                                                                       |
+| ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| `ctx.addCollection(config)`                    | Register a new collection.                                                    |
+| `ctx.extendCollection(slug, fn)`               | Transform an existing collection (fields, hooks, access).                     |
+| `ctx.addGlobal(config)` / `ctx.extendGlobal`   | Same for globals (singletons).                                                |
+| `ctx.addField(type, definition)`               | Register a custom field type usable in any collection.                        |
+| `ctx.addEndpoint({ method, path, handler })`   | Mount a REST route on the API host.                                           |
+| `ctx.addServerFn(name, fn)`                    | Expose a typed RPC server function via TanStack Start.                        |
+| `ctx.admin.addView({ path, component })`       | Register a TanStack Router admin route.                                       |
+| `ctx.admin.addNavItem(item)`                   | Add an entry to the admin nav / command palette.                              |
+| `ctx.admin.addFieldComponent(type, component)` | Provide the React editor for a custom field.                                  |
+| `ctx.hooks.on(event, handler)`                 | Subscribe to global lifecycle events.                                         |
+| `ctx.services`                                 | Access `db`, `storage`, `auth`, `email`, `cache`, `queue`, `search` adapters. |
+| `ctx.logger`                                   | Namespaced logger scoped to the plugin.                                       |
 
 `ctx.services` is the key reason plugins do not hard-wire infrastructure: a plugin asks for `ctx.services.queue` and receives whatever adapter the app configured. Write an audit plugin once and it works on Postgres or MongoDB, with BullMQ or SQS, because the plugin never names a concrete backend. Contrast Sanity, where plugins target the hosted Content Lake and cannot be lifted onto self-hosted storage; KernelCMS plugins are adapter-agnostic by construction. See Adapters for the contract.
 
@@ -109,9 +112,9 @@ Admin extensions (`ctx.admin.*`) register React components and routes; server ex
 ```ts
 // Admin code is registered behind ctx.admin and only included in the admin build.
 ctx.admin.addView({
-  path: "/audit",
-  component: () => import("./views/AuditLog"), // lazy, code-split via TanStack Router
-});
+  path: '/audit',
+  component: () => import('./views/AuditLog'), // lazy, code-split via TanStack Router
+})
 ```
 
 ## The plugin lifecycle
@@ -145,19 +148,19 @@ Two ordering rules matter. First, `setup` runs in declaration order, so a plugin
 
 Beyond per-collection hooks, plugins subscribe to global events through `ctx.hooks.on`. These fire on the operation core, so they are identical whether the operation arrived via REST, GraphQL, RPC, or the in-process Local API.
 
-| Event | Fires when | Common use |
-| --- | --- | --- |
-| `onInit` | After all `setup` calls, before serving | Seed data, register cron, warm caches |
-| `beforeOperation` | Before any read/create/update/delete | Tenant scoping, rate limiting |
-| `afterOperation` | After a successful operation | Cache invalidation, webhooks |
-| `afterError` | On any operation error | Error reporting, alerting |
-| `onShutdown` | On SIGTERM / graceful stop | Flush queues, close clients |
+| Event             | Fires when                              | Common use                            |
+| ----------------- | --------------------------------------- | ------------------------------------- |
+| `onInit`          | After all `setup` calls, before serving | Seed data, register cron, warm caches |
+| `beforeOperation` | Before any read/create/update/delete    | Tenant scoping, rate limiting         |
+| `afterOperation`  | After a successful operation            | Cache invalidation, webhooks          |
+| `afterError`      | On any operation error                  | Error reporting, alerting             |
+| `onShutdown`      | On SIGTERM / graceful stop              | Flush queues, close clients           |
 
 ```ts
-ctx.hooks.on("onShutdown", async () => {
-  await ctx.services.queue.drain();
-  ctx.logger.info("audit queue drained");
-});
+ctx.hooks.on('onShutdown', async () => {
+  await ctx.services.queue.drain()
+  ctx.logger.info('audit queue drained')
+})
 ```
 
 Because every event carries the typed operation context (`collection`, `operation`, `req`, `doc`), there is no `any` in a handler signature. This is where KernelCMS pulls ahead of Strapi's lifecycle subscribers, which hand you loosely typed event objects keyed by model UID.
@@ -167,31 +170,29 @@ Because every event carries the typed operation context (`collection`, `operatio
 `@kernel/plugin-sdk/testing` ships a `createTestKernel` harness that boots a real operation core against an in-memory SQLite (`@kernel/db-sqlite`) or an ephemeral Postgres. The point is to test plugins against a real adapter and real hooks, per the project's preference for real dependencies over mocks — not against a stubbed registry.
 
 ```ts
-import { test, expect } from "vitest";
-import { createTestKernel } from "@kernel/plugin-sdk/testing";
-import { sqliteAdapter } from "@kernel/db-sqlite";
-import { auditPlugin } from "../src";
+import { test, expect } from 'vitest'
+import { createTestKernel } from '@kernel/plugin-sdk/testing'
+import { sqliteAdapter } from '@kernel/db-sqlite'
+import { auditPlugin } from '../src'
 
-test("records an entry on create", async () => {
+test('records an entry on create', async () => {
   const kernel = await createTestKernel({
-    db: sqliteAdapter({ url: ":memory:" }),
-    collections: [
-      { slug: "posts", fields: [{ name: "title", type: "text" }] },
-    ],
-    plugins: [auditPlugin({ collections: ["posts"] })],
-  });
+    db: sqliteAdapter({ url: ':memory:' }),
+    collections: [{ slug: 'posts', fields: [{ name: 'title', type: 'text' }] }],
+    plugins: [auditPlugin({ collections: ['posts'] })],
+  })
 
-  const post = await kernel.local.create("posts", { data: { title: "Hello" } });
+  const post = await kernel.local.create('posts', { data: { title: 'Hello' } })
 
-  const trail = await kernel.local.find("_audit_log", {
-    where: { collection: { equals: "posts" } },
-  });
+  const trail = await kernel.local.find('_audit_log', {
+    where: { collection: { equals: 'posts' } },
+  })
 
-  expect(trail.docs).toHaveLength(1);
-  expect(trail.docs[0]).toMatchObject({ operation: "create", after: { id: post.id } });
+  expect(trail.docs).toHaveLength(1)
+  expect(trail.docs[0]).toMatchObject({ operation: 'create', after: { id: post.id } })
 
-  await kernel.destroy();
-});
+  await kernel.destroy()
+})
 ```
 
 The harness exposes `kernel.local` (the typed Local API), `kernel.rest` and `kernel.rpc` test clients, and `kernel.admin` for asserting that views and nav items registered. Test through the Local API and the trail is written by the same hook path production uses — no mock seam to drift. For admin field components, render them with `kernel.admin.renderField(type, props)`, which mounts the component inside a real TanStack Form context so validation and binding are exercised.
@@ -209,25 +210,25 @@ A plugin is an npm package. Name it `kernel-plugin-*` or scope it (`@acme/kernel
   "type": "module",
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./admin": { "types": "./dist/admin.d.ts", "import": "./dist/admin.js" }
+    "./admin": { "types": "./dist/admin.d.ts", "import": "./dist/admin.js" },
   },
   "peerDependencies": {
     "@kernel/core": "^1.0.0",
-    "@kernel/plugin-sdk": "^1.0.0"
-  }
+    "@kernel/plugin-sdk": "^1.0.0",
+  },
 }
 ```
 
 Semver for a CMS plugin is about the contract downstream apps depend on, not just the code. Treat these as the rules:
 
-| Change | Bump | Rationale |
-| --- | --- | --- |
-| New optional option, new collection, new admin view | minor | Additive, no existing app breaks |
-| Bug fix, internal refactor, copy change | patch | No contract change |
-| Removed/renamed option, changed field type, new required option | major | Breaks config or stored data |
-| Schema change requiring a migration | major | Stored documents must be migrated |
-| Widened `peerDependencies` core range | minor | More hosts supported |
-| Narrowed `peerDependencies` core range | major | Previously valid hosts now excluded |
+| Change                                                          | Bump  | Rationale                           |
+| --------------------------------------------------------------- | ----- | ----------------------------------- |
+| New optional option, new collection, new admin view             | minor | Additive, no existing app breaks    |
+| Bug fix, internal refactor, copy change                         | patch | No contract change                  |
+| Removed/renamed option, changed field type, new required option | major | Breaks config or stored data        |
+| Schema change requiring a migration                             | major | Stored documents must be migrated   |
+| Widened `peerDependencies` core range                           | minor | More hosts supported                |
+| Narrowed `peerDependencies` core range                          | major | Previously valid hosts now excluded |
 
 The trap unique to a CMS is data-shape changes. If a new version of your plugin alters a field's type or a collection's schema, the host's existing rows must be migrated — bumping a field from `text` to `json` is a major version, and you should ship a migration alongside it (migrations are generated from schema diffs; see [Migrations](../03-persistence/08-migrations-engine.md)). Sanity and Strapi both leave this to the app author by default; a well-behaved KernelCMS plugin ships the diff-generated migration in the package and references it from the changelog so upgraders run it deliberately.
 

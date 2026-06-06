@@ -2,7 +2,7 @@
 
 KernelCMS emits a structured event for every meaningful state change — a document created, a version published, a user authenticated, a migration applied. Those events flow through an in-process event bus that powers hooks, plugins, search reindexing, cache invalidation, and live preview. The same events can be projected onto an external broker (NATS or Kafka) so other services in your architecture react without polling the REST or GraphQL APIs. This document specifies the event catalog, how subscribers register and run, how external brokers integrate via the `@kernel/plugin-sdk`, and the ordering and delivery guarantees you can rely on.
 
-Where Payload exposes lifecycle *hooks* (`beforeChange`, `afterDelete`) bound to a single collection, Sanity emits *listener* documents over a mutation websocket, and Strapi ships a lightweight in-process `strapi.eventHub` plus webhooks — KernelCMS treats events as a first-class, typed, brokerable substrate. Hooks are sugar over the bus; the bus is the contract.
+Where Payload exposes lifecycle _hooks_ (`beforeChange`, `afterDelete`) bound to a single collection, Sanity emits _listener_ documents over a mutation websocket, and Strapi ships a lightweight in-process `strapi.eventHub` plus webhooks — KernelCMS treats events as a first-class, typed, brokerable substrate. Hooks are sugar over the bus; the bus is the contract.
 
 ## Architecture
 
@@ -29,20 +29,20 @@ Every event is produced inside the operation that caused it. Mutating operations
 
 Events use a stable, dotted, namespaced name: `<domain>.<entity>.<action>`. Names are versioned implicitly by their typed payload; breaking payload changes ship a new suffix (`.v2`) rather than silently mutating the shape. The catalog is generated from your `kernel.config.ts` so collection- and global-scoped events are fully typed per slug.
 
-| Event | Fires when | Cancelable | Payload highlights |
-|-------|-----------|:----------:|--------------------|
-| `document.created` | A collection doc is inserted | before only | `collection`, `doc`, `req`, `draft` |
-| `document.updated` | A doc changes | before only | `collection`, `doc`, `previousDoc`, `changedFields` |
-| `document.deleted` | A doc is removed | before only | `collection`, `id`, `doc` |
-| `document.published` | A draft transitions to published | before only | `collection`, `doc`, `versionId` |
-| `document.unpublished` | A published doc reverts to draft | before only | `collection`, `id`, `versionId` |
-| `version.created` | Autosave or manual snapshot | no | `collection`, `versionId`, `autosave` |
-| `version.restored` | A prior version is promoted | before only | `collection`, `fromVersionId` |
-| `global.updated` | A singleton changes | before only | `slug`, `doc`, `previousDoc` |
-| `upload.completed` | A media file finishes storage | no | `collection`, `file`, `sizes` |
-| `auth.logged-in` | Successful login | no | `userId`, `strategy`, `ip` |
-| `auth.locked` | Account lock threshold hit | no | `userId`, `reason` |
-| `migration.applied` | A schema migration runs | no | `name`, `direction`, `durationMs` |
+| Event                  | Fires when                       | Cancelable  | Payload highlights                                  |
+| ---------------------- | -------------------------------- | :---------: | --------------------------------------------------- |
+| `document.created`     | A collection doc is inserted     | before only | `collection`, `doc`, `req`, `draft`                 |
+| `document.updated`     | A doc changes                    | before only | `collection`, `doc`, `previousDoc`, `changedFields` |
+| `document.deleted`     | A doc is removed                 | before only | `collection`, `id`, `doc`                           |
+| `document.published`   | A draft transitions to published | before only | `collection`, `doc`, `versionId`                    |
+| `document.unpublished` | A published doc reverts to draft | before only | `collection`, `id`, `versionId`                     |
+| `version.created`      | Autosave or manual snapshot      |     no      | `collection`, `versionId`, `autosave`               |
+| `version.restored`     | A prior version is promoted      | before only | `collection`, `fromVersionId`                       |
+| `global.updated`       | A singleton changes              | before only | `slug`, `doc`, `previousDoc`                        |
+| `upload.completed`     | A media file finishes storage    |     no      | `collection`, `file`, `sizes`                       |
+| `auth.logged-in`       | Successful login                 |     no      | `userId`, `strategy`, `ip`                          |
+| `auth.locked`          | Account lock threshold hit       |     no      | `userId`, `reason`                                  |
+| `migration.applied`    | A schema migration runs          |     no      | `name`, `direction`, `durationMs`                   |
 
 Cancelable events run in a `before` phase where a subscriber can throw to abort the operation or return a mutated payload. Non-cancelable events (`*.completed`, `auth.*`, `migration.*`) fire after the fact and cannot alter the outcome — listeners are observers only. This split is deliberate: it keeps the hot path predictable and prevents a logging plugin from accidentally rolling back a publish.
 
@@ -58,9 +58,9 @@ import type { Post } from './kernel.types' // generated from config
 type PublishedEvent = KernelEvent<'document.published', { collection: 'posts' }>
 
 function onPublish(e: PublishedEvent) {
-  const post: Post = e.payload.doc        // typed to the posts collection
-  const versionId = e.payload.versionId   // string
-  const user = e.req.user                 // typed auth user or null
+  const post: Post = e.payload.doc // typed to the posts collection
+  const versionId = e.payload.versionId // string
+  const user = e.req.user // typed auth user or null
 }
 ```
 
@@ -129,9 +129,9 @@ import { natsBroker } from '@kernel/plugin-sdk/brokers'
 export default defineConfig({
   messaging: {
     broker: natsBroker({
-      servers: process.env.NATS_URL!,         // never hardcode
-      stream: 'kernel',                        // JetStream stream
-      subjectPrefix: 'kernel.cms',             // -> kernel.cms.document.published
+      servers: process.env.NATS_URL!, // never hardcode
+      stream: 'kernel', // JetStream stream
+      subjectPrefix: 'kernel.cms', // -> kernel.cms.document.published
       // Project only what downstreams need; keep PII out of the wire.
       publish: ['document.published', 'document.unpublished', 'upload.completed'],
       transform: (e) => ({ id: e.id, name: e.name, collection: e.payload.collection, doc: e.payload.doc }),
@@ -161,18 +161,18 @@ kafkaBroker({
 })
 ```
 
-This is a clear win over Strapi, whose webhooks are fire-and-forget HTTP POSTs with no ordering, no durability, and no replay. It also beats Sanity's listener websocket, which is excellent for live UIs but is not a durable, partitioned message log you can wire into a Kafka-based data platform. KernelCMS gives you both: a websocket-style live channel for the admin (powered by TanStack DB) *and* a broker projection for backend integration.
+This is a clear win over Strapi, whose webhooks are fire-and-forget HTTP POSTs with no ordering, no durability, and no replay. It also beats Sanity's listener websocket, which is excellent for live UIs but is not a durable, partitioned message log you can wire into a Kafka-based data platform. KernelCMS gives you both: a websocket-style live channel for the admin (powered by TanStack DB) _and_ a broker projection for backend integration.
 
 ## Ordering and Delivery
 
 Guarantees are scoped to the **aggregate** — a single document, global, or user. Across aggregates there is no global order, and you should not design as if there were.
 
-| Property | In-process bus | NATS / Kafka relay |
-|----------|----------------|--------------------|
-| Delivery | exactly-once (same process) | at-least-once |
-| Ordering | per-aggregate, FIFO | per-aggregate (partition/subject keyed) |
-| Durability | none (memory) | durable (outbox + broker) |
-| Replay | no | yes (broker retention / outbox cursor) |
+| Property   | In-process bus              | NATS / Kafka relay                      |
+| ---------- | --------------------------- | --------------------------------------- |
+| Delivery   | exactly-once (same process) | at-least-once                           |
+| Ordering   | per-aggregate, FIFO         | per-aggregate (partition/subject keyed) |
+| Durability | none (memory)               | durable (outbox + broker)               |
+| Replay     | no                          | yes (broker retention / outbox cursor)  |
 
 ```
  doc A:  created ──► updated ──► published      (one partition, strict order)
@@ -182,7 +182,7 @@ Guarantees are scoped to the **aggregate** — a single document, global, or use
 
 The outbox guarantees an event is recorded atomically with the data change. A background relay polls the outbox in commit order, publishes to the broker, and advances a per-partition cursor only after the broker acks. If the relay crashes mid-batch, it resumes from the last acked cursor and may re-publish the in-flight tail — hence at-least-once, and hence the `id` for dedupe. We deliberately do not promise exactly-once over the wire: it requires distributed coordination that would couple KernelCMS to the broker's transactional features and break the "choose everything" tenet.
 
-For consumers that genuinely need exactly-once *effects*, the pattern is: consume at-least-once, key your side effect on `event.id`, and make the write idempotent. The catalog's stable ids and per-aggregate ordering make that straightforward.
+For consumers that genuinely need exactly-once _effects_, the pattern is: consume at-least-once, key your side effect on `event.id`, and make the write idempotent. The catalog's stable ids and per-aggregate ordering make that straightforward.
 
 ## Open questions
 

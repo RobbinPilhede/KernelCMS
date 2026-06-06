@@ -68,7 +68,11 @@ describe('GraphQL API', () => {
       context: sys,
     })
     const id = (created.data as { createPosts: { id: string } }).createPosts.id
-    const one = await gql({ query: 'query($id: ID!) { postsById(id: $id) { title } }', variables: { id }, context: sys })
+    const one = await gql({
+      query: 'query($id: ID!) { postsById(id: $id) { title } }',
+      variables: { id },
+      context: sys,
+    })
     expect((one.data as { postsById: { title: string } }).postsById.title).toBe('One')
   })
 
@@ -91,7 +95,11 @@ describe('GraphQL API', () => {
   })
 
   it('enforces collection read access through resolvers', async () => {
-    await gql({ query: 'mutation($d: JSON!) { createSecrets(data: $d) { id } }', variables: { d: { code: 'x' } }, context: sys })
+    await gql({
+      query: 'mutation($d: JSON!) { createSecrets(data: $d) { id } }',
+      variables: { d: { code: 'x' } },
+      context: sys,
+    })
     // Anonymous caller: `secrets` read access is false → the list resolver errors.
     const res = await gql({ query: '{ secrets { totalDocs } }', context: anon })
     expect(res.errors?.length).toBeGreaterThan(0)

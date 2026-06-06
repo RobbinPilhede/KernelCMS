@@ -22,37 +22,37 @@ The suite lives in `@kernel/bench` and is driven by the `kernel bench` CLI comma
 Benchmarks are declared as code, co-located with the operation core so they exercise the real `@kernel/core` operation pipeline rather than a mock:
 
 ```typescript
-import { defineBench } from "@kernel/bench";
-import { postgres } from "@kernel/db-postgres";
+import { defineBench } from '@kernel/bench'
+import { postgres } from '@kernel/db-postgres'
 
 export default defineBench({
-  name: "collection.find — depth 0, 50 rows",
+  name: 'collection.find — depth 0, 50 rows',
   adapter: postgres({ url: process.env.BENCH_DATABASE_URL }),
-  fixture: "blog-10k", // 10k posts, 2k authors, 30k relationships
+  fixture: 'blog-10k', // 10k posts, 2k authors, 30k relationships
   warmup: { iterations: 50 },
-  measure: { iterations: 500, collect: ["p50", "p95", "p99"] },
+  measure: { iterations: 500, collect: ['p50', 'p95', 'p99'] },
   async run({ payload }) {
     await payload.find({
-      collection: "posts",
-      where: { status: { equals: "published" } },
-      sort: "-publishedAt",
+      collection: 'posts',
+      where: { status: { equals: 'published' } },
+      sort: '-publishedAt',
       limit: 50,
       depth: 0,
-    });
+    })
   },
-  budget: { p95: "8ms", p99: "20ms" },
-});
+  budget: { p95: '8ms', p99: '20ms' },
+})
 ```
 
 The fixture catalog is fixed and versioned so numbers are comparable across months:
 
-| Fixture | Documents | Relationships | Purpose |
-| --- | --- | --- | --- |
-| `blog-1k` | 1k posts | 3k | Small-site baseline, cold-start sanity |
-| `blog-10k` | 10k posts | 30k | Default query suite, the headline number |
-| `commerce-100k` | 100k products | 400k | Deep `where` + faceting, index pressure |
-| `i18n-10k` | 10k docs × 6 locales | 30k | Localized field hydration cost |
-| `media-50k` | 50k uploads | 50k | Upload field joins, storage adapter calls |
+| Fixture         | Documents            | Relationships | Purpose                                   |
+| --------------- | -------------------- | ------------- | ----------------------------------------- |
+| `blog-1k`       | 1k posts             | 3k            | Small-site baseline, cold-start sanity    |
+| `blog-10k`      | 10k posts            | 30k           | Default query suite, the headline number  |
+| `commerce-100k` | 100k products        | 400k          | Deep `where` + faceting, index pressure   |
+| `i18n-10k`      | 10k docs × 6 locales | 30k           | Localized field hydration cost            |
+| `media-50k`     | 50k uploads          | 50k           | Upload field joins, storage adapter calls |
 
 Each fixture seeds through the same `@kernel/core` create pipeline used in production, so validation, hooks, and access control all run during seeding. We never hand-write SQL into the fixture — that would measure a database KernelCMS does not actually produce.
 
@@ -72,34 +72,34 @@ Because the Local API, REST, GraphQL, and typed RPC all funnel through the same 
 The admin panel is a TanStack Start application, and its bundle is the single biggest lever on time-to-interactive. We budget per-route, not just total, because the only bundle a user pays for on login is the shell plus the first route. Budgets are declared in `kernel.config.ts` and enforced by the `@kernel/admin` build, which emits a manifest the gate reads.
 
 ```typescript
-import { defineConfig } from "@kernel/core";
+import { defineConfig } from '@kernel/core'
 
 export default defineConfig({
   admin: {
     performance: {
       budgets: {
         // gzipped transfer size, per entry point
-        "shell": "90kb",          // app chrome, router, query client
-        "route:collection-list": "55kb",  // TanStack Table + virtual
-        "route:document-edit": "75kb",     // TanStack Form + richtext editor
-        "route:media-library": "60kb",
-        "total-initial": "180kb", // shell + first route, hard ceiling
+        shell: '90kb', // app chrome, router, query client
+        'route:collection-list': '55kb', // TanStack Table + virtual
+        'route:document-edit': '75kb', // TanStack Form + richtext editor
+        'route:media-library': '60kb',
+        'total-initial': '180kb', // shell + first route, hard ceiling
       },
       // fail build, don't just warn
-      onExceed: "error",
+      onExceed: 'error',
     },
   },
-});
+})
 ```
 
 The richtext editor is the heaviest single dependency in any CMS admin. We lazy-load it at the route boundary with `lazy()` + Suspense so the collection-list route never pays for it. Design tokens ship as CSS custom properties, not a runtime CSS-in-JS engine, so theming costs zero JavaScript — a direct contrast to admin panels that ship Emotion or styled-components and pay the serialization cost on every render.
 
 Budget enforcement compares the gzipped transfer size of each named entry point against its ceiling. The build writes `dist/admin/bundle-manifest.json`; the gate diffs it against the baseline committed under `bench/baselines/`.
 
-| Surface | Budget (gzip) | KernelCMS | Strapi v5 | Payload v3 |
-| --- | --- | --- | --- | --- |
-| Initial load (shell + first route) | 180 kB | ~165 kB | ~1.1 MB | ~320 kB |
-| Document edit route | 75 kB | ~70 kB | bundled | ~140 kB |
+| Surface                            | Budget (gzip) | KernelCMS | Strapi v5 | Payload v3 |
+| ---------------------------------- | ------------- | --------- | --------- | ---------- |
+| Initial load (shell + first route) | 180 kB        | ~165 kB   | ~1.1 MB   | ~320 kB    |
+| Document edit route                | 75 kB         | ~70 kB    | bundled   | ~140 kB    |
 
 The Strapi and Payload figures are reference measurements we re-capture each quarter, not budgets we enforce on them — they exist to keep us honest about the wedge. The win is structural: route-level code splitting plus zero-runtime styling, not micro-optimization.
 
@@ -129,10 +129,10 @@ The structural reasons KernelCMS wins on SQL:
 // what depth:1 compiles to — one query for posts, one batched query per
 // relationship field, never one query per row
 const plan = compileFind({
-  collection: "posts",
-  where: { status: { equals: "published" } },
+  collection: 'posts',
+  where: { status: { equals: 'published' } },
   depth: 1,
-});
+})
 // plan.rootQuery       → SELECT ... FROM posts WHERE status = $1 ...
 // plan.relationLoaders → [ author: SELECT ... FROM users WHERE id IN ($...) ]
 ```
@@ -145,20 +145,20 @@ A benchmark that nobody enforces is a screensaver. The gate is the enforcement. 
 
 ```typescript
 // bench/gate.config.ts
-import { defineGate } from "@kernel/bench";
+import { defineGate } from '@kernel/bench'
 
 export default defineGate({
-  baseline: "bench/baselines/main.json",
+  baseline: 'bench/baselines/main.json',
   tolerances: {
-    "query.p95": "+5%",     // slower than baseline by >5% → fail
-    "query.p99": "+8%",
-    "write.p95": "+5%",
-    "coldStart": "+10%",
-    "bundle.total-initial": "+0%", // bundle never grows silently
+    'query.p95': '+5%', // slower than baseline by >5% → fail
+    'query.p99': '+8%',
+    'write.p95': '+5%',
+    coldStart: '+10%',
+    'bundle.total-initial': '+0%', // bundle never grows silently
   },
   // a 3% improvement that then silently regresses is still a regression
-  ratchet: ["bundle.total-initial", "query.p95"],
-});
+  ratchet: ['bundle.total-initial', 'query.p95'],
+})
 ```
 
 Two policies make the gate trustworthy:

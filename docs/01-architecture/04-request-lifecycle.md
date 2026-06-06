@@ -37,38 +37,38 @@ The chain is built on TanStack Start server-function middleware. Each link recei
 ```ts
 // @kernel/server
 export interface KernelMiddleware {
-  name: string;
-  handler: (req: KernelRequest, next: NextFn) => Promise<KernelResponse>;
+  name: string
+  handler: (req: KernelRequest, next: NextFn) => Promise<KernelResponse>
 }
 ```
 
 The default order is fixed and meaningful:
 
-| Order | Middleware    | Responsibility                                                        |
-| ----- | ------------- | --------------------------------------------------------------------- |
-| 1     | `requestId`   | Assigns a ULID, attaches it to logs and the response header           |
-| 2     | `cors`        | Explicit origin allowlist; never wildcard with credentials            |
-| 3     | `rateLimit`   | Per-IP and per-token buckets; stricter on `/auth/*`                   |
-| 4     | `bodyLimit`   | Rejects oversized payloads before parsing                             |
-| 5     | `auth`        | Resolves the authenticated principal (see below)                      |
-| 6     | `context`     | Builds the immutable request `Context` passed to the pipeline         |
-| 7     | `i18n`        | Resolves locale and fallback chain from header or query               |
+| Order | Middleware  | Responsibility                                                |
+| ----- | ----------- | ------------------------------------------------------------- |
+| 1     | `requestId` | Assigns a ULID, attaches it to logs and the response header   |
+| 2     | `cors`      | Explicit origin allowlist; never wildcard with credentials    |
+| 3     | `rateLimit` | Per-IP and per-token buckets; stricter on `/auth/*`           |
+| 4     | `bodyLimit` | Rejects oversized payloads before parsing                     |
+| 5     | `auth`      | Resolves the authenticated principal (see below)              |
+| 6     | `context`   | Builds the immutable request `Context` passed to the pipeline |
+| 7     | `i18n`      | Resolves locale and fallback chain from header or query       |
 
 Custom middleware mounts relative to these anchors so you never guess at numeric priorities:
 
 ```ts
 // kernel.config.ts
-import { defineConfig } from "@kernel/core";
-import { tenantResolver } from "./middleware/tenant";
+import { defineConfig } from '@kernel/core'
+import { tenantResolver } from './middleware/tenant'
 
 export default defineConfig({
   server: {
     middleware: [
       // run after auth so req.user is populated, before context is frozen
-      { after: "auth", use: tenantResolver },
+      { after: 'auth', use: tenantResolver },
     ],
   },
-});
+})
 ```
 
 A middleware that throws a `KernelError` subclass short-circuits the chain; the error is serialized by the active transport (HTTP status for REST/GraphQL, RPC error envelope for `@kernel/rpc`). Returning early without calling `next()` is the supported way to serve a cached or redirect response.
@@ -79,11 +79,11 @@ The `auth` middleware delegates to the configured `@kernel/auth` strategy — se
 
 ```ts
 export interface Principal {
-  id: string;
-  collection: string;        // e.g. "users" — auth-enabled collections
-  roles: readonly string[];
+  id: string
+  collection: string // e.g. "users" — auth-enabled collections
+  roles: readonly string[]
   // strategy-specific claims, never trusted blindly
-  claims: Record<string, unknown>;
+  claims: Record<string, unknown>
 }
 ```
 
@@ -93,14 +93,14 @@ Once the principal exists, the `context` middleware assembles the `Context` obje
 
 ```ts
 export interface Context {
-  readonly req: KernelRequest;
-  readonly user: Principal | null;
-  readonly locale: string;
-  readonly fallbackLocale: string | false;
-  readonly transaction: Transaction | null; // set by the pipeline, not here
-  readonly requestId: string;
+  readonly req: KernelRequest
+  readonly user: Principal | null
+  readonly locale: string
+  readonly fallbackLocale: string | false
+  readonly transaction: Transaction | null // set by the pipeline, not here
+  readonly requestId: string
   // typed handle to the Local API for hook-internal calls
-  readonly kernel: KernelLocalAPI;
+  readonly kernel: KernelLocalAPI
 }
 ```
 
@@ -115,19 +115,19 @@ See [Access Control](../06-auth-security/01-authorization-and-access-control.md)
 ```ts
 // @kernel/core — conceptual shape of a write operation
 async function create(args: CreateArgs, ctx: Context) {
-  const config = resolveCollection(args.collection);
+  const config = resolveCollection(args.collection)
 
-  await enforceAccess("create", { config, ctx });          // operation-level
-  let data = await runHooks("beforeValidate", { data: args.data, ctx });
-  await validateDocument(config, data, ctx);                // sync + async + cross-field
-  data = await runHooks("beforeChange", { data, ctx });
+  await enforceAccess('create', { config, ctx }) // operation-level
+  let data = await runHooks('beforeValidate', { data: args.data, ctx })
+  await validateDocument(config, data, ctx) // sync + async + cross-field
+  data = await runHooks('beforeChange', { data, ctx })
 
   return ctx.kernel.transaction(async (tx) => {
-    const row = await config.adapter.create({ data, tx });  // single adapter call
-    const withFieldAccess = await applyFieldAccess("read", row, ctx);
-    await runHooks("afterChange", { doc: row, ctx, tx });
-    return runHooks("afterRead", { doc: withFieldAccess, ctx });
-  });
+    const row = await config.adapter.create({ data, tx }) // single adapter call
+    const withFieldAccess = await applyFieldAccess('read', row, ctx)
+    await runHooks('afterChange', { doc: row, ctx, tx })
+    return runHooks('afterRead', { doc: withFieldAccess, ctx })
+  })
 }
 ```
 
@@ -147,35 +147,39 @@ Hooks are registered per collection, per global, or per field in `kernel.config.
 
 ```ts
 // kernel.config.ts
-import { defineCollection } from "@kernel/core";
+import { defineCollection } from '@kernel/core'
 
 export const Posts = defineCollection({
-  slug: "posts",
+  slug: 'posts',
   hooks: {
     beforeValidate: [({ data }) => ({ ...data, slug: slugify(data.title) })],
-    beforeChange: [async ({ data, ctx }) => {
-      data.searchVector = await buildVector(data.body, ctx);
-      return data;
-    }],
-    afterChange: [async ({ doc, ctx }) => {
-      await ctx.kernel.queue.enqueue("reindex", { id: doc.id });
-    }],
+    beforeChange: [
+      async ({ data, ctx }) => {
+        data.searchVector = await buildVector(data.body, ctx)
+        return data
+      },
+    ],
+    afterChange: [
+      async ({ doc, ctx }) => {
+        await ctx.kernel.queue.enqueue('reindex', { id: doc.id })
+      },
+    ],
     afterRead: [({ doc }) => doc],
   },
   fields: [
-    { name: "title", type: "text", required: true },
-    { name: "body", type: "richText" },
+    { name: 'title', type: 'text', required: true },
+    { name: 'body', type: 'richText' },
   ],
-});
+})
 ```
 
-| Hook            | Fires                          | Can mutate | Inside tx | Typical use                          |
-| --------------- | ------------------------------ | ---------- | --------- | ------------------------------------ |
-| `beforeValidate`| After access, before validate  | data       | no        | Derive/normalize fields              |
-| `beforeChange`  | After validate, before persist | data       | no        | Compute side data, set timestamps    |
-| `afterChange`   | After persist, before read     | no         | yes       | Enqueue jobs, revalidate, webhooks   |
-| `afterRead`     | After field access, before return | doc     | no        | Shape output, attach computed reads  |
-| `beforeRead`    | Before adapter read            | query      | no        | Inject filters on `find`/`findByID`  |
+| Hook             | Fires                             | Can mutate | Inside tx | Typical use                         |
+| ---------------- | --------------------------------- | ---------- | --------- | ----------------------------------- |
+| `beforeValidate` | After access, before validate     | data       | no        | Derive/normalize fields             |
+| `beforeChange`   | After validate, before persist    | data       | no        | Compute side data, set timestamps   |
+| `afterChange`    | After persist, before read        | no         | yes       | Enqueue jobs, revalidate, webhooks  |
+| `afterRead`      | After field access, before return | doc        | no        | Shape output, attach computed reads |
+| `beforeRead`     | Before adapter read               | query      | no        | Inject filters on `find`/`findByID` |
 
 Two rules keep hooks predictable. First, mutation hooks (`beforeValidate`, `beforeChange`) return the next working value; observer hooks (`afterChange`) do not, which prevents accidental post-commit data drift. Second, `afterChange` runs inside the same transaction as the write, so a throw rolls the operation back — side effects that must survive commit belong in the queue, enqueued from `afterChange` and run after the transaction settles. This is stricter and safer than Payload, where afterChange hooks routinely fire outside the write transaction and can leave half-applied side effects.
 

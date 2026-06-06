@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+.git
+.github
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+.e2e-uploads
+test-results
+playwright-report
+coverage
+.env
+.env.*
+!.env.example
+.DS_Store

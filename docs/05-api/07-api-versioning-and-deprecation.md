@@ -1,15 +1,15 @@
 # API Versioning & Deprecation
 
-KernelCMS generates REST, GraphQL, and typed RPC surfaces from a single content config, so "the API" is not one artifact you version by hand — it is a projection of your collections, globals, fields, and access rules. This document specifies how those projections evolve: the versioning strategy, the deprecation policy, the schema-evolution rules that keep generated surfaces compatible, and the compatibility windows that bound how long old behavior survives. The throughline: most CMS API breakage comes from *your* schema changes, not ours, so KernelCMS makes both kinds explicit and measurable.
+KernelCMS generates REST, GraphQL, and typed RPC surfaces from a single content config, so "the API" is not one artifact you version by hand — it is a projection of your collections, globals, fields, and access rules. This document specifies how those projections evolve: the versioning strategy, the deprecation policy, the schema-evolution rules that keep generated surfaces compatible, and the compatibility windows that bound how long old behavior survives. The throughline: most CMS API breakage comes from _your_ schema changes, not ours, so KernelCMS makes both kinds explicit and measurable.
 
 ## Two axes of versioning
 
 There are two independent things people mean by "API version," and conflating them is why Strapi v3→v4 and Payload major bumps hurt. KernelCMS separates them.
 
-| Axis | What changes | Who owns it | Versioned by |
-| --- | --- | --- | --- |
-| **Platform API contract** | REST/GraphQL/RPC shape rules, query language, envelope, error format, auth | KernelCMS core | A dated `apiVersion` |
-| **Content schema** | Your collections, fields, relationships, validation | You (in `kernel.config.ts`) | Drizzle migrations + `schemaVersion` |
+| Axis                      | What changes                                                               | Who owns it                 | Versioned by                         |
+| ------------------------- | -------------------------------------------------------------------------- | --------------------------- | ------------------------------------ |
+| **Platform API contract** | REST/GraphQL/RPC shape rules, query language, envelope, error format, auth | KernelCMS core              | A dated `apiVersion`                 |
+| **Content schema**        | Your collections, fields, relationships, validation                        | You (in `kernel.config.ts`) | Drizzle migrations + `schemaVersion` |
 
 Sanity does this well — its API is pinned by a date (`useCdn`, `apiVersion: '2024-03-01'`) and your dataset schema is yours to evolve. KernelCMS follows the dated model for the platform contract and adds a generated, typed schema version on top.
 
@@ -39,6 +39,7 @@ The pin travels with the request and is echoed back:
 GET /api/posts?where[status][equals]=published HTTP/1.1
 X-Kernel-Api-Version: 2026-05-01
 ```
+
 ```http
 HTTP/1.1 200 OK
 X-Kernel-Api-Version: 2026-05-01
@@ -74,16 +75,16 @@ The content schema is the surface your consumers feel most. KernelCMS classifies
 
 ### Change classification
 
-| Change | Class | Consumer impact |
-| --- | --- | --- |
-| Add optional field | additive | none |
-| Add collection / global | additive | none |
-| Add enum value to `select` | additive | none |
-| Rename field (with `previousName`) | transitional | aliased; old name read-only |
-| Widen type (`number` → `text` w/ cast) | transitional | dual-read |
-| Make optional field required | breaking | writes may reject |
-| Remove field / collection | breaking | reads/writes fail |
-| Narrow type or enum | breaking | existing data may fail validation |
+| Change                                 | Class        | Consumer impact                   |
+| -------------------------------------- | ------------ | --------------------------------- |
+| Add optional field                     | additive     | none                              |
+| Add collection / global                | additive     | none                              |
+| Add enum value to `select`             | additive     | none                              |
+| Rename field (with `previousName`)     | transitional | aliased; old name read-only       |
+| Widen type (`number` → `text` w/ cast) | transitional | dual-read                         |
+| Make optional field required           | breaking     | writes may reject                 |
+| Remove field / collection              | breaking     | reads/writes fail                 |
+| Narrow type or enum                    | breaking     | existing data may fail validation |
 
 Renames are first-class so you never lose data or silently break clients:
 
@@ -114,7 +115,7 @@ During the window the generated REST/GraphQL/RPC surfaces expose **both** `excer
 
 ### Migrations are generated, deprecations are declared
 
-The Drizzle migration handles the *database*; the `deprecated` block handles the *contract*. They are separate on purpose: you can deprecate a field's API exposure long before you drop its column, and you can drop a column only after the contract window closes. The CLI enforces the ordering.
+The Drizzle migration handles the _database_; the `deprecated` block handles the _contract_. They are separate on purpose: you can deprecate a field's API exposure long before you drop its column, and you can drop a column only after the contract window closes. The CLI enforces the ordering.
 
 ```bash
 kernel diff                 # classify changes, show consumer impact
@@ -128,11 +129,11 @@ A deprecation is a contract, not a comment. Every deprecated element — a platf
 
 ```ts
 type Deprecation = {
-  since: string        // ISO date the deprecation was announced
-  removeAfter: string  // earliest date removal may ship
-  reason: string       // why; shown in warnings and changelog
+  since: string // ISO date the deprecation was announced
+  removeAfter: string // earliest date removal may ship
+  reason: string // why; shown in warnings and changelog
   replacement?: string // what to use instead
-  alias?: string       // for renames: the still-readable old name
+  alias?: string // for renames: the still-readable old name
 }
 ```
 
@@ -152,7 +153,7 @@ Sunset: Sat, 01 Nov 2026 00:00:00 GMT
 Link: <https://docs.kernelcms.dev/deprecations#posts.excerpt>; rel="deprecation"
 ```
 
-Payload and Strapi rely largely on changelog notes and console logs; Sanity leans on its dated API. KernelCMS combines dated platform versions *and* per-element machine-readable deprecation signals, so both humans and CI catch the same thing.
+Payload and Strapi rely largely on changelog notes and console logs; Sanity leans on its dated API. KernelCMS combines dated platform versions _and_ per-element machine-readable deprecation signals, so both humans and CI catch the same thing.
 
 ### Telemetry-gated removal
 
@@ -161,6 +162,7 @@ You should never remove something that is still being called. KernelCMS records 
 ```bash
 kernel deprecations usage --since 30d
 ```
+
 ```
 ELEMENT                    LAST SEEN   CALLS/24h   PINNED CLIENTS   SUNSET
 posts.excerpt (alias)      2h ago      1,204       3                2026-11-01
@@ -174,13 +176,13 @@ Sunset is enforced only after both the date passes and usage is acceptable. If t
 
 A compatibility window is the guaranteed minimum lifetime of deprecated behavior. KernelCMS sets defaults by surface and lets you lengthen (never silently shorten) them in config.
 
-| Surface | Default window | Notes |
-| --- | --- | --- |
-| Platform `apiVersion` | 12 months from sunset announcement | Dated contracts |
-| Collection / field (renamed) | 6 months | Old name read-only via alias |
-| Query operator / `where` syntax | 6 months | Old + new accepted in parallel |
-| RPC procedure | 6 months | `/** @deprecated */` in generated types |
-| Field removal | 3 months min after deprecation | Telemetry-gated |
+| Surface                         | Default window                     | Notes                                   |
+| ------------------------------- | ---------------------------------- | --------------------------------------- |
+| Platform `apiVersion`           | 12 months from sunset announcement | Dated contracts                         |
+| Collection / field (renamed)    | 6 months                           | Old name read-only via alias            |
+| Query operator / `where` syntax | 6 months                           | Old + new accepted in parallel          |
+| RPC procedure                   | 6 months                           | `/** @deprecated */` in generated types |
+| Field removal                   | 3 months min after deprecation     | Telemetry-gated                         |
 
 ```ts
 // kernel.config.ts
@@ -220,4 +222,4 @@ KernelCMS guarantees windows for changes it generates from your config and for i
 
 - **Per-tenant pinning on Cloud.** On KernelCMS Cloud (multi-tenant), should each tenant pin its own `apiVersion`, or should the platform enforce a narrower global window to bound the support matrix? Leaning toward per-tenant pin with a hard floor.
 - **Automatic codemods for transitional changes.** We offer codemods for renames in `@kernel/client`; whether to auto-generate codemods for GraphQL operations and persisted queries is undecided.
-- **Telemetry default.** Usage-gated removal is opt-in for self-host. Whether to default it *on* (aggregate, anonymized) for Cloud and keep it off for self-host, or make it uniformly opt-in, is still under discussion.
+- **Telemetry default.** Usage-gated removal is opt-in for self-host. Whether to default it _on_ (aggregate, anonymized) for Cloud and keep it off for self-host, or make it uniformly opt-in, is still under discussion.

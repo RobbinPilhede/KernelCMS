@@ -4,15 +4,7 @@
  * runs in `serializeDoc` before persisting and on every importer path, and must
  * be idempotent (sanitize(sanitize(x)) === sanitize(x)). See spec §7.
  */
-import type {
-  KernelRichText,
-  LinkNode,
-  Mark,
-  MarkType,
-  RichBlockNode,
-  RichInlineNode,
-  TextNode,
-} from './types'
+import type { KernelRichText, LinkNode, Mark, MarkType, RichBlockNode, RichInlineNode, TextNode } from './types'
 import { emptyRichText } from './types'
 import type { ResolvedRichTextSchema } from './schema'
 
@@ -39,7 +31,8 @@ export function sanitizeRichText(input: unknown, schema: ResolvedRichTextSchema)
   const doc = input as Partial<KernelRichText> | null | undefined
   if (!doc || doc.type !== 'doc' || !Array.isArray(doc.children)) {
     // A non-document (or legacy string handled upstream) collapses to empty.
-    if (doc !== undefined && doc !== null) warn('dropped-doc', 'Value was not a rich-text document; replaced with empty.')
+    if (doc !== undefined && doc !== null)
+      warn('dropped-doc', 'Value was not a rich-text document; replaced with empty.')
     return { doc: emptyRichText(), warnings }
   }
 
@@ -112,8 +105,16 @@ function sanitizeBlock(
       const items: RichBlockNode[] = []
       for (const li of (n.children as unknown[]) ?? []) {
         if (!li || typeof li !== 'object' || (li as Record<string, unknown>).type !== 'listItem') continue
-        const liChildren = sanitizeBlocks(((li as Record<string, unknown>).children as unknown[]) ?? [], schema, depth + 1, warn)
-        items.push({ type: 'listItem', children: liChildren.length ? liChildren : [{ type: 'paragraph', children: [] }] })
+        const liChildren = sanitizeBlocks(
+          ((li as Record<string, unknown>).children as unknown[]) ?? [],
+          schema,
+          depth + 1,
+          warn,
+        )
+        items.push({
+          type: 'listItem',
+          children: liChildren.length ? liChildren : [{ type: 'paragraph', children: [] }],
+        })
       }
       if (items.length === 0) return null
       return { type: 'list', ordered, children: items as never }
@@ -195,7 +196,11 @@ function sanitizeInline(
       const ref = sanitizeRef(n, schema.uploadCollections, warn)
       if (ref) {
         const alt = typeof n.alt === 'string' ? n.alt : undefined
-        out.push(alt !== undefined ? { type: 'upload', relationTo: ref.relationTo, value: ref.value, alt } : { type: 'upload', relationTo: ref.relationTo, value: ref.value })
+        out.push(
+          alt !== undefined
+            ? { type: 'upload', relationTo: ref.relationTo, value: ref.value, alt }
+            : { type: 'upload', relationTo: ref.relationTo, value: ref.value },
+        )
       }
     } else {
       warn('dropped-node', `Inline node "${String(n.type)}" is not allowed.`)

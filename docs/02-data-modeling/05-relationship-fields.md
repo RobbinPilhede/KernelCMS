@@ -17,7 +17,7 @@ export const Posts = defineCollection({
     {
       name: 'author',
       type: 'relationship',
-      relationTo: 'users',     // to-one
+      relationTo: 'users', // to-one
       required: true,
       maxDepth: 1,
     },
@@ -25,7 +25,7 @@ export const Posts = defineCollection({
       name: 'categories',
       type: 'relationship',
       relationTo: 'categories',
-      hasMany: true,           // to-many
+      hasMany: true, // to-many
       min: 1,
       max: 5,
     },
@@ -35,14 +35,14 @@ export const Posts = defineCollection({
 
 The stored shape mirrors the declaration. A to-one relationship persists the related document's ID; a to-many persists an ordered list. On SQL adapters (`@kernel/db-postgres`, `@kernel/db-sqlite`, `@kernel/db-mysql`) a to-one becomes a foreign-key column and a to-many becomes a junction table with a stable `_order` column — order is content, so we never let the database scramble it. On `@kernel/db-mongodb` the same fields become an ObjectId and an array of ObjectIds.
 
-| Option | Type | Effect |
-| --- | --- | --- |
-| `relationTo` | `string \| string[]` | Target collection slug, or array for polymorphic |
-| `hasMany` | `boolean` | List vs. single reference; controls storage shape |
-| `min` / `max` | `number` | Cardinality bounds, enforced server-side |
-| `maxDepth` | `number` | Per-field population ceiling (see depth control) |
-| `filterOptions` | `function` | Constrains selectable documents in the admin and on write |
-| `on` | `string` | Marks the field as a virtual join (see bi-directional) |
+| Option          | Type                 | Effect                                                    |
+| --------------- | -------------------- | --------------------------------------------------------- |
+| `relationTo`    | `string \| string[]` | Target collection slug, or array for polymorphic          |
+| `hasMany`       | `boolean`            | List vs. single reference; controls storage shape         |
+| `min` / `max`   | `number`             | Cardinality bounds, enforced server-side                  |
+| `maxDepth`      | `number`             | Per-field population ceiling (see depth control)          |
+| `filterOptions` | `function`           | Constrains selectable documents in the admin and on write |
+| `on`            | `string`             | Marks the field as a virtual join (see bi-directional)    |
 
 `filterOptions` is where KernelCMS earns its keep over Strapi, whose relation pickers are effectively unconstrained without custom plugins. It runs server-side and feeds both the admin combobox query and write validation, so a curated relationship cannot be bypassed by hitting the API directly:
 
@@ -102,11 +102,11 @@ const post = await kernel.posts.findById({ id, depth: 1 })
 
 switch (post.attachment.relationTo) {
   case 'media':
-    return post.attachment.value.url        // typed as Media
+    return post.attachment.value.url // typed as Media
   case 'documents':
-    return post.attachment.value.fileSize   // typed as Document
+    return post.attachment.value.fileSize // typed as Document
   case 'externalLinks':
-    return post.attachment.value.href        // typed as ExternalLink
+    return post.attachment.value.href // typed as ExternalLink
 }
 ```
 
@@ -120,9 +120,7 @@ Storing a relationship on one side and reading it from both is the join problem.
 // Posts owns the foreign key
 export const Posts = defineCollection({
   slug: 'posts',
-  fields: [
-    { name: 'author', type: 'relationship', relationTo: 'users' },
-  ],
+  fields: [{ name: 'author', type: 'relationship', relationTo: 'users' }],
 })
 
 // Users exposes the reverse edge without storing it
@@ -134,7 +132,7 @@ export const Users = defineCollection({
       name: 'posts',
       type: 'join',
       collection: 'posts',
-      on: 'author',          // the field on Posts that points back here
+      on: 'author', // the field on Posts that points back here
       hasMany: true,
     },
   ],
@@ -159,8 +157,8 @@ const user = await kernel.users.findById({
   },
 })
 
-user.posts.docs        // Post[]
-user.posts.totalDocs   // number
+user.posts.docs // Post[]
+user.posts.totalDocs // number
 user.posts.hasNextPage // boolean
 ```
 
@@ -197,11 +195,11 @@ post
 
 Resolution differs by surface but the semantics are identical:
 
-| Surface | How population is requested | Notes |
-| --- | --- | --- |
-| Local / RPC | `depth` argument + typed `select` | Inference reflects the requested depth |
-| REST | `?depth=2` query param | Capped by each field's `maxDepth` |
-| GraphQL | Field selection set | Depth is implicit in what you select; resolvers batch via DataLoader |
+| Surface     | How population is requested       | Notes                                                                |
+| ----------- | --------------------------------- | -------------------------------------------------------------------- |
+| Local / RPC | `depth` argument + typed `select` | Inference reflects the requested depth                               |
+| REST        | `?depth=2` query param            | Capped by each field's `maxDepth`                                    |
+| GraphQL     | Field selection set               | Depth is implicit in what you select; resolvers batch via DataLoader |
 
 GraphQL never needs a numeric `depth` because the selection set already says exactly which related fields to resolve, and the resolver layer batches sibling lookups to avoid the N+1 problem. For REST and the Local API, KernelCMS uses the adapter's batch-load path so that populating 50 posts' authors is one `where id in (...)` query, not 50 round-trips.
 

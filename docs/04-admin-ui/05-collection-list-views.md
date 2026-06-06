@@ -27,13 +27,14 @@ export function useCollectionList<TSlug extends CollectionSlug>(slug: TSlug) {
   const search = Route.useSearch() // { page, sort, where, columns }
   const query = useQuery({
     queryKey: ['list', slug, search],
-    queryFn: () => client.collections[slug].find({
-      where: search.where,
-      sort: search.sort,
-      page: search.page,
-      limit: search.limit,
-      depth: 1,
-    }),
+    queryFn: () =>
+      client.collections[slug].find({
+        where: search.where,
+        sort: search.sort,
+        page: search.page,
+        limit: search.limit,
+        depth: 1,
+      }),
     placeholderData: (prev) => prev, // keep rows visible during refetch
   })
 
@@ -90,16 +91,16 @@ export const posts = defineCollection({
 
 Each field type ships a sensible default cell renderer, summarized below.
 
-| Field type     | Default cell                          | Sortable | Notes                                  |
-| -------------- | ------------------------------------- | -------- | -------------------------------------- |
-| `text`         | Truncated text, click to open doc     | yes      | First text field becomes the link cell |
-| `select`/`radio` | Token/badge                         | yes      | Sorts by option order, not label       |
-| `relationship` | Resolved title (uses `useAsTitle`)    | no¹      | Depth-1 fetch; falls back to id        |
-| `upload`       | Thumbnail                             | no       | Lazy-loaded, `aspect-ratio` boxed      |
-| `date`         | Localized via the admin's i18n locale | yes      | Stored UTC, rendered in user TZ        |
-| `number`       | Right-aligned, locale-grouped         | yes      |                                        |
-| `richText`     | Plain-text excerpt                    | no       | Stripped to ~80 chars                  |
-| `array`/`blocks` | Count chip (e.g. `3 items`)         | no       |                                        |
+| Field type       | Default cell                          | Sortable | Notes                                  |
+| ---------------- | ------------------------------------- | -------- | -------------------------------------- |
+| `text`           | Truncated text, click to open doc     | yes      | First text field becomes the link cell |
+| `select`/`radio` | Token/badge                           | yes      | Sorts by option order, not label       |
+| `relationship`   | Resolved title (uses `useAsTitle`)    | no¹      | Depth-1 fetch; falls back to id        |
+| `upload`         | Thumbnail                             | no       | Lazy-loaded, `aspect-ratio` boxed      |
+| `date`           | Localized via the admin's i18n locale | yes      | Stored UTC, rendered in user TZ        |
+| `number`         | Right-aligned, locale-grouped         | yes      |                                        |
+| `richText`       | Plain-text excerpt                    | no       | Stripped to ~80 chars                  |
+| `array`/`blocks` | Count chip (e.g. `3 items`)           | no       |                                        |
 
 ¹ Sorting on relationship columns is opt-in and requires a sortable scalar (e.g. `relationTo` title denormalized); otherwise the header sort control is disabled.
 
@@ -124,13 +125,13 @@ const where = {
 }
 ```
 
-| Field type     | Operators offered                                         |
-| -------------- | --------------------------------------------------------- |
-| `text`         | `equals`, `not_equals`, `contains`, `like`                |
-| `number`/`date` | `equals`, `greater_than`, `less_than`, `between`         |
+| Field type              | Operators offered                                |
+| ----------------------- | ------------------------------------------------ |
+| `text`                  | `equals`, `not_equals`, `contains`, `like`       |
+| `number`/`date`         | `equals`, `greater_than`, `less_than`, `between` |
 | `select`/`relationship` | `equals`, `in`, `not_in`                         |
-| `boolean`      | `equals`                                                  |
-| any            | `exists` (null / not-null)                                |
+| `boolean`               | `equals`                                         |
+| any                     | `exists` (null / not-null)                       |
 
 ### Search
 
@@ -192,13 +193,13 @@ interface SavedView {
   id: string
   collection: CollectionSlug
   name: string
-  scope: 'personal' | 'shared'   // shared views visible to the collection's role
+  scope: 'personal' | 'shared' // shared views visible to the collection's role
   where?: WhereClause
   sort?: string
   columns: { name: string; width?: number; visible: boolean }[]
   density: 'comfortable' | 'compact'
   pageSize: number
-  owner: string                  // user id
+  owner: string // user id
 }
 ```
 

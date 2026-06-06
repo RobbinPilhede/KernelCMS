@@ -65,17 +65,17 @@ Field paths and operators are validated against the compiled schema before any S
 
 The operator set is fixed and field-type-aware. The schema decides which operators a field exposes; a `boolean` rejects `greater_than`, a `point` rejects `contains`.
 
-| Operator | Applies to | Meaning |
-| --- | --- | --- |
-| `equals` / `not_equals` | all | exact match / negation |
-| `greater_than` / `greater_than_equal` | number, date | `>` / `>=` |
-| `less_than` / `less_than_equal` | number, date | `<` / `<=` |
-| `like` / `contains` | text, textarea, email | case-insensitive substring (`contains`), pattern (`like`) |
-| `in` / `not_in` | scalar fields | membership against an array |
-| `exists` | all | `true` → not null; `false` → null |
-| `near` | point | geospatial proximity `[lng, lat, maxMeters, minMeters]` |
-| `within` / `intersects` | point | geometry containment / intersection |
-| `all` | array, relationship (hasMany) | every supplied value present |
+| Operator                              | Applies to                    | Meaning                                                   |
+| ------------------------------------- | ----------------------------- | --------------------------------------------------------- |
+| `equals` / `not_equals`               | all                           | exact match / negation                                    |
+| `greater_than` / `greater_than_equal` | number, date                  | `>` / `>=`                                                |
+| `less_than` / `less_than_equal`       | number, date                  | `<` / `<=`                                                |
+| `like` / `contains`                   | text, textarea, email         | case-insensitive substring (`contains`), pattern (`like`) |
+| `in` / `not_in`                       | scalar fields                 | membership against an array                               |
+| `exists`                              | all                           | `true` → not null; `false` → null                         |
+| `near`                                | point                         | geospatial proximity `[lng, lat, maxMeters, minMeters]`   |
+| `within` / `intersects`               | point                         | geometry containment / intersection                       |
+| `all`                                 | array, relationship (hasMany) | every supplied value present                              |
 
 Operator names are verbose on purpose — `greater_than_equal` reads identically in TypeScript, in a REST query string, and in a saved [TanStack Table](../04-admin-ui/05-collection-list-views.md) filter, so the admin filter UI and a curl command produce byte-identical `where` trees. Payload established this convention and it has aged well; KernelCMS keeps it and adds the geospatial trio (`near`, `within`, `intersects`) for `point` fields, which Payload lacks and which Strapi only approximates through provider-specific escape hatches.
 
@@ -117,10 +117,10 @@ const next = await kernel.find({
 })
 ```
 
-| Mode | Returns `totalDocs` | Cost at page N | Best for |
-| --- | --- | --- | --- |
-| offset (`page`) | yes | grows with N | admin pager, jump-to-page |
-| cursor (`after`/`before`) | no (opt-in count) | constant | infinite scroll, APIs at scale |
+| Mode                      | Returns `totalDocs` | Cost at page N | Best for                       |
+| ------------------------- | ------------------- | -------------- | ------------------------------ |
+| offset (`page`)           | yes                 | grows with N   | admin pager, jump-to-page      |
+| cursor (`after`/`before`) | no (opt-in count)   | constant       | infinite scroll, APIs at scale |
 
 `limit` is clamped to a per-collection `maxLimit` (default 100, `limit: 0` disables paging only when explicitly allowed). This is enforced server-side so a public REST consumer cannot request `limit: 1000000`. Strapi historically shipped with no hard cap, which is a real denial-of-service vector; KernelCMS caps by default and makes raising the cap a deliberate config decision.
 
@@ -167,12 +167,12 @@ Where tree ──▶ validate vs schema ──▶ normalize (locale paths, coerc
 
 **SQL adapters (`@kernel/db-postgres`, `@kernel/db-sqlite`, `@kernel/db-mysql`)** build a Drizzle query. Logical groups become `and()`/`or()`; operators map to Drizzle expression builders; relationship traversals become `JOIN`s (or correlated subqueries when a `hasMany` would multiply rows). `depth` is resolved with Drizzle's relational query API in a single round trip per level, batched to avoid N+1. Dialect differences are handled here, not in the caller:
 
-| Concern | Postgres | SQLite/libSQL | MySQL |
-| --- | --- | --- | --- |
-| `contains` | `ILIKE` | `LIKE` + `COLLATE NOCASE` | `LIKE` (CI collation) |
-| `json` field query | `jsonb` operators / `@>` | `json_extract` | `JSON_EXTRACT` |
-| `point` / `near` | PostGIS / `earthdistance` | bounded-box fallback | `ST_Distance_Sphere` |
-| `in` (large set) | `= ANY($1)` array param | expanded placeholders | expanded placeholders |
+| Concern            | Postgres                  | SQLite/libSQL             | MySQL                 |
+| ------------------ | ------------------------- | ------------------------- | --------------------- |
+| `contains`         | `ILIKE`                   | `LIKE` + `COLLATE NOCASE` | `LIKE` (CI collation) |
+| `json` field query | `jsonb` operators / `@>`  | `json_extract`            | `JSON_EXTRACT`        |
+| `point` / `near`   | PostGIS / `earthdistance` | bounded-box fallback      | `ST_Distance_Sphere`  |
+| `in` (large set)   | `= ANY($1)` array param   | expanded placeholders     | expanded placeholders |
 
 All values are bound as parameters — no string concatenation reaches the driver, so injection is structurally impossible. PostGIS-class geospatial operators are first-class on Postgres; SQLite degrades `near` to a bounding-box prefilter and a precise post-filter, and the adapter advertises this in its capability flags so the engine never silently returns wrong geo results.
 

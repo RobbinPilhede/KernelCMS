@@ -8,14 +8,14 @@ The core principle: a backup you have never restored is a hypothesis, not a guar
 
 Disaster recovery for a CMS spans more than a single SQL dump. KernelCMS has four distinct durable artifacts, and a recovery plan must account for all of them or you restore a hollow site:
 
-| Artifact | Where it lives | Adapter | Backup mechanism |
-| --- | --- | --- | --- |
-| Content (collections, globals, versions, drafts) | Primary database | `@kernel/db-*` | Logical + physical snapshots, WAL/binlog |
-| Media binaries | Object store | `@kernel/storage` | Versioned bucket + cross-region replication |
-| Config-as-code | `kernel.config.ts` in git | — | Source control, tagged per deploy |
-| Search index | Search adapter | `@kernel/server` search adapter | Rebuilt from content (derived, not backed up) |
+| Artifact                                         | Where it lives            | Adapter                         | Backup mechanism                              |
+| ------------------------------------------------ | ------------------------- | ------------------------------- | --------------------------------------------- |
+| Content (collections, globals, versions, drafts) | Primary database          | `@kernel/db-*`                  | Logical + physical snapshots, WAL/binlog      |
+| Media binaries                                   | Object store              | `@kernel/storage`               | Versioned bucket + cross-region replication   |
+| Config-as-code                                   | `kernel.config.ts` in git | —                               | Source control, tagged per deploy             |
+| Search index                                     | Search adapter            | `@kernel/server` search adapter | Rebuilt from content (derived, not backed up) |
 
-Config-as-code is the structural backbone. Because the schema, access rules, and field definitions live in `kernel.config.ts` under version control, a content restore is always paired with a known config revision. This is a real advantage over Sanity, where the schema lives in your studio repo but content shape drift is reconciled at the dataset level, and over Strapi, where content types and the data that conforms to them can diverge across environments unless you carefully manage migrations. KernelCMS pins them together: every backup records the config commit SHA that produced the schema, so a restore never lands content into an incompatible table layout. Search is deliberately *derived* — never restore it, rebuild it. See Search adapters.
+Config-as-code is the structural backbone. Because the schema, access rules, and field definitions live in `kernel.config.ts` under version control, a content restore is always paired with a known config revision. This is a real advantage over Sanity, where the schema lives in your studio repo but content shape drift is reconciled at the dataset level, and over Strapi, where content types and the data that conforms to them can diverge across environments unless you carefully manage migrations. KernelCMS pins them together: every backup records the config commit SHA that produced the schema, so a restore never lands content into an incompatible table layout. Search is deliberately _derived_ — never restore it, rebuild it. See Search adapters.
 
 ## Backup strategy
 
@@ -38,7 +38,7 @@ export default defineConfig({
       },
       // Periodic base snapshots
       snapshots: {
-        full: { schedule: '0 2 * * 0', retention: '90d' },   // weekly, Sun 02:00
+        full: { schedule: '0 2 * * 0', retention: '90d' }, // weekly, Sun 02:00
         incremental: { schedule: '0 2 * * 1-6', retention: '14d' },
       },
       // Encrypt at rest before leaving the host
@@ -95,24 +95,24 @@ import { createRecovery } from '@kernel/server'
 const recovery = await createRecovery({
   adapter: 'postgres',
   pointInTime: new Date('2026-05-30T13:42:10Z'),
-  target: 'staging',           // never restore over prod by default
+  target: 'staging', // never restore over prod by default
   reconcileStorage: true,
 })
 
-await recovery.run()           // streams progress events
+await recovery.run() // streams progress events
 console.log(recovery.report()) // rows restored, dangling refs, duration
 ```
 
 PITR support differs by adapter, and we are explicit about it rather than papering over the gap:
 
-| Adapter | PITR mechanism | Granularity |
-| --- | --- | --- |
-| `@kernel/db-postgres` | WAL archive + base backup replay | Single transaction |
-| `@kernel/db-mysql` | Binlog replay | Single transaction |
+| Adapter                      | PITR mechanism                                     | Granularity        |
+| ---------------------------- | -------------------------------------------------- | ------------------ |
+| `@kernel/db-postgres`        | WAL archive + base backup replay                   | Single transaction |
+| `@kernel/db-mysql`           | Binlog replay                                      | Single transaction |
 | `@kernel/db-sqlite` (libSQL) | Replication frames / litestream-style WAL shipping | Frame (sub-second) |
-| `@kernel/db-mongodb` | Oplog replay | Single operation |
+| `@kernel/db-mongodb`         | Oplog replay                                       | Single operation   |
 
-This is where KernelCMS pulls ahead of the field. Self-hosted Payload and Strapi inherit whatever your database gives you and leave orchestration entirely to you. Sanity offers dataset rollback and a history API on its managed platform, but you do not run it yourself and the granularity is tied to their transaction log, not yours. KernelCMS gives you transaction-level PITR you operate directly, with the *same command surface* across four databases — so switching adapters does not mean relearning recovery.
+This is where KernelCMS pulls ahead of the field. Self-hosted Payload and Strapi inherit whatever your database gives you and leave orchestration entirely to you. Sanity offers dataset rollback and a history API on its managed platform, but you do not run it yourself and the granularity is tied to their transaction log, not yours. KernelCMS gives you transaction-level PITR you operate directly, with the _same command surface_ across four databases — so switching adapters does not mean relearning recovery.
 
 PITR also composes with KernelCMS version history. Version history (autosave snapshots of individual documents) is the right tool to revert one editor's mistake; PITR is the right tool to undo a bad migration or a corrupting bulk write across the whole dataset. They are complementary, not redundant — see Versions & drafts.
 
@@ -155,12 +155,12 @@ On KernelCMS Cloud, drills run automatically against every tenant's backups on a
 
 Recovery Point Objective (how much data you can afford to lose) and Recovery Time Objective (how long recovery may take) are commitments, not aspirations. Set them per environment and let the backup configuration prove they are achievable through the drill harness.
 
-| Tier | RPO | RTO | Backup posture |
-| --- | --- | --- | --- |
-| Cloud (Business) | ≤ 5 min | ≤ 30 min | Continuous WAL, hot standby, off-region replication |
-| Cloud (Standard) | ≤ 1 h | ≤ 4 h | Continuous WAL, snapshot restore |
-| Self-host (recommended) | ≤ 15 min | ≤ 1 h | WAL archive + weekly full + daily incremental |
-| Self-host (minimum) | ≤ 24 h | best-effort | Daily snapshot only — acceptable only for dev |
+| Tier                    | RPO      | RTO         | Backup posture                                      |
+| ----------------------- | -------- | ----------- | --------------------------------------------------- |
+| Cloud (Business)        | ≤ 5 min  | ≤ 30 min    | Continuous WAL, hot standby, off-region replication |
+| Cloud (Standard)        | ≤ 1 h    | ≤ 4 h       | Continuous WAL, snapshot restore                    |
+| Self-host (recommended) | ≤ 15 min | ≤ 1 h       | WAL archive + weekly full + daily incremental       |
+| Self-host (minimum)     | ≤ 24 h   | best-effort | Daily snapshot only — acceptable only for dev       |
 
 The relationship is direct: your RPO is bounded by how frequently durable state leaves the primary. Continuous WAL/binlog archival pushes RPO toward seconds; snapshot-only postures cap it at the snapshot interval. RTO is bounded by dataset size, restore bandwidth, and WAL-replay distance from the nearest base snapshot — which is exactly why the strategy above keeps a recent base backup: shorter replay, faster recovery.
 
@@ -176,7 +176,7 @@ backups: {
 }
 ```
 
-This is the wedge against the competition once more: Payload and Strapi give you no built-in notion of RPO/RTO — you assemble it from external tooling and hope. Sanity meets aggressive objectives but only because they operate the infrastructure and you accept their numbers. KernelCMS lets you *declare* objectives and *measure* against them, whether you self-host or run on Cloud, with content and config portable between the two so a DR plan survives a platform move. See Self-hosting and Cloud overview.
+This is the wedge against the competition once more: Payload and Strapi give you no built-in notion of RPO/RTO — you assemble it from external tooling and hope. Sanity meets aggressive objectives but only because they operate the infrastructure and you accept their numbers. KernelCMS lets you _declare_ objectives and _measure_ against them, whether you self-host or run on Cloud, with content and config portable between the two so a DR plan survives a platform move. See Self-hosting and Cloud overview.
 
 ## Open questions
 

@@ -8,11 +8,11 @@ The docs site is itself a TanStack Start application living in `apps/docs`, whic
 
 Content is authored as MDX under `docs/`, organized by the numbered directory scheme you are reading now (`11-quality/05-documentation-and-dx-quality.md`). Three content sources feed the site:
 
-| Source | Origin | Generation |
-| --- | --- | --- |
-| Guides & concepts | Hand-written MDX in `docs/` | Authored, reviewed in PR |
-| API reference | TSDoc + type extraction from `packages/*/src` | Generated at build time |
-| Config schema reference | `defineConfig` Zod/validator metadata | Generated from `@kernel/core` |
+| Source                  | Origin                                        | Generation                    |
+| ----------------------- | --------------------------------------------- | ----------------------------- |
+| Guides & concepts       | Hand-written MDX in `docs/`                   | Authored, reviewed in PR      |
+| API reference           | TSDoc + type extraction from `packages/*/src` | Generated at build time       |
+| Config schema reference | `defineConfig` Zod/validator metadata         | Generated from `@kernel/core` |
 
 ```
 packages/*/src ──(api-extractor)──► .api.json ─┐
@@ -56,7 +56,7 @@ for (const symbol of api.exported) {
 }
 ```
 
-We also detect drift in the *config* surface, which is where Payload's and Strapi's docs most often go stale. Because `kernel.config.ts` is validated by a schema in `@kernel/core`, that schema is the authority for what fields and options exist. The config reference page is generated from it, and a snapshot test guards it:
+We also detect drift in the _config_ surface, which is where Payload's and Strapi's docs most often go stale. Because `kernel.config.ts` is validated by a schema in `@kernel/core`, that schema is the authority for what fields and options exist. The config reference page is generated from it, and a snapshot test guards it:
 
 ```ts
 // kernel.config.ts — the canonical shape the reference is derived from
@@ -84,14 +84,14 @@ import { configSchema } from '@kernel/core'
 import { readDocumentedOptions } from '@kernel/docs-gen'
 
 test('every config option is documented', () => {
-  const schemaKeys = configSchema.keyPaths()              // from the validator
+  const schemaKeys = configSchema.keyPaths() // from the validator
   const documented = readDocumentedOptions('docs/reference/config.mdx')
   expect(schemaKeys).toEqual(expect.arrayContaining(documented))
   expect(documented).toEqual(expect.arrayContaining(schemaKeys)) // both directions
 })
 ```
 
-The check runs in both directions: a documented option that the schema dropped is a *stale* doc; a schema option with no docs is a *missing* doc. Both fail the build. The result is that you cannot add a field type to the validator without the docs pipeline forcing a reference entry, and you cannot remove one without the stale entry surfacing.
+The check runs in both directions: a documented option that the schema dropped is a _stale_ doc; a schema option with no docs is a _missing_ doc. Both fail the build. The result is that you cannot add a field type to the validator without the docs pipeline forcing a reference entry, and you cannot remove one without the stale entry surfacing.
 
 ## Examples That Run in CI
 
@@ -130,11 +130,11 @@ expect(post.id).toBeDefined()
 await kernel.close()
 ```
 
-| Block mode | What CI does | Catches |
-| --- | --- | --- |
-| `check` | `tsc --noEmit` against published types | Signature drift, renamed exports, wrong generics |
-| `run` | Boots server + SQLite, runs via Local API | Behavioral breakage, removed operations, bad defaults |
-| `skip` | Nothing (linted for overuse) | — |
+| Block mode | What CI does                              | Catches                                               |
+| ---------- | ----------------------------------------- | ----------------------------------------------------- |
+| `check`    | `tsc --noEmit` against published types    | Signature drift, renamed exports, wrong generics      |
+| `run`      | Boots server + SQLite, runs via Local API | Behavioral breakage, removed operations, bad defaults |
+| `skip`     | Nothing (linted for overuse)              | —                                                     |
 
 This is the part most competitors do not do at all. Strapi and Sanity docs contain hundreds of snippets that are never compiled; readers discover breakage at runtime. Because KernelCMS exposes the **same operation core** through the Local API, REST, GraphQL, and typed RPC, one executed snippet exercises the path every surface shares. We cap `runtime="skip"` usage with a lint rule — if more than a small percentage of a page's blocks are skipped, review flags it, because skipping is how rot creeps back in.
 
@@ -142,7 +142,7 @@ Examples live next to the docs they appear in and are also published as a `examp
 
 ## The Feedback Loop
 
-Generation and CI keep docs *correct*; the feedback loop keeps them *useful*. Correct-but-confusing is still a DX failure.
+Generation and CI keep docs _correct_; the feedback loop keeps them _useful_. Correct-but-confusing is still a DX failure.
 
 Every docs page carries a footer widget — a small TanStack Form — with "Was this page helpful?" and an optional free-text field. Submissions post through a TanStack Start server function to a `doc_feedback` collection (dogfooding KernelCMS to store KernelCMS's own feedback) tagged with the page path, the docs version, and the resolved symbol if it is a reference page. We deliberately do not collect anything user-identifying; the payload is page, verdict, optional text, and a coarse referrer.
 
@@ -157,13 +157,13 @@ weekly digest ◄── TanStack Query dashboard ◄───────┘
 Signals are aggregated three ways:
 
 1. **In-product dashboard** — a `@kernel/admin` view (TanStack Table + TanStack Query) ranking pages by unhelpful-rate and volume, so the worst pages float to the top.
-2. **Search-with-no-result log** — queries that returned nothing become a backlog of missing docs; this is the highest-signal source of *what to write next*.
+2. **Search-with-no-result log** — queries that returned nothing become a backlog of missing docs; this is the highest-signal source of _what to write next_.
 3. **Automated issue filing** — when an unhelpful-rate crosses a threshold over a rolling window, a bot opens a GitHub issue with the page, the verbatim comments, and the diff of recent changes to that page's underlying source, so a maintainer can see whether a code change caused the confusion.
 
 The loop is explicitly tied back to the generators. If feedback shows a reference page is unclear, the fix is usually a better TSDoc `@example` in source — which then flows into the generated page automatically. Improving the docs and improving the in-IDE hover text are the same action, because both read from the same TSDoc. That alignment is the whole thesis: one source, many surfaces, every surface verified.
 
 ## Open Questions
 
-- **Versioned example execution.** Running `runtime="run"` blocks for *every* supported version on every PR is expensive. Do we execute only against the latest, and type-check (`check`) against the version matrix, or invest in caching booted-server fixtures per version?
+- **Versioned example execution.** Running `runtime="run"` blocks for _every_ supported version on every PR is expensive. Do we execute only against the latest, and type-check (`check`) against the version matrix, or invest in caching booted-server fixtures per version?
 - **Feedback storage tenancy.** Hosting feedback in a KernelCMS instance is good dogfooding, but couples the public docs site's availability to a write path. Should `doc_feedback` live in a separate isolated project, or in KernelCMS Cloud with stricter rate limits?
 - **MongoDB in the example harness.** The harness uses `@kernel/db-sqlite` for speed and zero dependencies. Document-oriented examples that lean on `@kernel/db-mongodb` semantics are not exercised end-to-end — do we add an optional containerized Mongo lane for the subset of examples that need it?

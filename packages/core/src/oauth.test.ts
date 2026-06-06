@@ -77,8 +77,18 @@ describe('loginWithOAuth', () => {
   })
 
   it('reuses the existing account on subsequent sign-ins', async () => {
-    await kernel.loginWithOAuth({ collection: 'users', provider: 'stub', code: 'c1', redirectUri: 'https://app.test/cb' })
-    await kernel.loginWithOAuth({ collection: 'users', provider: 'stub', code: 'c2', redirectUri: 'https://app.test/cb' })
+    await kernel.loginWithOAuth({
+      collection: 'users',
+      provider: 'stub',
+      code: 'c1',
+      redirectUri: 'https://app.test/cb',
+    })
+    await kernel.loginWithOAuth({
+      collection: 'users',
+      provider: 'stub',
+      code: 'c2',
+      redirectUri: 'https://app.test/cb',
+    })
     const users = await kernel.find({ collection: 'users', ...trusted })
     expect(users.totalDocs).toBe(1)
   })

@@ -2,7 +2,6 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { DatabaseAdapter, PaginatedResult, Row, SortSpec, Where } from '@kernel/db'
 import { extForFormat, generateKey, isContentTypeConsistent, sniffMimeType, type StorageAdapter } from '@kernel/storage'
 import type {
-  AnyField,
   AuthResult,
   AuthUser,
   CollectionConfig,
@@ -165,7 +164,12 @@ export function createOperations(ctx: OperationCtx) {
    * group/array/blocks sub-fields. Skipped when access is overridden. Without
    * this, field `access.read` rules would be silently ignored on output.
    */
-  async function applyReadFieldAccess(fields: ConfigField[], doc: Row, req: RequestContext, id?: string): Promise<void> {
+  async function applyReadFieldAccess(
+    fields: ConfigField[],
+    doc: Row,
+    req: RequestContext,
+    id?: string,
+  ): Promise<void> {
     for (const field of effectiveFields(fields)) {
       if (!Object.prototype.hasOwnProperty.call(doc, field.name)) continue
       const rule = field.access?.read
@@ -283,12 +287,7 @@ export function createOperations(ctx: OperationCtx) {
     return current
   }
 
-  async function populate(
-    collection: CollectionConfig,
-    doc: Doc,
-    depth: number,
-    req: RequestContext,
-  ): Promise<Doc> {
+  async function populate(collection: CollectionConfig, doc: Doc, depth: number, req: RequestContext): Promise<Doc> {
     if (depth <= 0) return doc
     for (const rel of relationshipFields(collection.fields)) {
       const value = doc[rel.name]
@@ -345,12 +344,7 @@ export function createOperations(ctx: OperationCtx) {
     return doc
   }
 
-  async function safeFindByID(
-    slug: string,
-    id: string,
-    depth: number,
-    req: RequestContext,
-  ): Promise<Doc | null> {
+  async function safeFindByID(slug: string, id: string, depth: number, req: RequestContext): Promise<Doc | null> {
     try {
       return await findByID({ collection: slug, id, depth, req })
     } catch (err) {
@@ -462,7 +456,8 @@ export function createOperations(ctx: OperationCtx) {
 
   async function publish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
-    if (!draftsOn(collection)) throw new BadRequestError(`Collection "${opts.collection}" does not have drafts enabled.`)
+    if (!draftsOn(collection))
+      throw new BadRequestError(`Collection "${opts.collection}" does not have drafts enabled.`)
     // A future `publishAt` schedules the publish (stays a draft until then);
     // otherwise publish immediately and clear any pending schedule.
     const at = opts.publishAt ? new Date(opts.publishAt) : null
@@ -509,7 +504,8 @@ export function createOperations(ctx: OperationCtx) {
 
   async function unpublish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
-    if (!draftsOn(collection)) throw new BadRequestError(`Collection "${opts.collection}" does not have drafts enabled.`)
+    if (!draftsOn(collection))
+      throw new BadRequestError(`Collection "${opts.collection}" does not have drafts enabled.`)
     return update<T>({
       collection: opts.collection,
       id: opts.id,
@@ -787,8 +783,7 @@ export function createOperations(ctx: OperationCtx) {
       page: 1,
     })
     const row = result.docs[0]
-    const passwordOk =
-      !!row && typeof row.hash === 'string' && (await verifyPassword(opts.password, row.hash))
+    const passwordOk = !!row && typeof row.hash === 'string' && (await verifyPassword(opts.password, row.hash))
     if (!row || !passwordOk) {
       recordLoginFailure(key)
       throw new UnauthorizedError('Invalid email or password.')
@@ -832,7 +827,8 @@ export function createOperations(ctx: OperationCtx) {
   /** Generate (or rotate) a user's API key. The plaintext is returned once and never stored. */
   async function createAPIKey(opts: CreateAPIKeyOptions): Promise<{ key: string }> {
     const collection = collectionOrThrow(opts.collection)
-    if (!apiKeyEnabled(collection)) throw new BadRequestError(`Collection "${opts.collection}" does not have API keys enabled.`)
+    if (!apiKeyEnabled(collection))
+      throw new BadRequestError(`Collection "${opts.collection}" does not have API keys enabled.`)
     const existing = await db.findByID({ collection: collection.slug, id: opts.id })
     if (!existing) throw new NotFoundError()
     const key = `${collection.slug}_${randomBytes(24).toString('base64url')}`
@@ -885,9 +881,13 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   /** Generate (or rotate) a user's TOTP secret. Not active until `enableTwoFactor`. */
-  async function setupTwoFactor(opts: { collection: string; id: string }): Promise<{ secret: string; otpauthURL: string }> {
+  async function setupTwoFactor(opts: {
+    collection: string
+    id: string
+  }): Promise<{ secret: string; otpauthURL: string }> {
     const collection = collectionOrThrow(opts.collection)
-    if (!twoFactorEnabled(collection)) throw new BadRequestError(`Collection "${opts.collection}" does not have two-factor enabled.`)
+    if (!twoFactorEnabled(collection))
+      throw new BadRequestError(`Collection "${opts.collection}" does not have two-factor enabled.`)
     const row = await db.findByID({ collection: collection.slug, id: opts.id })
     if (!row) throw new NotFoundError()
     const secret = generateTotpSecret()
@@ -898,7 +898,8 @@ export function createOperations(ctx: OperationCtx) {
   /** Confirm enrolment by verifying a code against the pending secret. */
   async function enableTwoFactor(opts: { collection: string; id: string; code: string }): Promise<{ enabled: true }> {
     const collection = collectionOrThrow(opts.collection)
-    if (!twoFactorEnabled(collection)) throw new BadRequestError(`Collection "${opts.collection}" does not have two-factor enabled.`)
+    if (!twoFactorEnabled(collection))
+      throw new BadRequestError(`Collection "${opts.collection}" does not have two-factor enabled.`)
     const row = await db.findByID({ collection: collection.slug, id: opts.id })
     const secret = typeof row?.totp_secret === 'string' ? row.totp_secret : ''
     if (!secret) throw new BadRequestError('Set up two-factor before enabling it.')
@@ -909,7 +910,8 @@ export function createOperations(ctx: OperationCtx) {
 
   async function disableTwoFactor(opts: { collection: string; id: string }): Promise<{ enabled: false }> {
     const collection = collectionOrThrow(opts.collection)
-    if (!twoFactorEnabled(collection)) throw new BadRequestError(`Collection "${opts.collection}" does not have two-factor enabled.`)
+    if (!twoFactorEnabled(collection))
+      throw new BadRequestError(`Collection "${opts.collection}" does not have two-factor enabled.`)
     await db.update({ collection: collection.slug, id: opts.id, data: { totp_secret: null, totp_enabled: false } })
     return { enabled: false }
   }
@@ -1099,7 +1101,10 @@ export function createOperations(ctx: OperationCtx) {
     await db.update({
       collection: collection.slug,
       id: String(row.id),
-      data: { verification_token: hashOpaqueToken(raw), verification_token_expiry: nowSec() + (opt.tokenExpiration ?? 86400) },
+      data: {
+        verification_token: hashOpaqueToken(raw),
+        verification_token_expiry: nowSec() + (opt.tokenExpiration ?? 86400),
+      },
     })
     await sendVerificationEmail(collection, rowToDoc(collection, row, buildReq()), raw)
   }
@@ -1304,7 +1309,10 @@ export function createOperations(ctx: OperationCtx) {
     const sniffed = sniffMimeType(file.data)
     if (!isContentTypeConsistent(file.mimeType, sniffed)) {
       throw new ValidationError([
-        { path: 'file', message: `File content (${sniffed ?? 'unknown'}) does not match its declared type "${file.mimeType}".` },
+        {
+          path: 'file',
+          message: `File content (${sniffed ?? 'unknown'}) does not match its declared type "${file.mimeType}".`,
+        },
       ])
     }
 

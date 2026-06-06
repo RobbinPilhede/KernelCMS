@@ -23,6 +23,7 @@ depends on.
 ## 2. Goals / Non-goals
 
 **Goals**
+
 - A versioned, normalized, JSON document model (`KernelRichText`) that is stable,
   diffable, and decoupled from any editor library.
 - A feature/extension system so a `richText` field declares exactly which nodes,
@@ -36,7 +37,8 @@ depends on.
   performance.
 
 **Non-goals (v1)**
-- Real-time multiplayer co-editing (CRDT). We design the model to *not preclude* it
+
+- Real-time multiplayer co-editing (CRDT). We design the model to _not preclude_ it
   (see §13) but ship single-writer with document locking (Spec: admin doc-locking).
 - A bespoke editor engine. We wrap a proven editor core and own the data model +
   converters around it.
@@ -63,18 +65,23 @@ We separate **model** (engine, permanent) from **editor** (admin, replaceable).
     the field API, the model, or converters.
 
 The editor adapter boundary:
+
 ```ts
 interface EditorAdapter {
   mount(el: HTMLElement, opts: EditorMountOptions): EditorHandle
 }
 interface EditorMountOptions {
-  schema: ResolvedRichTextSchema      // from the field's features (§5)
-  value: KernelRichText               // initial doc
+  schema: ResolvedRichTextSchema // from the field's features (§5)
+  value: KernelRichText // initial doc
   readOnly?: boolean
   onChange(doc: KernelRichText): void // debounced, normalized
-  resolvers: NodeResolvers            // fetch labels for relationship/upload nodes
+  resolvers: NodeResolvers // fetch labels for relationship/upload nodes
 }
-interface EditorHandle { focus(): void; destroy(): void; getDoc(): KernelRichText }
+interface EditorHandle {
+  focus(): void
+  destroy(): void
+  getDoc(): KernelRichText
+}
 ```
 
 ## 4. The document model — `KernelRichText`
@@ -92,47 +99,99 @@ export interface KernelRichText {
 }
 
 type RichBlockNode =
-  | ParagraphNode | HeadingNode | ListNode | ListItemNode
-  | QuoteNode | CodeBlockNode | HorizontalRuleNode
-  | UploadNode | BlockEmbedNode      // void / atom blocks
+  | ParagraphNode
+  | HeadingNode
+  | ListNode
+  | ListItemNode
+  | QuoteNode
+  | CodeBlockNode
+  | HorizontalRuleNode
+  | UploadNode
+  | BlockEmbedNode // void / atom blocks
 type RichInlineNode = TextNode | LinkNode | RelationshipNode
 
-interface BaseNode { type: string; /* node-specific props below */ }
+interface BaseNode {
+  type: string /* node-specific props below */
+}
 
-interface ParagraphNode  { type: 'paragraph'; children: RichInlineNode[] }
-interface HeadingNode    { type: 'heading'; level: 2 | 3 | 4; children: RichInlineNode[] }
-interface QuoteNode      { type: 'quote'; children: RichBlockNode[] }
-interface ListNode       { type: 'list'; ordered: boolean; children: ListItemNode[] }
-interface ListItemNode   { type: 'listItem'; children: RichBlockNode[] }
-interface CodeBlockNode  { type: 'codeBlock'; language?: string; code: string }
-interface HorizontalRuleNode { type: 'hr' }
+interface ParagraphNode {
+  type: 'paragraph'
+  children: RichInlineNode[]
+}
+interface HeadingNode {
+  type: 'heading'
+  level: 2 | 3 | 4
+  children: RichInlineNode[]
+}
+interface QuoteNode {
+  type: 'quote'
+  children: RichBlockNode[]
+}
+interface ListNode {
+  type: 'list'
+  ordered: boolean
+  children: ListItemNode[]
+}
+interface ListItemNode {
+  type: 'listItem'
+  children: RichBlockNode[]
+}
+interface CodeBlockNode {
+  type: 'codeBlock'
+  language?: string
+  code: string
+}
+interface HorizontalRuleNode {
+  type: 'hr'
+}
 
-interface TextNode { type: 'text'; text: string; marks?: Mark[] }
+interface TextNode {
+  type: 'text'
+  text: string
+  marks?: Mark[]
+}
 type Mark =
-  | { type: 'bold' } | { type: 'italic' } | { type: 'underline' }
-  | { type: 'strike' } | { type: 'code' } | { type: 'sub' } | { type: 'sup' }
+  | { type: 'bold' }
+  | { type: 'italic' }
+  | { type: 'underline' }
+  | { type: 'strike' }
+  | { type: 'code' }
+  | { type: 'sub' }
+  | { type: 'sup' }
 
 interface LinkNode {
   type: 'link'
-  url: string                 // sanitized scheme (http/https/mailto/tel only)
+  url: string // sanitized scheme (http/https/mailto/tel only)
   newTab?: boolean
   rel?: string
   /** Internal links resolve to a document instead of a raw URL. */
   doc?: { relationTo: string; value: string }
-  children: RichInlineNode[]  // link text (inline only)
+  children: RichInlineNode[] // link text (inline only)
 }
 
-interface RelationshipNode { type: 'relationship'; relationTo: string; value: string }
+interface RelationshipNode {
+  type: 'relationship'
+  relationTo: string
+  value: string
+}
 interface UploadNode {
-  type: 'upload'; relationTo: string; value: string
-  alt?: string; caption?: KernelRichText | undefined
+  type: 'upload'
+  relationTo: string
+  value: string
+  alt?: string
+  caption?: KernelRichText | undefined
 }
 
 /** Blocks-in-rich-text: reuses BlockDef. `data` validates against the block schema. */
-interface BlockEmbedNode { type: 'block'; blockType: string; data: Record<string, unknown> }
+interface BlockEmbedNode {
+  type: 'block'
+  blockType: string
+  data: Record<string, unknown>
+}
 ```
 
 **Normalization invariants** (enforced on write, see §7):
+
 - No empty text nodes; adjacent text nodes with identical marks are merged.
 - Marks are deduped and stored in a stable, canonical order.
 - A `doc` always has ≥1 block child (empty doc = single empty paragraph).
@@ -166,12 +225,13 @@ type RichTextFeature =
   | { kind: 'marks'; allow: Mark['type'][] }
   | { kind: 'headings'; levels: (2 | 3 | 4)[] }
   | { kind: 'lists'; ordered?: boolean; unordered?: boolean }
-  | { kind: 'quote' } | { kind: 'codeBlock'; languages?: string[] }
+  | { kind: 'quote' }
+  | { kind: 'codeBlock'; languages?: string[] }
   | { kind: 'hr' }
   | { kind: 'link'; internal?: { collections: string[] }; allowNewTab?: boolean }
   | { kind: 'relationship'; collections: string[] }
   | { kind: 'upload'; collections: string[]; captions?: boolean }
-  | { kind: 'blocks'; blocks: BlockDef[] }   // embedded page-builder blocks
+  | { kind: 'blocks'; blocks: BlockDef[] } // embedded page-builder blocks
 ```
 
 `preset: 'standard'` ≈ marks(bold/italic/link/code), headings(2,3), lists,
@@ -185,16 +245,16 @@ editor schema, the sanitizer, and validation — one source of truth.
 
 ## 6. Engine integration
 
-| Concern | Behavior |
-|---|---|
-| `storageTypeForField` | `'json'` (already routed for `richText`). Stored as the `KernelRichText` object. |
-| `validateFieldType` | value must be a `KernelRichText` (`type==='doc'`, `v===1`, `children` array). `required` ⇒ non-empty (more than a single empty paragraph). |
+| Concern                    | Behavior                                                                                                                                                                                                                                                                           |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storageTypeForField`      | `'json'` (already routed for `richText`). Stored as the `KernelRichText` object.                                                                                                                                                                                                   |
+| `validateFieldType`        | value must be a `KernelRichText` (`type==='doc'`, `v===1`, `children` array). `required` ⇒ non-empty (more than a single empty paragraph).                                                                                                                                         |
 | `validateFields` (recurse) | walk the tree; for each `block` node, look up its `BlockDef` from the field's `blocks` feature and run `validateFields(def.fields, node.data, …)` with path `${path}.<index>` so nested-required errors surface (`body.2.heading`). Reject nodes/marks not in the resolved schema. |
-| `serializeDoc` | run **sanitize+normalize** (§7) before persisting. Localized rich text stores a per-locale `KernelRichText`. |
-| `deserializeDoc` | return the stored object as-is (resolve locale). |
-| `populate` | with `depth>0`, replace `relationship`/`upload` `value` with the populated doc (bounded by depth, cycle-safe via the existing `safeFindByID`). Embedded `block` relationship sub-fields populate through the normal field walk. |
-| `describe` (`/_config`) | emit the resolved schema: `{ features, marks, nodes, blocks: AdminBlock[], link, upload, relationship }` so the admin builds the right editor without hardcoding. |
-| codegen | generate a precise TS type per field from its features (e.g. a union of allowed node types), exported alongside the collection interface. |
+| `serializeDoc`             | run **sanitize+normalize** (§7) before persisting. Localized rich text stores a per-locale `KernelRichText`.                                                                                                                                                                       |
+| `deserializeDoc`           | return the stored object as-is (resolve locale).                                                                                                                                                                                                                                   |
+| `populate`                 | with `depth>0`, replace `relationship`/`upload` `value` with the populated doc (bounded by depth, cycle-safe via the existing `safeFindByID`). Embedded `block` relationship sub-fields populate through the normal field walk.                                                    |
+| `describe` (`/_config`)    | emit the resolved schema: `{ features, marks, nodes, blocks: AdminBlock[], link, upload, relationship }` so the admin builds the right editor without hardcoding.                                                                                                                  |
+| codegen                    | generate a precise TS type per field from its features (e.g. a union of allowed node types), exported alongside the collection interface.                                                                                                                                          |
 
 **Access control inside rich text:** embedded `block` data is subject to
 field-level access via the existing `applyFieldAccess` walk extended to traverse
@@ -204,6 +264,7 @@ rich-text block nodes (write-side now, read-side with Spec for read access).
 
 A pure function `sanitizeRichText(doc, schema): { doc, warnings }` runs **on the
 server** in `serializeDoc` and is also exposed for importers. Rules:
+
 - Drop any node/mark whose type isn't in `schema`. Drop void-node children.
 - **Links:** reject schemes outside `http|https|mailto|tel`; coerce to `#` and warn.
   Internal `doc` links validated against allowed collections + id shape.
@@ -222,6 +283,7 @@ attributes are dropped.
 ## 8. Converters (`@kernel/richtext`)
 
 Pure, dependency-free, deterministic, tree-shakeable:
+
 - `toPlainText(doc): string` — for search indexing, previews, SEO descriptions.
 - `toHTML(doc, opts): string` — SSR/email; escapes text; resolves internal links
   via a provided `resolveHref`. No editor dependency.
@@ -233,15 +295,18 @@ Pure, dependency-free, deterministic, tree-shakeable:
   `default: assertNever` so adding a node type is a compile error until handled.
 
 Frontend usage example:
+
 ```tsx
 import { toReact } from '@kernel/richtext'
-<>{toReact(page.body, {
-  renderers: {
-    block: ({ blockType, data }) => <Section type={blockType} {...data} />,
-    upload: ({ value }) => <Img id={value} />,
-    link:  ({ url, doc, children }) => <Link href={doc ? hrefFor(doc) : url}>{children}</Link>,
-  },
-})}</>
+;<>
+  {toReact(page.body, {
+    renderers: {
+      block: ({ blockType, data }) => <Section type={blockType} {...data} />,
+      upload: ({ value }) => <Img id={value} />,
+      link: ({ url, doc, children }) => <Link href={doc ? hrefFor(doc) : url}>{children}</Link>,
+    },
+  })}
+</>
 ```
 
 ## 9. Admin editor UX
@@ -271,17 +336,20 @@ import { toReact } from '@kernel/richtext'
 - **GraphQL (future):** expose the JSON plus a `*_html` resolver via `toHTML`.
 
 ## 11. Performance budgets
+
 - Editor mount < 50ms for a 5k-word doc; keystroke→render < 16ms (one frame).
 - Sanitize+normalize of a 5k-word doc < 5ms server-side.
 - `toReact`/`toHTML` of a 5k-word doc < 8ms.
 - Stored payload bounded by depth cap + node count cap (configurable; warn→reject).
 
 ## 12. Accessibility (AA)
+
 - Editor is a labeled `textbox` with `aria-multiline`; toolbar buttons have names +
   pressed state; slash menu is an `aria-activedescendant` listbox; link popover is a
   focus-trapped dialog. Contrast ≥4.5. Reduced-motion honored.
 
 ## 13. Migration & forward-compat
+
 - Existing `richText` values are plain strings. On read, a shim wraps a string as
   `{ v:1, type:'doc', children:[paragraph(text)] }`; on next save it persists the
   model. A CLI `kernel migrate:richtext <collection.field>` bulk-converts.
@@ -291,6 +359,7 @@ import { toReact } from '@kernel/richtext'
   CRDT/OT layer; selection/identity are editor-local in v1.
 
 ## 14. Testing strategy
+
 - **Model/converters (unit, exhaustive):** round-trip `model → HTML → model`
   stability; `toPlainText`/`toReact` snapshots; `assertNever` coverage proves every
   node/mark is handled.
@@ -305,6 +374,7 @@ import { toReact } from '@kernel/richtext'
 - Coverage gate 80/70; security tests are required, not optional.
 
 ## 15. Rollout / phasing
+
 1. `@kernel/richtext` model + sanitize + `toPlainText`/`toHTML`/`toReact` + tests.
 2. Engine integration (validate/serialize/populate/describe/codegen) + string shim.
 3. Admin editor: marks/headings/lists/quote/hr/link + slash menu + input rules.
@@ -313,6 +383,7 @@ import { toReact } from '@kernel/richtext'
 6. Importers (`fromHTML`/`fromMarkdown`) + bulk migration CLI.
 
 ## 16. Acceptance criteria
+
 - [ ] A `richText` field with `preset:'standard'` edits, saves, reloads losslessly.
 - [ ] Disallowed nodes/marks/link-schemes are stripped server-side; verified by tests.
 - [ ] Embedded block with a missing required field fails save with path
@@ -323,6 +394,7 @@ import { toReact } from '@kernel/richtext'
 - [ ] AA a11y pass; large-doc perf within budgets; ✦ no-AI-feel craft review passed.
 
 ## 17. Open questions
+
 - Ship our own ProseMirror binding vs. evaluate Lexical for bundle size? (Spike, 2 days.)
 - Caption model for uploads: nested `KernelRichText` vs plain text in v1? (Lean plain text v1.)
 - Do we expose a stable `marks` extension point for custom marks in v1 or v2? (v2.)

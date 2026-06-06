@@ -21,16 +21,16 @@ export default defineConfig({
 
 Field definitions are where the migration earns its keep. The vocabulary is nearly identical; the differences are naming and a few consolidations.
 
-| Payload field | KernelCMS field | Notes |
-| --- | --- | --- |
-| `text`, `textarea`, `number`, `email`, `date`, `checkbox` | same | Drop-in. `checkbox` → `boolean` is also accepted. |
-| `select`, `radio` | `select`, `radio` | `options` shape identical (`{ label, value }`). |
-| `relationship` | `relationship` | `relationTo` and `hasMany` carry over unchanged. |
-| `upload` | `upload` | Points at an upload-enabled collection, as in Payload. |
-| `array`, `blocks`, `group`, `tabs`, `row` | same | Block `slug` → `name`; field arrays nest identically. |
-| `richText` | `richText` | Editor backend differs — see Gotchas. |
-| `point`, `json`, `code`, `ui` | same | `point` is GeoJSON in both. |
-| `collapsible` | `group` with `admin.collapsed` | KernelCMS folds collapsible into `group`. |
+| Payload field                                             | KernelCMS field                | Notes                                                  |
+| --------------------------------------------------------- | ------------------------------ | ------------------------------------------------------ |
+| `text`, `textarea`, `number`, `email`, `date`, `checkbox` | same                           | Drop-in. `checkbox` → `boolean` is also accepted.      |
+| `select`, `radio`                                         | `select`, `radio`              | `options` shape identical (`{ label, value }`).        |
+| `relationship`                                            | `relationship`                 | `relationTo` and `hasMany` carry over unchanged.       |
+| `upload`                                                  | `upload`                       | Points at an upload-enabled collection, as in Payload. |
+| `array`, `blocks`, `group`, `tabs`, `row`                 | same                           | Block `slug` → `name`; field arrays nest identically.  |
+| `richText`                                                | `richText`                     | Editor backend differs — see Gotchas.                  |
+| `point`, `json`, `code`, `ui`                             | same                           | `point` is GeoJSON in both.                            |
+| `collapsible`                                             | `group` with `admin.collapsed` | KernelCMS folds collapsible into `group`.              |
 
 A representative collection translates cleanly:
 
@@ -43,7 +43,7 @@ export const Posts = defineCollection({
   admin: { useAsTitle: 'title', defaultColumns: ['title', 'status', 'updatedAt'] },
   versions: { drafts: true, autosave: { interval: 800 } },
   access: {
-    read: ({ req }) => req.user ? true : { status: { equals: 'published' } },
+    read: ({ req }) => (req.user ? true : { status: { equals: 'published' } }),
     update: ({ req }) => Boolean(req.user),
   },
   fields: [
@@ -83,7 +83,11 @@ for (const collection of ['posts', 'media', 'users']) {
   let page = 1
   while (true) {
     const { docs, hasNextPage } = await payload.find({
-      collection, page, limit: 200, depth: 0, locale: 'all',
+      collection,
+      page,
+      limit: 200,
+      depth: 0,
+      locale: 'all',
     })
     for (const doc of docs) {
       await kernel.create({
@@ -111,13 +115,13 @@ For versions and autosave history: Payload's `_v` rows rarely need to survive a 
 
 Both CMSs expose REST, GraphQL, and an in-process API. The query language is close enough that most client code changes are imports, not logic. The shared KernelCMS query vocabulary — `where`, `sort`, `limit`/`page`, and `depth` — mirrors Payload's almost one-to-one.
 
-| Concern | Payload | KernelCMS |
-| --- | --- | --- |
-| In-process | `payload.find/create/update/delete` | `kernel.find/create/update/delete` via `@kernel/core` |
-| Over the wire | REST + GraphQL + custom express endpoints | REST (`@kernel/rest`), GraphQL (`@kernel/graphql`), typed RPC (`@kernel/rpc`) |
-| Typed remote calls | generated SDK / fetch | `@kernel/client` over TanStack Start server functions |
-| Admin data layer | React + Payload providers | React + **TanStack Query**, routed by **TanStack Router** |
-| Server runtime | Express / Next | **TanStack Start** server functions |
+| Concern            | Payload                                   | KernelCMS                                                                     |
+| ------------------ | ----------------------------------------- | ----------------------------------------------------------------------------- |
+| In-process         | `payload.find/create/update/delete`       | `kernel.find/create/update/delete` via `@kernel/core`                         |
+| Over the wire      | REST + GraphQL + custom express endpoints | REST (`@kernel/rest`), GraphQL (`@kernel/graphql`), typed RPC (`@kernel/rpc`) |
+| Typed remote calls | generated SDK / fetch                     | `@kernel/client` over TanStack Start server functions                         |
+| Admin data layer   | React + Payload providers                 | React + **TanStack Query**, routed by **TanStack Router**                     |
+| Server runtime     | Express / Next                            | **TanStack Start** server functions                                           |
 
 The headline difference is the RPC surface. Payload's Local API is in-process only; to call it from a separate frontend you hit REST/GraphQL and lose end-to-end types at the boundary. KernelCMS exposes the same operation core as **typed RPC via `@kernel/rpc`**, surfaced through `@kernel/client` over TanStack Start server functions — so a separate frontend keeps full inference without code generation.
 

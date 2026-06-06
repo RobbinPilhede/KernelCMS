@@ -18,7 +18,7 @@ KernelCMS draws a hard line between **portable** packages and **host-bound** pac
                     └──────────── adapters bridge ──────────┘
 ```
 
-This is the structural difference from Strapi, whose Koa-based server assumes a Node process, a writable filesystem, and a persistent event loop — it does not run on Cloudflare Workers or Vercel Edge without a rewrite. Payload is closer to us (it ships a Next.js-hosted admin and is increasingly serverless-friendly), but its database layer is still effectively Node-only because it leans on `pg` and `mongoose`. Sanity sidesteps the problem by being a hosted document store you query over HTTP — you never run *their* server. KernelCMS gives you Sanity-style portability while letting you actually own and run the server, including at the edge.
+This is the structural difference from Strapi, whose Koa-based server assumes a Node process, a writable filesystem, and a persistent event loop — it does not run on Cloudflare Workers or Vercel Edge without a rewrite. Payload is closer to us (it ships a Next.js-hosted admin and is increasingly serverless-friendly), but its database layer is still effectively Node-only because it leans on `pg` and `mongoose`. Sanity sidesteps the problem by being a hosted document store you query over HTTP — you never run _their_ server. KernelCMS gives you Sanity-style portability while letting you actually own and run the server, including at the edge.
 
 ## Web-standard APIs
 
@@ -54,7 +54,7 @@ import { defineConfig } from '@kernel/core'
 
 export default defineConfig({
   runtime: {
-    target: 'edge',          // 'node' | 'bun' | 'edge'
+    target: 'edge', // 'node' | 'bun' | 'edge'
     // build fails if any reachable code touches a Node built-in
     strictWebStandard: true,
   },
@@ -65,14 +65,14 @@ export default defineConfig({
 
 Edge isolates are not small Node servers; they are a different execution model with hard limits. We design `@kernel/core` against the strictest common denominator (Cloudflare Workers) so a build that runs there runs everywhere.
 
-| Constraint | Node server | AWS Lambda | Vercel/Netlify Edge | Cloudflare Workers |
-|---|---|---|---|---|
-| Filesystem | read/write | read-only + `/tmp` | none | none |
-| Long-lived sockets | yes | per-invocation | no (HTTP/fetch only) | no (HTTP/fetch only) |
-| CPU per request | unbounded | up to 15 min | ~50 ms wall, sub-burst | 5–30 s CPU (plan) |
-| Memory | host RAM | up to 10 GB | 128 MB | 128 MB |
-| Background work after response | yes | no | `waitUntil` | `waitUntil` |
-| Native addons (`.node`) | yes | yes | no | no |
+| Constraint                     | Node server | AWS Lambda         | Vercel/Netlify Edge    | Cloudflare Workers   |
+| ------------------------------ | ----------- | ------------------ | ---------------------- | -------------------- |
+| Filesystem                     | read/write  | read-only + `/tmp` | none                   | none                 |
+| Long-lived sockets             | yes         | per-invocation     | no (HTTP/fetch only)   | no (HTTP/fetch only) |
+| CPU per request                | unbounded   | up to 15 min       | ~50 ms wall, sub-burst | 5–30 s CPU (plan)    |
+| Memory                         | host RAM    | up to 10 GB        | 128 MB                 | 128 MB               |
+| Background work after response | yes         | no                 | `waitUntil`            | `waitUntil`          |
+| Native addons (`.node`)        | yes         | yes                | no                     | no                   |
 
 The design consequences are concrete:
 
@@ -93,15 +93,15 @@ afterChange: [
 
 This is the decision that determines whether you can deploy to the edge at all. The blocker is the wire protocol: classic Postgres and MySQL drivers (`pg`, `mysql2`) open raw TCP sockets and assume a persistent connection — neither exists in a V8 isolate. KernelCMS solves this the way the modern ecosystem does, by routing the same Drizzle queries through HTTP/WebSocket drivers, behind one unchanged `Adapter` contract.
 
-| Adapter | Driver | Node | Edge | Notes |
-|---|---|---|---|---|
-| `@kernel/db-postgres` | `pg` (node-postgres) | ✅ | ❌ | TCP; default for self-host |
-| `@kernel/db-postgres` | Neon serverless (`@neondatabase/serverless`) | ✅ | ✅ | HTTP + WebSocket |
-| `@kernel/db-postgres` | Vercel Postgres / Supabase pooler | ✅ | ✅ | HTTP fetch driver |
-| `@kernel/db-sqlite` | Turso/libSQL (`@libsql/client`) | ✅ | ✅ | HTTP; ideal for edge-replicated reads |
-| `@kernel/db-mysql` | PlanetScale (`@planetscale/database`) | ✅ | ✅ | HTTP fetch driver |
-| `@kernel/db-mysql` | `mysql2` | ✅ | ❌ | TCP |
-| `@kernel/db-mongodb` | MongoDB driver | ✅ | ❌ | TCP; use Atlas Data API at edge |
+| Adapter               | Driver                                       | Node | Edge | Notes                                 |
+| --------------------- | -------------------------------------------- | ---- | ---- | ------------------------------------- |
+| `@kernel/db-postgres` | `pg` (node-postgres)                         | ✅   | ❌   | TCP; default for self-host            |
+| `@kernel/db-postgres` | Neon serverless (`@neondatabase/serverless`) | ✅   | ✅   | HTTP + WebSocket                      |
+| `@kernel/db-postgres` | Vercel Postgres / Supabase pooler            | ✅   | ✅   | HTTP fetch driver                     |
+| `@kernel/db-sqlite`   | Turso/libSQL (`@libsql/client`)              | ✅   | ✅   | HTTP; ideal for edge-replicated reads |
+| `@kernel/db-mysql`    | PlanetScale (`@planetscale/database`)        | ✅   | ✅   | HTTP fetch driver                     |
+| `@kernel/db-mysql`    | `mysql2`                                     | ✅   | ❌   | TCP                                   |
+| `@kernel/db-mongodb`  | MongoDB driver                               | ✅   | ❌   | TCP; use Atlas Data API at edge       |
 
 Because the SQL adapters are all Drizzle underneath, switching drivers is a config change, not a query rewrite. The same `where`/`sort`/`pagination`/`depth` query language compiles to the same SQL regardless of transport.
 

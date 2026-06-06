@@ -26,7 +26,7 @@ const result = await db.transaction(async (tx) => {
 
 The `tx` handle threads through every adapter call and every hook via `ctx.transaction`. For SQL adapters (`@kernel/db-postgres`, `@kernel/db-sqlite`, `@kernel/db-mysql`) this maps to a Drizzle transaction — Postgres and MySQL get real `BEGIN`/`COMMIT`, SQLite/libSQL get `BEGIN IMMEDIATE`. For `@kernel/db-mongodb` it maps to a multi-document transaction over a session, which requires a replica set or `mongos`; standalone Mongo silently degrades to no real isolation, and we surface that as a startup warning rather than a runtime surprise.
 
-This is where KernelCMS diverges from the field. Payload only added transaction support relatively late and wires it through a `req.transactionID` that hooks must remember to forward; forget to pass `req` and your hook's writes escape the transaction. Strapi's default v4/v5 lifecycle does not wrap the whole operation in one transaction at all — its lifecycle subscribers commonly run against the connection pool, not the operation's transaction, so a failing `afterCreate` leaves the row behind. Sanity sidesteps the question with a different model entirely: its content lake exposes atomic **mutations** and optimistic-concurrency transactions keyed on document revision (`ifRevisionID`), but you do not get to run arbitrary server code inside that atomic unit. KernelCMS gives you Sanity-style atomicity *and* Payload-style server hooks in the same boundary.
+This is where KernelCMS diverges from the field. Payload only added transaction support relatively late and wires it through a `req.transactionID` that hooks must remember to forward; forget to pass `req` and your hook's writes escape the transaction. Strapi's default v4/v5 lifecycle does not wrap the whole operation in one transaction at all — its lifecycle subscribers commonly run against the connection pool, not the operation's transaction, so a failing `afterCreate` leaves the row behind. Sanity sidesteps the question with a different model entirely: its content lake exposes atomic **mutations** and optimistic-concurrency transactions keyed on document revision (`ifRevisionID`), but you do not get to run arbitrary server code inside that atomic unit. KernelCMS gives you Sanity-style atomicity _and_ Payload-style server hooks in the same boundary.
 
 ### Nested operations and savepoints
 
@@ -48,12 +48,12 @@ On SQL adapters, nested joins use **savepoints** so a recoverable sub-failure (e
 
 Reads default to **read-committed** outside a transaction. Inside an operation, populated relationships (`depth > 0`) are resolved against `tx`, so a document and the related rows it just wrote are mutually consistent. See Query Language: depth & population for how `depth` interacts with this.
 
-| Surface | Boundary | Isolation (Postgres default) |
-| --- | --- | --- |
-| Local API single op | per operation | read-committed + savepoints |
-| Bulk op (`updateMany`) | one tx for the batch | read-committed |
-| REST / GraphQL request | one op = one tx | inherits adapter default |
-| RPC server function | one op = one tx | inherits adapter default |
+| Surface                | Boundary             | Isolation (Postgres default) |
+| ---------------------- | -------------------- | ---------------------------- |
+| Local API single op    | per operation        | read-committed + savepoints  |
+| Bulk op (`updateMany`) | one tx for the batch | read-committed               |
+| REST / GraphQL request | one op = one tx      | inherits adapter default     |
+| RPC server function    | one op = one tx      | inherits adapter default     |
 
 ## Hooks running inside transactions
 
@@ -107,14 +107,14 @@ afterChange: [
        any throw before COMMIT ──► ROLLBACK ──► afterCommit queue discarded
 ```
 
-| Hook | Runs in tx | On rollback | Use for |
-| --- | --- | --- | --- |
-| `beforeValidate` | yes | discarded | normalize input |
-| `beforeChange` | yes | discarded | derive fields, deny writes |
-| `afterChange` (sync work) | yes | rolled back | dependent DB writes |
-| `afterChange` → `ctx.afterCommit` | no | skipped | email, queue, webhooks |
-| `afterRead` | no (post-commit) | n/a | shape output |
-| `afterOperation` | no (post-commit) | n/a | metrics, audit logs |
+| Hook                              | Runs in tx       | On rollback | Use for                    |
+| --------------------------------- | ---------------- | ----------- | -------------------------- |
+| `beforeValidate`                  | yes              | discarded   | normalize input            |
+| `beforeChange`                    | yes              | discarded   | derive fields, deny writes |
+| `afterChange` (sync work)         | yes              | rolled back | dependent DB writes        |
+| `afterChange` → `ctx.afterCommit` | no               | skipped     | email, queue, webhooks     |
+| `afterRead`                       | no (post-commit) | n/a         | shape output               |
+| `afterOperation`                  | no (post-commit) | n/a         | metrics, audit logs        |
 
 ### Timeouts and long hooks
 
@@ -167,11 +167,11 @@ The key, the operation signature, and a hash of the response are stored in `_ker
 
 Outbox consumers are idempotent by construction: each event carries a stable `eventId`, and adapters use upsert-by-id semantics (`search.index` is a put, `cache.invalidate` is naturally idempotent, `storage.put` keys on content hash). This is stronger than Payload, which leaves idempotency to the caller, and aligns with Sanity's revision-based optimistic concurrency without requiring clients to track revisions for the common case.
 
-| Concern | Mechanism | Guarantee |
-| --- | --- | --- |
-| Duplicate API request | `idempotencyKey` + `_kernel_idempotency` | exactly-once effect within window |
-| Concurrent edit | optimistic `version` check on `update` | rejects stale writes (409) |
-| Outbox redelivery | `eventId` + upsert consumers | at-least-once delivery, idempotent apply |
+| Concern               | Mechanism                                | Guarantee                                |
+| --------------------- | ---------------------------------------- | ---------------------------------------- |
+| Duplicate API request | `idempotencyKey` + `_kernel_idempotency` | exactly-once effect within window        |
+| Concurrent edit       | optimistic `version` check on `update`   | rejects stale writes (409)               |
+| Outbox redelivery     | `eventId` + upsert consumers             | at-least-once delivery, idempotent apply |
 
 For concurrent edits, optimistic concurrency is the default: `update` accepts an expected `version` and rejects a stale write with a `ConflictError` rather than silently clobbering — see [Versions & Drafts](../02-data-modeling/10-versioning-drafts-and-autosave.md).
 

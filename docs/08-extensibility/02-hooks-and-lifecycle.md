@@ -35,11 +35,7 @@ Operation hooks attach to a collection or global and fire once per operation. Th
 import { defineCollection } from '@kernel/core'
 import type { CollectionAfterChangeHook } from '@kernel/core'
 
-const revalidate: CollectionAfterChangeHook<'posts'> = async ({
-  doc,
-  operation,
-  req,
-}) => {
+const revalidate: CollectionAfterChangeHook<'posts'> = async ({ doc, operation, req }) => {
   if (operation === 'create' || operation === 'update') {
     await req.context.cache.revalidateTag(`post:${doc.slug}`)
   }
@@ -58,22 +54,24 @@ export const Posts = defineCollection({
     beforeDelete: [blockIfReferenced],
     afterDelete: [purgeUploads],
   },
-  fields: [/* … */],
+  fields: [
+    /* … */
+  ],
 })
 ```
 
 ### The full operation hook table
 
-| Hook | Path | Fires when | Mutates | Typical use |
-|------|------|-----------|---------|-------------|
-| `beforeOperation` | write + read | before access/validation, once | `args` | inject scope, mutate `where`, audit |
-| `beforeValidate` | write | before field validation | `data` | normalize, coerce, default |
-| `beforeChange` | write | after validation, before DB | `data` | stamp metadata, derive fields |
-| `afterChange` | write | after DB commit (in-tx) | side effects | revalidate, index, emit events |
-| `beforeRead` | read | before doc is loaded for response | `query` | filter drafts, tenant scope |
-| `afterRead` | read + write tail | after doc is loaded | `doc` | resolve virtuals, format |
-| `beforeDelete` | delete | before row removed | — | guard, cascade checks |
-| `afterDelete` | delete | after row removed (in-tx) | side effects | purge storage, cleanup relations |
+| Hook              | Path              | Fires when                        | Mutates      | Typical use                         |
+| ----------------- | ----------------- | --------------------------------- | ------------ | ----------------------------------- |
+| `beforeOperation` | write + read      | before access/validation, once    | `args`       | inject scope, mutate `where`, audit |
+| `beforeValidate`  | write             | before field validation           | `data`       | normalize, coerce, default          |
+| `beforeChange`    | write             | after validation, before DB       | `data`       | stamp metadata, derive fields       |
+| `afterChange`     | write             | after DB commit (in-tx)           | side effects | revalidate, index, emit events      |
+| `beforeRead`      | read              | before doc is loaded for response | `query`      | filter drafts, tenant scope         |
+| `afterRead`       | read + write tail | after doc is loaded               | `doc`        | resolve virtuals, format            |
+| `beforeDelete`    | delete            | before row removed                | —            | guard, cascade checks               |
+| `afterDelete`     | delete            | after row removed (in-tx)         | side effects | purge storage, cleanup relations    |
 
 The split between `beforeValidate` and `beforeChange` matters. Put **idempotent shaping** (lowercasing a slug, trimming whitespace) in `beforeValidate` so validation sees the cleaned value. Put **authoritative side data** (the editing user, a computed `readingTime`) in `beforeChange`, after validation has already passed — there's no point computing derived fields for data that's about to be rejected.
 
@@ -96,7 +94,7 @@ This is the escape hatch the engineering tenets demand: transactional by default
 
 ## Field hooks
 
-Field hooks are scoped to a single field and fire for that field on every matching operation. They are the right tool when a transformation belongs to the *field*, not the document — encryption of a single column, formatting a price, hashing a token. Because they travel with the field definition, they apply everywhere that field appears, including inside `array`, `blocks`, and `group` field types, with the correct `siblingData` in context.
+Field hooks are scoped to a single field and fire for that field on every matching operation. They are the right tool when a transformation belongs to the _field_, not the document — encryption of a single column, formatting a price, hashing a token. Because they travel with the field definition, they apply everywhere that field appears, including inside `array`, `blocks`, and `group` field types, with the correct `siblingData` in context.
 
 ```ts
 import { field } from '@kernel/core'
@@ -105,22 +103,20 @@ const apiKey = field.text({
   name: 'apiKey',
   hooks: {
     beforeChange: [({ value }) => (value ? encrypt(value) : value)],
-    afterRead: [({ value, req }) =>
-      req.user?.role === 'admin' ? decrypt(value) : '••••••••',
-    ],
+    afterRead: [({ value, req }) => (req.user?.role === 'admin' ? decrypt(value) : '••••••••')],
   },
 })
 ```
 
 Field hooks run the same four write-path/read-path stages as operation hooks — `beforeValidate`, `beforeChange`, `afterChange`, `afterRead` — but their context is narrowed to the field. The key difference from operation hooks is the argument shape:
 
-| Arg | Field hook | Operation hook |
-|-----|-----------|----------------|
-| `value` | the field's value | — |
-| `siblingData` | adjacent fields in the same group/row | — |
-| `data` | full incoming document | the document |
-| `path` | dotted path, e.g. `meta.seo.title` | — |
-| `originalDoc` | the pre-change document | `previousDoc` |
+| Arg           | Field hook                            | Operation hook |
+| ------------- | ------------------------------------- | -------------- |
+| `value`       | the field's value                     | —              |
+| `siblingData` | adjacent fields in the same group/row | —              |
+| `data`        | full incoming document                | the document   |
+| `path`        | dotted path, e.g. `meta.seo.title`    | —              |
+| `originalDoc` | the pre-change document               | `previousDoc`  |
 
 The `path` arg is what makes field hooks composable inside nested structures. A field hook on a `price` field used inside an `array` of `variants` receives `path` of `variants.2.price`, so a single localized-currency formatter works whether the field is top-level or three levels deep. Payload's field hooks expose a similar `siblingData`, but KernelCMS additionally guarantees `path` is always present and typed as a template-literal type derived from the schema, so you can branch on location without string-parsing.
 
@@ -139,12 +135,12 @@ export const Settings = defineGlobal({
   slug: 'settings',
   hooks: {
     beforeChange: [validateThemeTokens],
-    afterChange: [({ doc, req }) =>
-      req.context.cache.revalidateTag('global:settings') && doc,
-    ],
+    afterChange: [({ doc, req }) => req.context.cache.revalidateTag('global:settings') && doc],
     // beforeDelete / afterDelete are a type error here
   },
-  fields: [/* … */],
+  fields: [
+    /* … */
+  ],
 })
 ```
 
@@ -176,7 +172,7 @@ interface KernelRequest {
   fallbackLocale: string | null
   transactionID: string | null
   context: RequestContext // db, cache, email, storage, search adapters + after()
-  payload: never          // reserved; use req.context — no Payload-style god object
+  payload: never // reserved; use req.context — no Payload-style god object
 }
 ```
 

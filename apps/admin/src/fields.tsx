@@ -173,7 +173,7 @@ export function FieldInput({ field, value, onChange }: InputProps) {
       return (
         <label className="switch">
           <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
-          <span>{Boolean(value) ? 'On' : 'Off'}</span>
+          <span>{value ? 'On' : 'Off'}</span>
         </label>
       )
     case 'date': {
@@ -197,9 +197,7 @@ export function FieldInput({ field, value, onChange }: InputProps) {
         />
       ) : (
         <select className="input" value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value || null)}>
-          {field.defaultValue === undefined && (
-            <option value="">{field.required ? 'Select…' : '— none —'}</option>
-          )}
+          {field.defaultValue === undefined && <option value="">{field.required ? 'Select…' : '— none —'}</option>}
           {(field.options ?? []).map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
@@ -336,14 +334,25 @@ function ArrayInput({ field, value, onChange }: InputProps) {
                 {(handle) => (
                   <div className="nested-row">
                     <div className="nested-row-head">
-                      <button ref={handle.ref} type="button" className="drag" {...handle.props} aria-label="Drag to reorder">
+                      <button
+                        ref={handle.ref}
+                        type="button"
+                        className="drag"
+                        {...handle.props}
+                        aria-label="Drag to reorder"
+                      >
                         <DragIcon />
                       </button>
                       <span className="muted">
                         {field.label} {i + 1}
                       </span>
                       <span className="spacer" />
-                      <button type="button" className="icon-btn" title="Remove" onClick={() => set(rows.filter((_, idx) => idx !== i))}>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Remove"
+                        onClick={() => set(rows.filter((_, idx) => idx !== i))}
+                      >
                         <CloseIcon />
                       </button>
                     </div>
@@ -400,7 +409,13 @@ function BlocksInput({ field, value, onChange }: InputProps) {
                   {(handle) => (
                     <div className={`block-card${isCollapsed ? ' is-collapsed' : ''}`}>
                       <div className="block-head">
-                        <button ref={handle.ref} type="button" className="drag" {...handle.props} aria-label="Drag to reorder">
+                        <button
+                          ref={handle.ref}
+                          type="button"
+                          className="drag"
+                          {...handle.props}
+                          aria-label="Drag to reorder"
+                        >
                           <DragIcon />
                         </button>
                         <span className="block-num">{String(i + 1).padStart(2, '0')}</span>
@@ -409,7 +424,12 @@ function BlocksInput({ field, value, onChange }: InputProps) {
                         <button type="button" className="icon-btn" title="Duplicate" onClick={() => duplicate(i)}>
                           <DuplicateIcon />
                         </button>
-                        <button type="button" className="icon-btn" title="Remove" onClick={() => set(rows.filter((_, idx) => idx !== i))}>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Remove"
+                          onClick={() => set(rows.filter((_, idx) => idx !== i))}
+                        >
                           <CloseIcon />
                         </button>
                         <button
@@ -428,7 +448,11 @@ function BlocksInput({ field, value, onChange }: InputProps) {
                               fields={def.fields}
                               value={row}
                               onChange={(v) =>
-                                set(rows.map((r, idx) => (idx === i ? { ...v, _key: r._key, blockType: r.blockType } : r)))
+                                set(
+                                  rows.map((r, idx) =>
+                                    idx === i ? { ...v, _key: r._key, blockType: r.blockType } : r,
+                                  ),
+                                )
                               }
                             />
                           </div>
@@ -474,7 +498,8 @@ function SectionLibrary({
   }, [onClose])
 
   const matched = blocks.filter(
-    (b) => !term || b.labels.singular.toLowerCase().includes(term) || (b.description ?? '').toLowerCase().includes(term),
+    (b) =>
+      !term || b.labels.singular.toLowerCase().includes(term) || (b.description ?? '').toLowerCase().includes(term),
   )
   const order: string[] = []
   const byGroup = new Map<string, AdminBlockMeta[]>()

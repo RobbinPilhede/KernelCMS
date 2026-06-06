@@ -35,7 +35,7 @@ import { cloud } from '@kernel/cloud'
 
 export default defineConfig({
   deployment: cloud({
-    runtime: 'edge',                 // 'edge' | 'node' | 'bun'
+    runtime: 'edge', // 'edge' | 'node' | 'bun'
     edge: {
       // Operations allowed to execute in the isolate.
       // Everything else falls through to the region tier.
@@ -49,7 +49,7 @@ export default defineConfig({
 })
 ```
 
-This is a sharper line than the competition draws. Payload runs on Node and leans on Next.js to push *rendered pages* to the edge, but its API and Local API still execute against a single primary region. Strapi is Node-only and effectively single-region without a bespoke replica setup. Sanity solves the problem by being a hosted document store with its own global API and CDN — but you don't run *your* code there. KernelCMS runs your access-control functions, hooks, and field logic in the isolate, so the edge response is the real, authorized response, not a dumb cache of a pre-rendered blob.
+This is a sharper line than the competition draws. Payload runs on Node and leans on Next.js to push _rendered pages_ to the edge, but its API and Local API still execute against a single primary region. Strapi is Node-only and effectively single-region without a bespoke replica setup. Sanity solves the problem by being a hosted document store with its own global API and CDN — but you don't run _your_ code there. KernelCMS runs your access-control functions, hooks, and field logic in the isolate, so the edge response is the real, authorized response, not a dumb cache of a pre-rendered blob.
 
 ### What does not run at the edge
 
@@ -82,22 +82,23 @@ export const Posts = collection({
     // Extra surrogate keys beyond the automatic col:/doc:/rel: tags.
     tags: (doc) => [`section:${doc.section}`],
     // Drafts and access-controlled reads are never shared-cached.
-    private: ({ draft, hasFieldAccessControl }) =>
-      draft || hasFieldAccessControl,
+    private: ({ draft, hasFieldAccessControl }) => draft || hasFieldAccessControl,
   },
-  fields: [/* ... */],
+  fields: [
+    /* ... */
+  ],
 })
 ```
 
 The automatic tag scheme is what makes invalidation precise:
 
-| Tag pattern            | Emitted on                              | Invalidated when                         |
-|------------------------|-----------------------------------------|------------------------------------------|
-| `col:<slug>`           | any list/`count` read of a collection   | any doc in the collection is published   |
-| `doc:<slug>:<id>`      | `findByID` and any response containing the doc | that document changes               |
-| `rel:<slug>:<id>`      | responses that resolved a relationship with `depth` | the related doc changes        |
-| `locale:<code>`        | localized reads                         | a translation in that locale publishes   |
-| `global:<slug>`        | global reads                            | the global is saved                      |
+| Tag pattern       | Emitted on                                          | Invalidated when                       |
+| ----------------- | --------------------------------------------------- | -------------------------------------- |
+| `col:<slug>`      | any list/`count` read of a collection               | any doc in the collection is published |
+| `doc:<slug>:<id>` | `findByID` and any response containing the doc      | that document changes                  |
+| `rel:<slug>:<id>` | responses that resolved a relationship with `depth` | the related doc changes                |
+| `locale:<code>`   | localized reads                                     | a translation in that locale publishes |
+| `global:<slug>`   | global reads                                        | the global is saved                    |
 
 Because relationship resolution emits `rel:` tags, a response built with `depth: 2` is automatically invalidated when any document it embedded changes — without you tracking the dependency graph by hand. Sanity's CDN tags queries similarly via its `syncTags`; KernelCMS differs by deriving tags from the resolved document graph and your config, so custom tags live next to the schema rather than in client query annotations.
 
@@ -145,20 +146,20 @@ Edge is the read path; regional data is where the bytes actually live. KernelCMS
 deployment: cloud({
   runtime: 'edge',
   data: {
-    homeRegion: 'eu-central',     // primary + storage origin live here
+    homeRegion: 'eu-central', // primary + storage origin live here
     readReplicas: ['us-east', 'ap-southeast'],
-    residency: 'strict',          // 'strict' pins all PII to homeRegion
+    residency: 'strict', // 'strict' pins all PII to homeRegion
   },
 })
 ```
 
 `residency: 'strict'` keeps the primary and all uploads in the home region and only replicates **public, published** content to the read-replica regions; drafts, version history, and any collection flagged `pii: true` are excluded from replication and answered from home. This is the lever that satisfies GDPR-style data-locality requirements without giving up global read latency for public content.
 
-| Mode              | Primary | Replicas carry                  | Use case                     |
-|-------------------|---------|---------------------------------|------------------------------|
-| `global`          | home    | all published content           | marketing sites, docs        |
-| `strict`          | home    | public published only           | regulated content + PII      |
-| `region-locked`   | home    | nothing (no cross-region reads) | full residency, latency cost |
+| Mode            | Primary | Replicas carry                  | Use case                     |
+| --------------- | ------- | ------------------------------- | ---------------------------- |
+| `global`        | home    | all published content           | marketing sites, docs        |
+| `strict`        | home    | public published only           | regulated content + PII      |
+| `region-locked` | home    | nothing (no cross-region reads) | full residency, latency cost |
 
 The home region also owns migrations and the write primary, so [Migrations](../03-persistence/08-migrations-engine.md) and write-path access control run in exactly one place — no multi-primary conflict resolution to reason about. None of Payload, Strapi, or Sanity exposes a per-collection residency flag that the replication layer enforces; Sanity offers regional hosting but not field-level PII exclusion from its global CDN. KernelCMS makes residency a config-as-code property of the data model.
 

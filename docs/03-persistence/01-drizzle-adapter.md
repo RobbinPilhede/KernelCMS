@@ -46,22 +46,22 @@ Swapping to SQLite for local dev or to MySQL in production is a one-line change 
 
 Each collection and global becomes one base Drizzle table plus a deterministic set of side tables for fields that cannot live inline. The field-type-to-column mapping is fixed and dialect-aware:
 
-| Field type     | Postgres                     | SQLite            | MySQL                  | Notes |
-|----------------|------------------------------|-------------------|------------------------|-------|
-| `text`         | `text`                       | `text`            | `varchar(255)`/`text`  | length from `maxLength` |
-| `number`       | `numeric`/`integer`          | `real`/`integer`  | `decimal`/`int`        | integer vs float from `precision` |
-| `boolean`      | `boolean`                    | `integer` (0/1)   | `boolean`              | |
-| `date`         | `timestamptz`                | `text` (ISO)      | `datetime`             | always UTC |
-| `email`        | `text` + check               | `text`            | `varchar(320)`         | validated app-side too |
-| `json`         | `jsonb`                      | `text` (JSON)     | `json`                 | |
-| `point`        | `geometry(Point)`            | `text` (GeoJSON)  | `point`                | PostGIS optional |
-| `select`/`radio` | `text` + check enum        | `text`            | `enum`                 | |
-| `richText`     | `jsonb`                      | `text`            | `json`                 | portable AST |
-| `relationship` | FK column or join table      | same              | same                   | see Relations |
-| `array`/`blocks` | child table + `_order`     | child table       | child table            | one table per array/block set |
-| `group`/`row`/`tabs` | inlined columns        | inlined           | inlined                | presentational nesting flattens |
-| `upload`       | FK to media collection       | FK                | FK                     | |
-| `ui`           | (none)                       | (none)            | (none)                 | no column emitted |
+| Field type           | Postgres                | SQLite           | MySQL                 | Notes                             |
+| -------------------- | ----------------------- | ---------------- | --------------------- | --------------------------------- |
+| `text`               | `text`                  | `text`           | `varchar(255)`/`text` | length from `maxLength`           |
+| `number`             | `numeric`/`integer`     | `real`/`integer` | `decimal`/`int`       | integer vs float from `precision` |
+| `boolean`            | `boolean`               | `integer` (0/1)  | `boolean`             |                                   |
+| `date`               | `timestamptz`           | `text` (ISO)     | `datetime`            | always UTC                        |
+| `email`              | `text` + check          | `text`           | `varchar(320)`        | validated app-side too            |
+| `json`               | `jsonb`                 | `text` (JSON)    | `json`                |                                   |
+| `point`              | `geometry(Point)`       | `text` (GeoJSON) | `point`               | PostGIS optional                  |
+| `select`/`radio`     | `text` + check enum     | `text`           | `enum`                |                                   |
+| `richText`           | `jsonb`                 | `text`           | `json`                | portable AST                      |
+| `relationship`       | FK column or join table | same             | same                  | see Relations                     |
+| `array`/`blocks`     | child table + `_order`  | child table      | child table           | one table per array/block set     |
+| `group`/`row`/`tabs` | inlined columns         | inlined          | inlined               | presentational nesting flattens   |
+| `upload`             | FK to media collection  | FK               | FK                    |                                   |
+| `ui`                 | (none)                  | (none)           | (none)                | no column emitted                 |
 
 Every base table also carries adapter-managed system columns: `id` (uuid v7 by default, configurable), `createdAt`, `updatedAt`, and — when drafts are enabled — `_status` plus a versions side table. Localized fields are not split into per-locale columns the way naive schemas do; instead a single `_locales` child table holds `(parent_id, locale, ...localized_columns)`, which keeps the base table narrow and lets you add a locale without a migration of the parent.
 
@@ -91,15 +91,15 @@ Generation is pure and deterministic: the same config always produces byte-ident
 
 The shared KernelCMS query language — `where`, `sort`, pagination, and `depth` — is identical across REST, GraphQL, and the Local/RPC API. The Drizzle adapter is the single place it gets compiled to SQL. Operators map directly to Drizzle expression builders:
 
-| Query operator        | Drizzle output                          |
-|-----------------------|-----------------------------------------|
+| Query operator          | Drizzle output                        |
+| ----------------------- | ------------------------------------- |
 | `equals` / `not_equals` | `eq()` / `ne()`                       |
-| `greater_than` (`gt`) | `gt()`                                  |
-| `in` / `not_in`       | `inArray()` / `notInArray()`            |
-| `contains` (text)     | `ilike('%v%')` (Postgres) / `like`      |
-| `near` (point)        | dialect distance fn (`ST_DWithin`, …)   |
-| `and` / `or`          | `and()` / `or()` nesting                |
-| localized field       | join to `_locales` filtered by locale   |
+| `greater_than` (`gt`)   | `gt()`                                |
+| `in` / `not_in`         | `inArray()` / `notInArray()`          |
+| `contains` (text)       | `ilike('%v%')` (Postgres) / `like`    |
+| `near` (point)          | dialect distance fn (`ST_DWithin`, …) |
+| `and` / `or`            | `and()` / `or()` nesting              |
+| localized field         | join to `_locales` filtered by locale |
 
 ```ts
 // Local API — same shape the REST/GraphQL layers normalize into.
@@ -130,12 +130,12 @@ Critically, the adapter only ever emits parameterized statements — user input 
 
 KernelCMS supports four relationship shapes, and the adapter chooses storage per shape:
 
-| Shape                        | Storage                                  |
-|------------------------------|------------------------------------------|
-| to-one                       | FK column on the owning table            |
-| to-many                      | junction table `<owner>_rels`            |
+| Shape                              | Storage                                         |
+| ---------------------------------- | ----------------------------------------------- |
+| to-one                             | FK column on the owning table                   |
+| to-many                            | junction table `<owner>_rels`                   |
 | polymorphic (multiple collections) | `<owner>_rels` with `relation_to` discriminator |
-| self / hierarchical          | FK to same table, optional closure table |
+| self / hierarchical                | FK to same table, optional closure table        |
 
 ```ts
 relationship({

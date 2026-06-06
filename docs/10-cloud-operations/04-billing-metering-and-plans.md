@@ -6,12 +6,12 @@ KernelCMS Cloud is the managed counterpart to self-hosted KernelCMS. This docume
 
 Four tiers, plus a per-seat enterprise track negotiated off the price book. Tiers gate three things: included quota, hard caps, and feature flags. A tier is a row in the `plans` table on the control plane, not a hardcoded enum, so we can ship grandfathered plans and run pricing experiments without a deploy.
 
-| Plan | Price (USD/mo) | Projects | Included docs | API requests/mo | Storage | Seats | Environments |
-|------|----------------|----------|---------------|-----------------|---------|-------|--------------|
-| **Hobby** | $0 | 1 | 5,000 | 100k | 1 GB | 2 | 1 (prod) |
-| **Pro** | $39 | 5 | 100,000 | 2M | 25 GB | 10 | 3 (prod + 2) |
-| **Team** | $199 | 20 | 1,000,000 | 25M | 250 GB | 50 | 10 |
-| **Enterprise** | Custom | Unlimited | Custom | Custom | Custom | Custom | Custom + SSO/SAML |
+| Plan           | Price (USD/mo) | Projects  | Included docs | API requests/mo | Storage | Seats  | Environments      |
+| -------------- | -------------- | --------- | ------------- | --------------- | ------- | ------ | ----------------- |
+| **Hobby**      | $0             | 1         | 5,000         | 100k            | 1 GB    | 2      | 1 (prod)          |
+| **Pro**        | $39            | 5         | 100,000       | 2M              | 25 GB   | 10     | 3 (prod + 2)      |
+| **Team**       | $199           | 20        | 1,000,000     | 25M             | 250 GB  | 50     | 10                |
+| **Enterprise** | Custom         | Unlimited | Custom        | Custom          | Custom  | Custom | Custom + SSO/SAML |
 
 Feature gates (live preview collaboration, audit-log retention, custom domains on the content CDN, point-in-time backups, SAML/SCIM) are encoded as a `features` bitmask plus a `limits` JSON column. This keeps Payload's "Enterprise license unlocks a build flag" model off the table — gating happens server-side in the Cloud control plane, evaluated per-request, so there's nothing to crack in a client bundle.
 
@@ -58,9 +58,9 @@ export type MeterDimension =
 export interface MeterEvent {
   readonly projectId: string
   readonly dimension: MeterDimension
-  readonly quantity: number          // delta, signed for storage/doc count
-  readonly at: number                // epoch ms, server-assigned
-  readonly idempotencyKey: string    // dedupes retried emissions
+  readonly quantity: number // delta, signed for storage/doc count
+  readonly at: number // epoch ms, server-assigned
+  readonly idempotencyKey: string // dedupes retried emissions
 }
 ```
 
@@ -121,13 +121,13 @@ export async function reportOverage(sub: CloudSubscription, usage: PeriodUsage) 
 
 Webhook handling is the load-bearing part. Every webhook is verified against the signing secret, persisted before processing, and handled idempotently keyed on Stripe's event ID:
 
-| Stripe event | Control-plane action |
-|--------------|----------------------|
-| `checkout.session.completed` | Activate subscription, attach plan, unlock features |
-| `customer.subscription.updated` | Re-resolve plan limits, apply proration |
-| `invoice.payment_succeeded` | Mark period paid, reset soft-limit grace |
-| `invoice.payment_failed` | Enter dunning, schedule retry, flag org |
-| `customer.subscription.deleted` | Downgrade to Hobby at period end, enforce caps |
+| Stripe event                    | Control-plane action                                |
+| ------------------------------- | --------------------------------------------------- |
+| `checkout.session.completed`    | Activate subscription, attach plan, unlock features |
+| `customer.subscription.updated` | Re-resolve plan limits, apply proration             |
+| `invoice.payment_succeeded`     | Mark period paid, reset soft-limit grace            |
+| `invoice.payment_failed`        | Enter dunning, schedule retry, flag org             |
+| `customer.subscription.deleted` | Downgrade to Hobby at period end, enforce caps      |
 
 The signing secret, API key, and price IDs come from environment-injected secrets in the Cloud runtime — never `kernel.config.ts`, never a client bundle. See Secrets & Configuration for the injection model. Plan changes flow Cloud → Stripe for the subscription mutation, then the resulting webhook flows Stripe → Cloud as the confirmation that flips entitlement. We never grant entitlement optimistically on the checkout redirect; a user who closes the tab mid-payment must not end up on Pro.
 
@@ -137,13 +137,13 @@ Dunning (failed payment recovery) runs on Stripe's smart-retry schedule. On `inv
 
 Every limit has a defined behavior: **hard cap** (request refused), **soft cap** (allowed, metered, billed as overage), or **block** (write refused, reads continue). Mixing these per-dimension is what keeps the platform usable without surprise five-figure invoices.
 
-| Dimension | Behavior | At limit |
-|-----------|----------|----------|
-| `api.request` | Soft cap | Billed per overage block; throttled only at 150% |
-| `storage.bytes` | Soft cap | Billed per GB-month over included |
-| `document.count` | Block | New writes refused (`429 quota_exceeded`); reads + deletes allowed |
-| `seats` | Hard cap | Invite refused until seat freed or plan upgraded |
-| `projects` | Hard cap | Project creation refused |
+| Dimension        | Behavior | At limit                                                           |
+| ---------------- | -------- | ------------------------------------------------------------------ |
+| `api.request`    | Soft cap | Billed per overage block; throttled only at 150%                   |
+| `storage.bytes`  | Soft cap | Billed per GB-month over included                                  |
+| `document.count` | Block    | New writes refused (`429 quota_exceeded`); reads + deletes allowed |
+| `seats`          | Hard cap | Invite refused until seat freed or plan upgraded                   |
+| `projects`       | Hard cap | Project creation refused                                           |
 
 Enforcement is evaluated in Cloud middleware against the cached usage snapshot, so it costs nothing in the hot path:
 
@@ -153,9 +153,12 @@ export function enforceLimit(ctx: CloudContext, dim: MeterDimension): LimitResul
   const { used, included, behavior } = ctx.usage[dim]
   if (used < included) return { ok: true }
   switch (behavior) {
-    case 'hard':  return { ok: false, status: 403, code: 'limit_reached' }
-    case 'block': return { ok: false, status: 429, code: 'quota_exceeded' }
-    case 'soft':  return { ok: true, overage: used - included } // continue, accrue
+    case 'hard':
+      return { ok: false, status: 403, code: 'limit_reached' }
+    case 'block':
+      return { ok: false, status: 429, code: 'quota_exceeded' }
+    case 'soft':
+      return { ok: true, overage: used - included } // continue, accrue
   }
 }
 ```

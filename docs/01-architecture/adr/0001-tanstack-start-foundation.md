@@ -16,7 +16,7 @@ Payload couples these with a custom Express/Fastify server and a Next.js admin m
 KernelCMS's wedge is the opposite bet: **one stack, end to end, with types that flow rather than regenerate.** For that to hold, the framework under both halves must natively provide:
 
 - Server-side rendering and routing for the admin SPA.
-- A server-function mechanism that is callable in-process *and* over the wire with the same signature — this is how the Local API and the typed RPC surface stay identical (see [the Local API and RPC design](../../05-api/03-typed-rpc-and-local-api.md)).
+- A server-function mechanism that is callable in-process _and_ over the wire with the same signature — this is how the Local API and the typed RPC surface stay identical (see [the Local API and RPC design](../../05-api/03-typed-rpc-and-local-api.md)).
 - Type-safe routing and search-param state for deep-linkable admin URLs.
 - A data-fetching and cache layer good enough to run the whole admin without a bespoke client.
 
@@ -39,26 +39,28 @@ The framework choice constrains everything downstream — the deployment story, 
 
 **Adopt TanStack Start as the single foundation for both `@kernel/server` and `@kernel/admin`.** Concretely:
 
-| Concern | TanStack primitive | KernelCMS usage |
-|---|---|---|
-| SSR, streaming, routing host | **TanStack Start** | Boots the admin app and the API host from one server |
-| Admin routing, search-param state | **TanStack Router** | Type-safe `/collections/$slug` routes, filter state in the URL |
-| Server ↔ client calls | **Start server functions** | The RPC transport for the Local API |
-| Data fetching, cache, invalidation | **TanStack Query** | Every admin and `@kernel/client` read/write |
-| List views | **TanStack Table** | Collection lists: sort, filter, column sizing, virtualization |
-| Edit forms | **TanStack Form** | Document forms, per-field binding and validation |
-| Reactive UI state | **TanStack Store** | Command palette, selection, dirty-tracking |
-| Long lists / documents | **TanStack Virtual** | Virtualized tables and block editor |
-| Live/offline collections | **TanStack DB** | Optional reactive client collections |
+| Concern                            | TanStack primitive         | KernelCMS usage                                                |
+| ---------------------------------- | -------------------------- | -------------------------------------------------------------- |
+| SSR, streaming, routing host       | **TanStack Start**         | Boots the admin app and the API host from one server           |
+| Admin routing, search-param state  | **TanStack Router**        | Type-safe `/collections/$slug` routes, filter state in the URL |
+| Server ↔ client calls              | **Start server functions** | The RPC transport for the Local API                            |
+| Data fetching, cache, invalidation | **TanStack Query**         | Every admin and `@kernel/client` read/write                    |
+| List views                         | **TanStack Table**         | Collection lists: sort, filter, column sizing, virtualization  |
+| Edit forms                         | **TanStack Form**          | Document forms, per-field binding and validation               |
+| Reactive UI state                  | **TanStack Store**         | Command palette, selection, dirty-tracking                     |
+| Long lists / documents             | **TanStack Virtual**       | Virtualized tables and block editor                            |
+| Live/offline collections           | **TanStack DB**            | Optional reactive client collections                           |
 
-The operation core lives in `@kernel/core` and is framework-agnostic. Start is the *delivery mechanism*, not the home of business logic — every operation (`find`, `findByID`, `create`, `update`, `delete`) is a plain function over the Adapter contract. The same function is exposed three ways:
+The operation core lives in `@kernel/core` and is framework-agnostic. Start is the _delivery mechanism_, not the home of business logic — every operation (`find`, `findByID`, `create`, `update`, `delete`) is a plain function over the Adapter contract. The same function is exposed three ways:
 
 ```ts
 // @kernel/core — one operation, transport-agnostic
 export async function find<T extends CollectionSlug>(
   args: FindArgs<T>,
   ctx: OperationContext,
-): Promise<PaginatedDocs<DataFromSlug<T>>> { /* … */ }
+): Promise<PaginatedDocs<DataFromSlug<T>>> {
+  /* … */
+}
 ```
 
 ```ts
@@ -98,7 +100,7 @@ export default defineConfig({
 
 **Positive.**
 
-- **One type graph, zero codegen for RPC.** Because the RPC layer *is* Start server functions, the type returned by `find` in `@kernel/core` is the type the admin receives — inference, not generation. Payload and Sanity both ship a typegen step that drifts the moment config changes ahead of a rebuild; we delete that whole failure mode.
+- **One type graph, zero codegen for RPC.** Because the RPC layer _is_ Start server functions, the type returned by `find` in `@kernel/core` is the type the admin receives — inference, not generation. Payload and Sanity both ship a typegen step that drifts the moment config changes ahead of a rebuild; we delete that whole failure mode.
 - **The Local API is free.** "Local API" in Payload/Strapi means a separate in-process client. For us it is the same `@kernel/core` function the server function wraps. Calling it during SSR is a normal function call; calling it from the browser routes through the Start transport. No `unstable_` flags, no second SDK.
 - **Shared conventions for plugins.** A `@kernel/plugin-sdk` author learns one router model, one server-function model, one Query model. Compare Strapi, where a plugin spans a Koa backend and a Vite admin with separate conventions.
 - **Coherent deployment.** A single Start build targets Node, Bun, or edge, so the [deployment matrix](../../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md) describes one artifact, not "server here, admin there."
@@ -111,7 +113,7 @@ export default defineConfig({
 
 **Neutral.**
 
-- React-only for the admin. Acceptable — the admin is opinionated by design and not a general SDK. The delivered content via REST/GraphQL/RPC is framework-agnostic for *consumers*.
+- React-only for the admin. Acceptable — the admin is opinionated by design and not a general SDK. The delivered content via REST/GraphQL/RPC is framework-agnostic for _consumers_.
 
 ## Alternatives Considered
 
@@ -119,14 +121,14 @@ export default defineConfig({
 
 Next.js is Payload's admin host and the default mental model for React SSR, so it was the obvious candidate.
 
-| Criterion | Next.js | Why it lost |
-|---|---|---|
-| Typed RPC | Server Actions are POST-only, untyped at the boundary, mutation-flavored | We need typed reads *and* writes with inferred return types — the heart of the Local API |
-| Routing types | Type-safe routing is opt-in and partial | Start + Router gives fully typed routes and search params out of the box |
-| Data layer | None first-party; pair with React Query anyway | We standardize on TanStack Query regardless, so Next adds a framework without removing one |
-| Runtime coupling | App Router leans on the React Server Components/Webpack-Turbopack model | Heavier, more opinionated runtime than a CMS server needs |
+| Criterion        | Next.js                                                                  | Why it lost                                                                                |
+| ---------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Typed RPC        | Server Actions are POST-only, untyped at the boundary, mutation-flavored | We need typed reads _and_ writes with inferred return types — the heart of the Local API   |
+| Routing types    | Type-safe routing is opt-in and partial                                  | Start + Router gives fully typed routes and search params out of the box                   |
+| Data layer       | None first-party; pair with React Query anyway                           | We standardize on TanStack Query regardless, so Next adds a framework without removing one |
+| Runtime coupling | App Router leans on the React Server Components/Webpack-Turbopack model  | Heavier, more opinionated runtime than a CMS server needs                                  |
 
-Server Actions are the closest analog to what we want, but they are designed for form mutations, not a typed query API spanning `find`, `findByID`, and aggregations. We would end up reimplementing typed RPC on top of Actions — exactly the bespoke layer Start lets us avoid. Next.js remains a fully supported *consumer* runtime via `@kernel/client`; it is just not our foundation.
+Server Actions are the closest analog to what we want, but they are designed for form mutations, not a typed query API spanning `find`, `findByID`, and aggregations. We would end up reimplementing typed RPC on top of Actions — exactly the bespoke layer Start lets us avoid. Next.js remains a fully supported _consumer_ runtime via `@kernel/client`; it is just not our foundation.
 
 ### Remix
 

@@ -6,10 +6,10 @@ KernelCMS auto-generates REST, GraphQL, and typed RPC from your content config, 
 
 There are two registration scopes, and choosing the right one matters.
 
-| Scope | Mounted at | Use for |
-| --- | --- | --- |
-| Collection / global endpoints | `/api/:collection/...` | Operations conceptually attached to a content type — `POST /api/orders/:id/refund`, `GET /api/posts/feed.rss` |
-| Root endpoints | `/api/...` (or any path) | Cross-cutting concerns — webhooks, health checks, OAuth callbacks, aggregations spanning collections |
+| Scope                         | Mounted at               | Use for                                                                                                       |
+| ----------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Collection / global endpoints | `/api/:collection/...`   | Operations conceptually attached to a content type — `POST /api/orders/:id/refund`, `GET /api/posts/feed.rss` |
+| Root endpoints                | `/api/...` (or any path) | Cross-cutting concerns — webhooks, health checks, OAuth callbacks, aggregations spanning collections          |
 
 Collection-scoped endpoints sit under the collection's base path and inherit its slug, so they read as a natural extension of the generated routes. Root endpoints are free-floating and own their full path. This split mirrors Payload's `endpoints` array on collections plus its top-level `endpoints` config — and we deliberately kept the mental model close, because it's the one piece of Payload's API that developers consistently like. Where we diverge is type safety and context: Payload hands you raw `PayloadRequest` (Express-ish), Strapi makes you wire a route file, a controller, and a policy across three directories, and Sanity doesn't have a server framework at all — you bolt endpoints onto whatever host you deployed (Next.js route handlers, a Lambda). KernelCMS gives you one typed handler signature with the full operation core in scope, regardless of runtime.
 
@@ -42,11 +42,13 @@ import { z } from 'zod'
 
 const Orders = defineCollection({
   slug: 'orders',
-  fields: [/* … */],
+  fields: [
+    /* … */
+  ],
   endpoints: [
     {
       method: 'post',
-      path: '/:id/refund',          // → POST /api/orders/:id/refund
+      path: '/:id/refund', // → POST /api/orders/:id/refund
       // Optional schema: validated before the handler runs.
       input: z.object({ amount: z.number().int().positive().optional() }),
       handler: async (ctx) => {
@@ -70,8 +72,8 @@ export default defineConfig({
   endpoints: [
     {
       method: 'get',
-      path: '/health',              // → GET /api/health
-      auth: false,                  // skip the auth pipeline entirely
+      path: '/health', // → GET /api/health
+      auth: false, // skip the auth pipeline entirely
       handler: (ctx) => ctx.json({ status: 'ok', uptime: process.uptime() }),
     },
   ],
@@ -85,12 +87,12 @@ The handler signature is a single argument: `(ctx: KernelContext) => Response | 
 ```ts
 interface EndpointDef<TInput = unknown> {
   method: 'get' | 'post' | 'put' | 'patch' | 'delete' | 'options' | 'head'
-  path: string                          // path-to-regexp style; ':param' captures
+  path: string // path-to-regexp style; ':param' captures
   handler: (ctx: KernelContext<TInput>) => Response | Promise<Response>
-  input?: StandardSchemaV1<TInput>      // any Standard Schema validator (Zod, Valibot, ArkType)
-  auth?: boolean                        // default true — run auth, populate ctx.user
-  rateLimit?: RateLimitRule | false     // override the default public-endpoint limit
-  description?: string                   // surfaces in generated OpenAPI / route map
+  input?: StandardSchemaV1<TInput> // any Standard Schema validator (Zod, Valibot, ArkType)
+  auth?: boolean // default true — run auth, populate ctx.user
+  rateLimit?: RateLimitRule | false // override the default public-endpoint limit
+  description?: string // surfaces in generated OpenAPI / route map
 }
 ```
 
@@ -102,18 +104,18 @@ Routes are matched longest-static-prefix first, and an endpoint may not shadow a
 
 `KernelContext` is the object that makes custom endpoints worth using instead of a bare route handler. Everything the generated API has, you have.
 
-| Member | Type | What it gives you |
-| --- | --- | --- |
-| `ctx.local` | `LocalAPI` | The full in-process operation core — `find`, `findByID`, `create`, `update`, `delete`, `count`. Type-inferred per collection. Respects access control unless you pass `overrideAccess`. |
-| `ctx.user` | `AuthUser \| null` | The authenticated principal, populated by the auth pipeline (see below). |
-| `ctx.req` | `Request` | The raw web `Request` — headers, URL, method, body stream. |
-| `ctx.params` | `Record<string, string>` | Captured path params (`:id` → `ctx.params.id`). |
-| `ctx.query` | parsed query | Search params, already decoded. |
-| `ctx.input` | `TInput` | Validated body/query when `input` schema is set. |
-| `ctx.db` | `Adapter` | The raw database adapter — Drizzle handle for SQL, native driver for MongoDB. Escape hatch for queries the Local API can't express. |
-| `ctx.locale` / `ctx.fallbackLocale` | `string` | Resolved from the request, used by `ctx.local` reads. |
-| `ctx.transaction` | `<T>(fn) => Promise<T>` | Run multiple operations atomically; the adapter opens a transaction and `ctx.local` calls inside it enlist automatically. |
-| `ctx.json`, `ctx.notFound`, `ctx.error`, `ctx.redirect` | helpers | Response constructors. |
+| Member                                                  | Type                     | What it gives you                                                                                                                                                                       |
+| ------------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctx.local`                                             | `LocalAPI`               | The full in-process operation core — `find`, `findByID`, `create`, `update`, `delete`, `count`. Type-inferred per collection. Respects access control unless you pass `overrideAccess`. |
+| `ctx.user`                                              | `AuthUser \| null`       | The authenticated principal, populated by the auth pipeline (see below).                                                                                                                |
+| `ctx.req`                                               | `Request`                | The raw web `Request` — headers, URL, method, body stream.                                                                                                                              |
+| `ctx.params`                                            | `Record<string, string>` | Captured path params (`:id` → `ctx.params.id`).                                                                                                                                         |
+| `ctx.query`                                             | parsed query             | Search params, already decoded.                                                                                                                                                         |
+| `ctx.input`                                             | `TInput`                 | Validated body/query when `input` schema is set.                                                                                                                                        |
+| `ctx.db`                                                | `Adapter`                | The raw database adapter — Drizzle handle for SQL, native driver for MongoDB. Escape hatch for queries the Local API can't express.                                                     |
+| `ctx.locale` / `ctx.fallbackLocale`                     | `string`                 | Resolved from the request, used by `ctx.local` reads.                                                                                                                                   |
+| `ctx.transaction`                                       | `<T>(fn) => Promise<T>`  | Run multiple operations atomically; the adapter opens a transaction and `ctx.local` calls inside it enlist automatically.                                                               |
+| `ctx.json`, `ctx.notFound`, `ctx.error`, `ctx.redirect` | helpers                  | Response constructors.                                                                                                                                                                  |
 
 Prefer `ctx.local` over `ctx.db`. The Local API enforces access control, runs hooks, applies field-level localization, and returns fully typed documents; dropping to `ctx.db` skips all of that. Reach for `ctx.db` only for genuine aggregations or bulk operations the Local API doesn't model — and when you do, you own the security implications.
 
@@ -166,10 +168,10 @@ By default (`auth` defaults to `true`) every custom endpoint runs the standard a
 
 Two distinct gates are at play and it's worth keeping them separate:
 
-- **Authentication** — *who are you.* Handled by the auth pipeline; the result is `ctx.user`. Toggle it off with `auth: false` for public endpoints (webhooks, health, RSS).
-- **Authorization** — *are you allowed.* Your responsibility inside the handler, but you reuse the same access functions the generated API uses via `ctx.local.canAccess(...)` or simply by letting `ctx.local` enforce access (omit `overrideAccess`). When you call `ctx.local.update(...)` without `overrideAccess: true`, the collection's `access.update` rule runs exactly as it would for `PATCH /api/orders/:id`.
+- **Authentication** — _who are you._ Handled by the auth pipeline; the result is `ctx.user`. Toggle it off with `auth: false` for public endpoints (webhooks, health, RSS).
+- **Authorization** — _are you allowed._ Your responsibility inside the handler, but you reuse the same access functions the generated API uses via `ctx.local.canAccess(...)` or simply by letting `ctx.local` enforce access (omit `overrideAccess`). When you call `ctx.local.update(...)` without `overrideAccess: true`, the collection's `access.update` rule runs exactly as it would for `PATCH /api/orders/:id`.
 
-This is a hard win over Strapi, where a custom route needs a `policies` array referencing a separately-defined policy, and over Payload, where custom endpoints get the request but you still manually call access functions. KernelCMS makes the *default path* the secure one: use `ctx.local` and access control is on; you have to opt out with `overrideAccess: true`, which is greppable in review.
+This is a hard win over Strapi, where a custom route needs a `policies` array referencing a separately-defined policy, and over Payload, where custom endpoints get the request but you still manually call access functions. KernelCMS makes the _default path_ the secure one: use `ctx.local` and access control is on; you have to opt out with `overrideAccess: true`, which is greppable in review.
 
 For machine callers that shouldn't carry a user session — a cron job, an internal service — issue a scoped API key through `@kernel/auth` and check it explicitly:
 
@@ -229,7 +231,7 @@ Webhooks are unauthenticated in the session sense but must be verified by signat
 }
 ```
 
-`overrideAccess: true` is the right call here precisely because there is no user; the signature *is* the authorization. Making that explicit beats Strapi's implicit "the controller runs with full privileges" model.
+`overrideAccess: true` is the right call here precisely because there is no user; the signature _is_ the authorization. Making that explicit beats Strapi's implicit "the controller runs with full privileges" model.
 
 ### Authenticated aggregation with a transaction
 

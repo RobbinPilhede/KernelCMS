@@ -1,6 +1,6 @@
 # ADR 0004: React for the Admin Panel
 
-KernelCMS ships a single first-party admin panel built with React on TanStack Start. This ADR records why we chose React over Vue, Svelte, Solid, or a framework-agnostic web-component approach, why we coupled it to TanStack Start specifically rather than to React-the-library in isolation, and how we keep the door open for additional admin runtimes without forking the product. The decision is deliberately narrow: React is the framework for *the panel we ship*, not a constraint on the content API, the SDK, or what consumers build on their own frontends.
+KernelCMS ships a single first-party admin panel built with React on TanStack Start. This ADR records why we chose React over Vue, Svelte, Solid, or a framework-agnostic web-component approach, why we coupled it to TanStack Start specifically rather than to React-the-library in isolation, and how we keep the door open for additional admin runtimes without forking the product. The decision is deliberately narrow: React is the framework for _the panel we ship_, not a constraint on the content API, the SDK, or what consumers build on their own frontends.
 
 ## Context
 
@@ -8,21 +8,21 @@ The admin panel is the most code-heavy surface in KernelCMS. It renders config-d
 
 Three forces constrain the framework choice.
 
-**The TanStack bet is the product wedge.** KernelCMS is positioned as the TanStack-native CMS. Router, Query, Table, Form, Store, Virtual, and DB are first-class dependencies of the admin. Today, [TanStack Start](./0001-tanstack-start-foundation.md) — our SSR, server-function, and routing host — is a React framework. Choosing a non-React admin would mean either reimplementing the TanStack primitives the admin leans on or running the panel on a parallel stack. Both contradict the wedge. The framework decision is therefore downstream of a strategic decision we already made: *bet the stack on TanStack*.
+**The TanStack bet is the product wedge.** KernelCMS is positioned as the TanStack-native CMS. Router, Query, Table, Form, Store, Virtual, and DB are first-class dependencies of the admin. Today, [TanStack Start](./0001-tanstack-start-foundation.md) — our SSR, server-function, and routing host — is a React framework. Choosing a non-React admin would mean either reimplementing the TanStack primitives the admin leans on or running the panel on a parallel stack. Both contradict the wedge. The framework decision is therefore downstream of a strategic decision we already made: _bet the stack on TanStack_.
 
-**The competitors made instructive choices.** Payload's admin is React, tightly integrated with Next.js App Router, and its custom-component story assumes React. Strapi's admin is React with a Redux-era core and a Webpack/Vite plugin pipeline; its extension model is React components registered through a plugin API. Sanity Studio is React, configured in code, with a component-override system that is genuinely excellent — Studio is the bar for "config-as-code admin done well." None of the three offer a non-React admin. The ecosystem expectation for "extend the CMS admin" is *write a React component*. Fighting that expectation costs us adoption for no functional gain.
+**The competitors made instructive choices.** Payload's admin is React, tightly integrated with Next.js App Router, and its custom-component story assumes React. Strapi's admin is React with a Redux-era core and a Webpack/Vite plugin pipeline; its extension model is React components registered through a plugin API. Sanity Studio is React, configured in code, with a component-override system that is genuinely excellent — Studio is the bar for "config-as-code admin done well." None of the three offer a non-React admin. The ecosystem expectation for "extend the CMS admin" is _write a React component_. Fighting that expectation costs us adoption for no functional gain.
 
 **The extension surface must be ergonomic and typed.** A headless CMS lives or dies on how easily teams customize the admin: custom field types, custom cells, dashboard widgets, and view overrides. Whatever framework we pick becomes the contract every plugin author writes against via [`@kernel/plugin-sdk`](../../08-extensibility/01-plugin-sdk-and-authoring.md). We want that contract to be boring, well-documented, and backed by the largest component ecosystem available.
 
 We explicitly considered the alternatives:
 
-| Option | Pro | Con | Verdict |
-| --- | --- | --- | --- |
-| **React + TanStack Start** | TanStack-native, largest ecosystem, matches competitor expectations, typed escape hatches | React's runtime overhead; ties us to React's release cadence | **Chosen** |
-| Svelte / SvelteKit | Smaller bundles, compiler-driven reactivity | No TanStack Start equivalent; would fork the stack; tiny plugin ecosystem for CMS | Rejected |
-| Solid + SolidStart | Fine-grained reactivity, fast | TanStack support is partial; plugin authors don't know it; risk on hiring | Rejected |
-| Vue / Nuxt | Large ecosystem, good DX | Parallel TanStack story is immature; splits our maintenance | Rejected |
-| Web Components (framework-agnostic) | Embed anywhere | TanStack primitives are React-shaped; forms/tables become reinvention; weak typing across the boundary | Rejected as the *primary* panel; revisited in "Future multi-framework support" |
+| Option                              | Pro                                                                                       | Con                                                                                                    | Verdict                                                                        |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| **React + TanStack Start**          | TanStack-native, largest ecosystem, matches competitor expectations, typed escape hatches | React's runtime overhead; ties us to React's release cadence                                           | **Chosen**                                                                     |
+| Svelte / SvelteKit                  | Smaller bundles, compiler-driven reactivity                                               | No TanStack Start equivalent; would fork the stack; tiny plugin ecosystem for CMS                      | Rejected                                                                       |
+| Solid + SolidStart                  | Fine-grained reactivity, fast                                                             | TanStack support is partial; plugin authors don't know it; risk on hiring                              | Rejected                                                                       |
+| Vue / Nuxt                          | Large ecosystem, good DX                                                                  | Parallel TanStack story is immature; splits our maintenance                                            | Rejected                                                                       |
+| Web Components (framework-agnostic) | Embed anywhere                                                                            | TanStack primitives are React-shaped; forms/tables become reinvention; weak typing across the boundary | Rejected as the _primary_ panel; revisited in "Future multi-framework support" |
 
 ## Decision
 
@@ -98,7 +98,7 @@ function useThemes() {
 
 ### Why React specifically, not just "a framework"
 
-We are coupling to React for three reasons that survive scrutiny. First, **TanStack Start is React today**, and Start is load-bearing — it unifies the admin host and the RPC API host in one server. Second, **the plugin ecosystem expectation is React**; Payload, Sanity, and Strapi have already trained the market, and matching that lowers the cost of every plugin ever written for KernelCMS. Third, **React's escape-hatch story is mature**: refs, portals, context, and a vast component supply mean teams can drop to raw DOM or integrate a third-party editor without fighting the framework — which matters because our engineering tenet is *always provide escape hatches*.
+We are coupling to React for three reasons that survive scrutiny. First, **TanStack Start is React today**, and Start is load-bearing — it unifies the admin host and the RPC API host in one server. Second, **the plugin ecosystem expectation is React**; Payload, Sanity, and Strapi have already trained the market, and matching that lowers the cost of every plugin ever written for KernelCMS. Third, **React's escape-hatch story is mature**: refs, portals, context, and a vast component supply mean teams can drop to raw DOM or integrate a third-party editor without fighting the framework — which matters because our engineering tenet is _always provide escape hatches_.
 
 ## Consequences
 
@@ -128,13 +128,13 @@ We are coupling to React for three reasons that survive scrutiny. First, **TanSt
 
 - We inherit React's runtime weight. We mitigate with route-level code splitting via TanStack Router, TanStack Virtual for long lists and documents, and enforced [performance budgets](../../11-quality/02-performance-benchmarks-and-budgets.md) on the admin bundle.
 - We are exposed to React's release cadence and to TanStack Start's maturity. We pin versions and gate upgrades behind the admin e2e suite.
-- Non-React shops cannot extend the *admin* in their preferred framework today. This is the real cost, and the next section addresses it.
+- Non-React shops cannot extend the _admin_ in their preferred framework today. This is the real cost, and the next section addresses it.
 
-**Explicitly not affected.** This decision constrains *only the panel we ship*. The content APIs (REST, GraphQL, RPC), `@kernel/client`, and the field config schema are framework-neutral. A team building a Vue or Svelte frontend against KernelCMS content is unaffected — they consume the typed client and the query language, not the admin. KernelCMS is headless; React is an admin-implementation detail, not a content-layer constraint.
+**Explicitly not affected.** This decision constrains _only the panel we ship_. The content APIs (REST, GraphQL, RPC), `@kernel/client`, and the field config schema are framework-neutral. A team building a Vue or Svelte frontend against KernelCMS content is unaffected — they consume the typed client and the query language, not the admin. KernelCMS is headless; React is an admin-implementation detail, not a content-layer constraint.
 
 ## Future multi-framework support
 
-We are not promising a Vue admin. We are committing to *not painting ourselves into a corner*, and to a concrete escape path if demand materializes. Three layers make alternative runtimes feasible without a fork:
+We are not promising a Vue admin. We are committing to _not painting ourselves into a corner_, and to a concrete escape path if demand materializes. Three layers make alternative runtimes feasible without a fork:
 
 1. **The panel is generated from config, not hand-coded.** Because every screen is derived from `kernel.config.ts` through a renderer, a second renderer for a different framework consumes the same config and the same operation core. The schema, validation, access control, and query language are framework-agnostic by construction.
 
@@ -157,7 +157,7 @@ export default defineConfig({
 })
 ```
 
-This mirrors how we treat every other infrastructure concern in KernelCMS: the database, storage, email, auth, search, cache, and queue are all swappable [adapters](../05-the-adapter-pattern.md). The admin renderer is architecturally the same shape — a swappable implementation behind a stable, config-driven contract — we simply ship exactly one (React) and only invest in a second when real demand, not speculation, justifies it. That keeps us honest with the *choose everything* promise without diluting effort across two immature studios on day one.
+This mirrors how we treat every other infrastructure concern in KernelCMS: the database, storage, email, auth, search, cache, and queue are all swappable [adapters](../05-the-adapter-pattern.md). The admin renderer is architecturally the same shape — a swappable implementation behind a stable, config-driven contract — we simply ship exactly one (React) and only invest in a second when real demand, not speculation, justifies it. That keeps us honest with the _choose everything_ promise without diluting effort across two immature studios on day one.
 
 ## Open questions
 

@@ -78,7 +78,9 @@ describe('built-in admin', () => {
             slug: 'users',
             auth: true,
             access: { read: () => true },
-            fields: [{ name: 'roles', type: 'select', options: ['user', 'admin'], hasMany: true, defaultValue: ['user'] }],
+            fields: [
+              { name: 'roles', type: 'select', options: ['user', 'admin'], hasMany: true, defaultValue: ['user'] },
+            ],
           },
         ],
       },
@@ -133,7 +135,13 @@ describe('built-in admin', () => {
 
   it('refuses a second setup once an admin exists (takeover guard)', async () => {
     const body = JSON.stringify({ email: 'first@example.com', password: 'supersecret123' })
-    await handler(new Request('http://localhost/api/_admin/setup', { method: 'POST', headers: { 'content-type': 'application/json' }, body }))
+    await handler(
+      new Request('http://localhost/api/_admin/setup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+    )
 
     const second = await handler(
       new Request('http://localhost/api/_admin/setup', {
@@ -147,9 +155,21 @@ describe('built-in admin', () => {
 
   it('lets the seeded admin log in via the REST endpoint', async () => {
     const body = JSON.stringify({ email: 'admin@example.com', password: 'supersecret123' })
-    await handler(new Request('http://localhost/api/_admin/setup', { method: 'POST', headers: { 'content-type': 'application/json' }, body }))
+    await handler(
+      new Request('http://localhost/api/_admin/setup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+    )
 
-    const login = await handler(new Request('http://localhost/api/users/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body }))
+    const login = await handler(
+      new Request('http://localhost/api/users/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+    )
     expect(login.status).toBe(200)
     expect(((await login.json()) as { token: string }).token).toBeTypeOf('string')
   })
@@ -298,7 +318,9 @@ describe('versions & drafts (REST)', () => {
   it('publish then unpublish toggles public visibility and records versions', async () => {
     const a = await createArticle('Publish me')
 
-    const pubRes = await h(new Request(`http://localhost/api/articles/${a.id}/publish`, { method: 'POST', headers: auth }))
+    const pubRes = await h(
+      new Request(`http://localhost/api/articles/${a.id}/publish`, { method: 'POST', headers: auth }),
+    )
     expect(pubRes.status).toBe(200)
     expect(((await pubRes.json()) as { _status: string })._status).toBe('published')
 
@@ -328,7 +350,10 @@ describe('versions & drafts (REST)', () => {
     const first = list.docs.find((v) => v.version.title === 'First title')!
 
     const restored = await h(
-      new Request(`http://localhost/api/articles/${a.id}/versions/${first.id}/restore`, { method: 'POST', headers: auth }),
+      new Request(`http://localhost/api/articles/${a.id}/versions/${first.id}/restore`, {
+        method: 'POST',
+        headers: auth,
+      }),
     )
     expect(restored.status).toBe(200)
     expect(((await restored.json()) as { title: string }).title).toBe('First title')
@@ -382,7 +407,11 @@ describe('uploads (REST + local delivery)', () => {
     form.set('alt', 'A screenshot')
 
     const res = await h(
-      new Request('http://localhost/api/media', { method: 'POST', headers: { Authorization: `Bearer ${SVC}` }, body: form }),
+      new Request('http://localhost/api/media', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${SVC}` },
+        body: form,
+      }),
     )
     expect(res.status).toBe(201)
     const doc = (await res.json()) as { url: string; alt: string; mime_type: string; filesize: number }
@@ -403,7 +432,11 @@ describe('uploads (REST + local delivery)', () => {
     form.set('file', new File([Buffer.from('<?php ?>', 'utf8')], 'evil.png', { type: 'image/png' }))
     form.set('alt', 'x')
     const res = await h(
-      new Request('http://localhost/api/media', { method: 'POST', headers: { Authorization: `Bearer ${SVC}` }, body: form }),
+      new Request('http://localhost/api/media', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${SVC}` },
+        body: form,
+      }),
     )
     expect(res.status).toBe(400)
   })
@@ -413,7 +446,11 @@ describe('uploads (REST + local delivery)', () => {
     form.set('file', new File([PNG], 'secret.png', { type: 'image/png' }))
     form.set('alt', 'classified')
     const created = await h(
-      new Request('http://localhost/api/private_media', { method: 'POST', headers: { Authorization: `Bearer ${SVC}` }, body: form }),
+      new Request('http://localhost/api/private_media', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${SVC}` },
+        body: form,
+      }),
     )
     expect(created.status).toBe(201)
     const { url } = (await created.json()) as { url: string }
@@ -470,7 +507,11 @@ describe('bulk operations (REST)', () => {
   it('PATCH /:collection?where updates all matching docs', async () => {
     const where = encodeURIComponent(JSON.stringify({ done: { equals: true } }))
     const res = await h(
-      new Request(`http://localhost/api/tasks?where=${where}`, { method: 'PATCH', headers: auth, body: JSON.stringify({ done: false }) }),
+      new Request(`http://localhost/api/tasks?where=${where}`, {
+        method: 'PATCH',
+        headers: auth,
+        body: JSON.stringify({ done: false }),
+      }),
     )
     expect(res.status).toBe(200)
     expect(((await res.json()) as { count: number }).count).toBe(2)
@@ -520,7 +561,10 @@ describe('graphql endpoint', () => {
       new Request('http://localhost/api/graphql', {
         method: 'POST',
         headers: auth,
-        body: JSON.stringify({ query: 'mutation($d: JSON!){ createPosts(data:$d){ id title } }', variables: { d: { title: 'GQL' } } }),
+        body: JSON.stringify({
+          query: 'mutation($d: JSON!){ createPosts(data:$d){ id title } }',
+          variables: { d: { title: 'GQL' } },
+        }),
       }),
     )
     expect(mutate.status).toBe(200)
@@ -553,7 +597,12 @@ describe('API key auth (REST)', () => {
         secret: 'apikey-rest',
         db: sqliteAdapter({ url: ':memory:' }),
         collections: [
-          { slug: 'agents', auth: { useAPIKey: true }, access: { read: () => true, create: () => true }, fields: [{ name: 'name', type: 'text' }] },
+          {
+            slug: 'agents',
+            auth: { useAPIKey: true },
+            access: { read: () => true, create: () => true },
+            fields: [{ name: 'name', type: 'text' }],
+          },
           {
             slug: 'notes',
             // Only an authenticated caller may read notes.
@@ -572,7 +621,11 @@ describe('API key auth (REST)', () => {
   })
 
   it('authenticates a request via the per-collection API-Key header', async () => {
-    const agent = await aKernel.create({ collection: 'agents', data: { email: 'a@x.co', password: 'a-long-password' }, overrideAccess: true })
+    const agent = await aKernel.create({
+      collection: 'agents',
+      data: { email: 'a@x.co', password: 'a-long-password' },
+      overrideAccess: true,
+    })
     const { key } = await aKernel.createAPIKey({ collection: 'agents', id: agent.id })
     await aKernel.create({ collection: 'notes', data: { body: 'secret' }, overrideAccess: true })
 
@@ -581,7 +634,9 @@ describe('API key auth (REST)', () => {
     expect(anon.status).toBe(403)
 
     // With the API key, the caller is authenticated → the note is visible.
-    const authedRes = await h(new Request('http://localhost/api/notes', { headers: { Authorization: `agents API-Key ${key}` } }))
+    const authedRes = await h(
+      new Request('http://localhost/api/notes', { headers: { Authorization: `agents API-Key ${key}` } }),
+    )
     expect(authedRes.status).toBe(200)
     expect(((await authedRes.json()) as { totalDocs: number }).totalDocs).toBe(1)
   })
@@ -602,7 +657,9 @@ describe('two-factor auth (REST)', () => {
             slug: 'users',
             auth: { twoFactor: true },
             access: { read: () => true },
-            fields: [{ name: 'roles', type: 'select', options: ['user', 'admin'], hasMany: true, defaultValue: ['user'] }],
+            fields: [
+              { name: 'roles', type: 'select', options: ['user', 'admin'], hasMany: true, defaultValue: ['user'] },
+            ],
           },
         ],
       },
@@ -664,7 +721,11 @@ describe('admin component overrides (script injection)', () => {
   let k: Kernel
   beforeEach(async () => {
     k = await initKernel(
-      { secret: 's', db: sqliteAdapter({ url: ':memory:' }), collections: [{ slug: 'posts', access: { read: () => true }, fields: [{ name: 'title', type: 'text' }] }] },
+      {
+        secret: 's',
+        db: sqliteAdapter({ url: ':memory:' }),
+        collections: [{ slug: 'posts', access: { read: () => true }, fields: [{ name: 'title', type: 'text' }] }],
+      },
       { logLevel: 'error' },
     )
     await k.migrate()

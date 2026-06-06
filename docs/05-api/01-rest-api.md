@@ -59,13 +59,13 @@ export default defineConfig({
 
 The `slug` is the URL segment. Collections are plural resources; globals are singletons. There is one canonical shape, and it does not change between SQL and MongoDB adapters:
 
-| Resource | URL pattern | Notes |
-|----------|-------------|-------|
-| Collection list | `/api/{collection}` | Paginated, filterable |
-| Collection document | `/api/{collection}/{id}` | `id` is the document primary key |
-| Collection count | `/api/{collection}/count` | Returns total matching `where` |
-| Global | `/api/globals/{global}` | Singleton, no `id` |
-| Upload file | `/api/{collection}/{id}/file/{filename}` | Served by `@kernel/storage` |
+| Resource            | URL pattern                              | Notes                            |
+| ------------------- | ---------------------------------------- | -------------------------------- |
+| Collection list     | `/api/{collection}`                      | Paginated, filterable            |
+| Collection document | `/api/{collection}/{id}`                 | `id` is the document primary key |
+| Collection count    | `/api/{collection}/count`                | Returns total matching `where`   |
+| Global              | `/api/globals/{global}`                  | Singleton, no `id`               |
+| Upload file         | `/api/{collection}/{id}/file/{filename}` | Served by `@kernel/storage`      |
 
 IDs are whatever the adapter uses: an auto-incrementing integer or UUID under Drizzle SQL (`@kernel/db-postgres`, `@kernel/db-sqlite`, `@kernel/db-mysql`), an ObjectId string under `@kernel/db-mongodb`. The REST layer treats `id` as an opaque string in the path and lets the adapter coerce it.
 
@@ -73,18 +73,18 @@ IDs are whatever the adapter uses: an auto-incrementing integer or UUID under Dr
 
 Each collection gets the full set. Globals get only read and update, because a singleton can be neither created nor deleted through the API.
 
-| Operation | Method | Path | Body | Success |
-|-----------|--------|------|------|---------|
-| List | `GET` | `/api/posts` | — | `200` paginated envelope |
-| Read one | `GET` | `/api/posts/:id` | — | `200` document |
-| Count | `GET` | `/api/posts/count` | — | `200 { totalDocs }` |
-| Create | `POST` | `/api/posts` | document | `201` created document |
-| Replace/Update | `PATCH` | `/api/posts/:id` | partial document | `200` updated document |
-| Bulk update | `PATCH` | `/api/posts?where=...` | partial document | `200 { docs, errors }` |
-| Delete | `DELETE` | `/api/posts/:id` | — | `200` deleted document |
-| Bulk delete | `DELETE` | `/api/posts?where=...` | — | `200 { docs, errors }` |
-| Read global | `GET` | `/api/globals/site-settings` | — | `200` document |
-| Update global | `PATCH` | `/api/globals/site-settings` | partial | `200` updated |
+| Operation      | Method   | Path                         | Body             | Success                  |
+| -------------- | -------- | ---------------------------- | ---------------- | ------------------------ |
+| List           | `GET`    | `/api/posts`                 | —                | `200` paginated envelope |
+| Read one       | `GET`    | `/api/posts/:id`             | —                | `200` document           |
+| Count          | `GET`    | `/api/posts/count`           | —                | `200 { totalDocs }`      |
+| Create         | `POST`   | `/api/posts`                 | document         | `201` created document   |
+| Replace/Update | `PATCH`  | `/api/posts/:id`             | partial document | `200` updated document   |
+| Bulk update    | `PATCH`  | `/api/posts?where=...`       | partial document | `200 { docs, errors }`   |
+| Delete         | `DELETE` | `/api/posts/:id`             | —                | `200` deleted document   |
+| Bulk delete    | `DELETE` | `/api/posts?where=...`       | —                | `200 { docs, errors }`   |
+| Read global    | `GET`    | `/api/globals/site-settings` | —                | `200` document           |
+| Update global  | `PATCH`  | `/api/globals/site-settings` | partial          | `200` updated            |
 
 We use `PATCH` rather than `PUT` for updates because document updates are always partial merges — you send the fields you changed, and field-level hooks and validation run only against what you sent plus what's required. This matches Payload's update semantics and avoids the footgun of `PUT` silently clearing omitted fields. Strapi's older `PUT`-based update was a frequent source of accidental data loss; we don't ship that edge.
 
@@ -104,7 +104,9 @@ List responses use a stable pagination envelope. There is exactly one shape, so 
 
 ```jsonc
 {
-  "docs": [ /* Post[] */ ],
+  "docs": [
+    /* Post[] */
+  ],
   "totalDocs": 137,
   "limit": 10,
   "totalPages": 14,
@@ -113,7 +115,7 @@ List responses use a stable pagination envelope. There is exactly one shape, so 
   "hasPrevPage": false,
   "hasNextPage": true,
   "prevPage": null,
-  "nextPage": 2
+  "nextPage": 2,
 }
 ```
 
@@ -123,31 +125,31 @@ Single-document responses return the document directly at the top level (no `{ d
 
 One query language spans every surface — REST, GraphQL, RPC, and Local. Over HTTP it is expressed as URL query parameters. The parser in `@kernel/rest` accepts bracket-style nested keys (Strapi-and-Payload-compatible) and a JSON-encoded `where` for complex trees.
 
-| Param | Type | Default | Purpose |
-|-------|------|---------|---------|
-| `where` | object | — | Filter tree; field operators below |
-| `sort` | string | adapter default | Comma list, `-` prefix = descending |
-| `limit` | number | `10` | Page size; `0` disables pagination |
-| `page` | number | `1` | 1-indexed page |
-| `depth` | number | `1` | Relationship/upload population depth |
-| `select` | object | all | Field projection (include/exclude) |
-| `populate` | object | — | Per-relation field projection |
-| `locale` | string | default locale | Field-level localization |
-| `fallbackLocale` | string | config | Locale to fall back to |
-| `draft` | boolean | `false` | Read latest draft instead of published |
+| Param            | Type    | Default         | Purpose                                |
+| ---------------- | ------- | --------------- | -------------------------------------- |
+| `where`          | object  | —               | Filter tree; field operators below     |
+| `sort`           | string  | adapter default | Comma list, `-` prefix = descending    |
+| `limit`          | number  | `10`            | Page size; `0` disables pagination     |
+| `page`           | number  | `1`             | 1-indexed page                         |
+| `depth`          | number  | `1`             | Relationship/upload population depth   |
+| `select`         | object  | all             | Field projection (include/exclude)     |
+| `populate`       | object  | —               | Per-relation field projection          |
+| `locale`         | string  | default locale  | Field-level localization               |
+| `fallbackLocale` | string  | config          | Locale to fall back to                 |
+| `draft`          | boolean | `false`         | Read latest draft instead of published |
 
 The `where` operators are explicit, not magic substrings:
 
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `equals` / `not_equals` | exact match | `where[status][equals]=published` |
-| `greater_than` / `less_than` | numeric/date | `where[views][greater_than]=100` |
-| `greater_than_equal` / `less_than_equal` | inclusive | — |
-| `like` / `contains` | substring | `where[title][like]=launch` |
-| `in` / `not_in` | set membership | `where[id][in]=1,2,3` |
-| `exists` | null check | `where[author][exists]=true` |
-| `near` | geospatial on `point` | `where[loc][near]=12.5,55.6,5000` |
-| `and` / `or` | boolean grouping | nested arrays |
+| Operator                                 | Meaning               | Example                           |
+| ---------------------------------------- | --------------------- | --------------------------------- |
+| `equals` / `not_equals`                  | exact match           | `where[status][equals]=published` |
+| `greater_than` / `less_than`             | numeric/date          | `where[views][greater_than]=100`  |
+| `greater_than_equal` / `less_than_equal` | inclusive             | —                                 |
+| `like` / `contains`                      | substring             | `where[title][like]=launch`       |
+| `in` / `not_in`                          | set membership        | `where[id][in]=1,2,3`             |
+| `exists`                                 | null check            | `where[author][exists]=true`      |
+| `near`                                   | geospatial on `point` | `where[loc][near]=12.5,55.6,5000` |
+| `and` / `or`                             | boolean grouping      | nested arrays                     |
 
 A non-trivial filter, sent two equivalent ways:
 
@@ -165,10 +167,7 @@ Both compile to the same `Where` object the operation core consumes:
 
 ```ts
 const where = {
-  and: [
-    { status: { equals: 'published' } },
-    { title: { like: 'tanstack' } },
-  ],
+  and: [{ status: { equals: 'published' } }, { title: { like: 'tanstack' } }],
 }
 ```
 
@@ -178,11 +177,11 @@ const where = {
 
 Authentication is handled by `@kernel/auth` and enforced server-side on every REST request, before any operation runs. There is no "public by default" mode; if a collection has access control, REST honors it. Three credential mechanisms are accepted on REST:
 
-| Mechanism | Header / cookie | Use case |
-|-----------|-----------------|----------|
-| Session cookie | `Cookie: kernel-token=...` | Admin app, same-site browser |
-| Bearer token (JWT) | `Authorization: Bearer <jwt>` | SPA, mobile, server-to-server |
-| API key | `Authorization: <collection> API-Key <key>` | Service integrations, CI |
+| Mechanism          | Header / cookie                             | Use case                      |
+| ------------------ | ------------------------------------------- | ----------------------------- |
+| Session cookie     | `Cookie: kernel-token=...`                  | Admin app, same-site browser  |
+| Bearer token (JWT) | `Authorization: Bearer <jwt>`               | SPA, mobile, server-to-server |
+| API key            | `Authorization: <collection> API-Key <key>` | Service integrations, CI      |
 
 API keys are scoped to an auth-enabled collection (typically `users` or a dedicated `service-accounts` collection) and carry that document's roles, so authorization is resource-level rather than a global god-token. Cookies are issued `Secure`, `HttpOnly`, and `SameSite=Lax` by default; CORS origins are an explicit allowlist in config — never a wildcard with credentials.
 
@@ -200,7 +199,9 @@ export default defineConfig({
         update: ({ req, id }) => ({ author: { equals: req.user?.id } }), // owner-only
         delete: ({ req }) => req.user?.roles?.includes('editor') ?? false,
       },
-      fields: [/* ... */],
+      fields: [
+        /* ... */
+      ],
     },
   ],
 })
@@ -281,19 +282,19 @@ Errors are a single typed shape, never a bare string. HTTP status maps to a name
     {
       "name": "ValidationError",
       "message": "The following field is invalid: title",
-      "data": [{ "field": "title", "message": "This field is required." }]
-    }
-  ]
+      "data": [{ "field": "title", "message": "This field is required." }],
+    },
+  ],
 }
 ```
 
-| Status | Class | Trigger |
-|--------|-------|---------|
-| `400` | `ValidationError` | Field validation or malformed `where` |
-| `401` | `Unauthorized` | Missing/expired credential |
-| `403` | `Forbidden` | Authenticated but operation denied |
-| `404` | `NotFound` | Missing doc, or read-denied (intentional) |
-| `429` | `TooManyRequests` | Rate limit exceeded |
+| Status | Class             | Trigger                                   |
+| ------ | ----------------- | ----------------------------------------- |
+| `400`  | `ValidationError` | Field validation or malformed `where`     |
+| `401`  | `Unauthorized`    | Missing/expired credential                |
+| `403`  | `Forbidden`       | Authenticated but operation denied        |
+| `404`  | `NotFound`        | Missing doc, or read-denied (intentional) |
+| `429`  | `TooManyRequests` | Rate limit exceeded                       |
 
 ## Open questions
 

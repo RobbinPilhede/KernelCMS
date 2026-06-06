@@ -70,11 +70,11 @@ Collaborative editing is out of scope for the field model but designed for. Beca
 
 We use three categories. The distinction is not cosmetic — it determines serialization shape, what the toolbar offers, and how access control applies.
 
-| Concept | What it is | Examples | Serialized as |
-| --- | --- | --- | --- |
-| **Node** | Built-in structural element with text or children | `paragraph`, `heading`, `list`, `listItem`, `blockquote`, `codeBlock`, `image` | `{ type, attrs?, content? }` |
-| **Mark** | Inline annotation on a text run | `bold`, `italic`, `code`, `link`, `underline` | `{ type, attrs? }` on a text node's `marks[]` |
-| **Block** | User-defined, config-driven embed with its own field schema | `callout`, `mediaEmbed`, `codeSandbox` | `{ type: 'block', blockType, fields }` |
+| Concept   | What it is                                                  | Examples                                                                       | Serialized as                                 |
+| --------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------- |
+| **Node**  | Built-in structural element with text or children           | `paragraph`, `heading`, `list`, `listItem`, `blockquote`, `codeBlock`, `image` | `{ type, attrs?, content? }`                  |
+| **Mark**  | Inline annotation on a text run                             | `bold`, `italic`, `code`, `link`, `underline`                                  | `{ type, attrs? }` on a text node's `marks[]` |
+| **Block** | User-defined, config-driven embed with its own field schema | `callout`, `mediaEmbed`, `codeSandbox`                                         | `{ type: 'block', blockType, fields }`        |
 
 Nodes and marks are the editor's primitives — fixed in number, enabled or disabled per field via the `nodes`/`marks` arrays. **Blocks** are the extension point and the headline feature: they are the same `blocks` field type used elsewhere in KernelCMS, embedded inline. A block declares fields exactly like a collection does, and KernelCMS renders a sub-form (via TanStack Form) inside the editor for editing it.
 
@@ -176,37 +176,31 @@ The persisted value is JSON, versioned, and engine-agnostic. This is the contrac
   "schemaVersion": 1,
   "type": "doc",
   "content": [
-    { "type": "heading", "attrs": { "level": 2 }, "content": [
-      { "type": "text", "text": "Hello" }
-    ]},
-    { "type": "paragraph", "content": [
-      { "type": "text", "text": "world", "marks": [{ "type": "bold" }] }
-    ]},
-    { "type": "block", "blockType": "callout",
-      "fields": { "variant": "warning", "body": { "type": "doc", "content": [] } }
-    }
-  ]
+    { "type": "heading", "attrs": { "level": 2 }, "content": [{ "type": "text", "text": "Hello" }] },
+    { "type": "paragraph", "content": [{ "type": "text", "text": "world", "marks": [{ "type": "bold" }] }] },
+    {
+      "type": "block",
+      "blockType": "callout",
+      "fields": { "variant": "warning", "body": { "type": "doc", "content": [] } },
+    },
+  ],
 }
 ```
 
 The `serialize` module is the only place that touches both worlds:
 
-| Function | Direction | Used by |
-| --- | --- | --- |
-| `toModel(doc)` | ProseMirror → JSON | autosave, drafts, save |
-| `toDoc(model, schema)` | JSON → ProseMirror | editor hydration |
-| `toHTML(model, opts)` | JSON → HTML string | SSR / non-React frontends |
-| `toPlainText(model)` | JSON → string | search indexing, excerpts |
+| Function               | Direction          | Used by                   |
+| ---------------------- | ------------------ | ------------------------- |
+| `toModel(doc)`         | ProseMirror → JSON | autosave, drafts, save    |
+| `toDoc(model, schema)` | JSON → ProseMirror | editor hydration          |
+| `toHTML(model, opts)`  | JSON → HTML string | SSR / non-React frontends |
+| `toPlainText(model)`   | JSON → string      | search indexing, excerpts |
 
 `@kernel/richtext` exposes a typed React renderer for the common case, so frontends render the model without hand-writing serializers — the gap Sanity's Portable Text leaves to you:
 
 ```tsx
 import { RichText, defaultComponents } from '@kernel/richtext/react'
-
-<RichText
-  value={post.body}
-  components={{ ...defaultComponents, callout: Callout, mediaEmbed: MediaEmbed }}
-/>
+;<RichText value={post.body} components={{ ...defaultComponents, callout: Callout, mediaEmbed: MediaEmbed }} />
 ```
 
 `schemaVersion` is mandatory and enforced. When you change which nodes or blocks a field allows, KernelCMS detects the diff and generates a content migration alongside the database migration — the same diff-driven flow used for schema migrations. Renaming a block or dropping a mark is a tracked, reversible transform, not a silent data-corruption event. The plain-text projection feeds the search adapter so rich-text fields are full-text searchable without any extra indexing config.
@@ -217,4 +211,4 @@ Because the model is plain JSON, the shared query language reaches into it: `whe
 
 - **Collaboration transport.** ProseMirror gives us correct position mapping, but choosing Yjs (CRDT) vs. authority-server OT for `@kernel/collab` is unresolved. CRDT eases offline/edge but complicates access-controlled merges.
 - **Block schema evolution at scale.** Auto-generated content migrations cover renames and drops; complex field-shape changes inside deeply nested blocks may need an escape-hatch transform API rather than generated code.
-- **Markdown shortcuts vs. paste fidelity.** Input rules (`##` → heading) are in; whether to ship a configurable Markdown *paste* importer or keep paste strictly schema-sanitized is undecided.
+- **Markdown shortcuts vs. paste fidelity.** Input rules (`##` → heading) are in; whether to ship a configurable Markdown _paste_ importer or keep paste strictly schema-sanitized is undecided.

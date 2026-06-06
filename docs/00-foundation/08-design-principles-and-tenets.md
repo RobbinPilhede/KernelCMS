@@ -36,11 +36,11 @@ The `status` field narrows to the literal union `'draft' | 'published'` because 
 
 How this differs from the competition:
 
-| Surface | Payload | Sanity | Strapi | KernelCMS |
-|---|---|---|---|---|
-| Local API types | Generated `payload-types.ts` | None (GROQ is untyped) | Loose, mostly `any` | Inferred from config, no codegen |
-| Query `where` typing | Partial | Untyped GROQ strings | Untyped | Fully typed against schema |
-| REST/GraphQL response | Generated SDK optional | Typegen plugin | Manual | Shared inferred types |
+| Surface               | Payload                      | Sanity                 | Strapi              | KernelCMS                        |
+| --------------------- | ---------------------------- | ---------------------- | ------------------- | -------------------------------- |
+| Local API types       | Generated `payload-types.ts` | None (GROQ is untyped) | Loose, mostly `any` | Inferred from config, no codegen |
+| Query `where` typing  | Partial                      | Untyped GROQ strings   | Untyped             | Fully typed against schema       |
+| REST/GraphQL response | Generated SDK optional       | Typegen plugin         | Manual              | Shared inferred types            |
 
 Payload gets close but relies on a generated `payload-types.ts` file that drifts the moment you edit config without re-running typegen. Sanity's GROQ is a string language with no compile-time guarantees unless you bolt on `groq-codegen`. KernelCMS treats the config object as the type source, so the editor knows your schema the instant you save the file. For the wire protocols, `@kernel/client` exposes the same inferred types via TanStack Query so the frontend never hand-writes a response interface. See the type system overview and the query language spec.
 
@@ -78,24 +78,28 @@ Opinionated defaults are worthless if they trap you. Every abstraction in Kernel
 
 The escape-hatch ladder, from highest to lowest level:
 
-| Layer | Default | Escape hatch |
-|---|---|---|
-| Collection ops | `kernel.find()` / `kernel.update()` | `hooks` to intercept any operation |
-| Query language | `where` / `sort` / `depth` | Raw Drizzle query via `db.drizzle` |
-| Database | Drizzle adapter | Implement the `Adapter` contract yourself |
-| Admin field UI | Generated input component | Custom field component slot |
-| API routing | Auto-generated REST/GraphQL | Custom TanStack Start server functions |
-| Rich text | `@kernel/richtext` blocks | Register custom block + serializer |
+| Layer          | Default                             | Escape hatch                              |
+| -------------- | ----------------------------------- | ----------------------------------------- |
+| Collection ops | `kernel.find()` / `kernel.update()` | `hooks` to intercept any operation        |
+| Query language | `where` / `sort` / `depth`          | Raw Drizzle query via `db.drizzle`        |
+| Database       | Drizzle adapter                     | Implement the `Adapter` contract yourself |
+| Admin field UI | Generated input component           | Custom field component slot               |
+| API routing    | Auto-generated REST/GraphQL         | Custom TanStack Start server functions    |
+| Rich text      | `@kernel/richtext` blocks           | Register custom block + serializer        |
 
 ```ts
 const posts = collection({
   slug: 'posts',
-  fields: { /* ... */ },
+  fields: {
+    /* ... */
+  },
   hooks: {
-    beforeChange: [async ({ data, req }) => {
-      data.slug ??= slugify(data.title)
-      return data
-    }],
+    beforeChange: [
+      async ({ data, req }) => {
+        data.slug ??= slugify(data.title)
+        return data
+      },
+    ],
   },
   admin: {
     components: {
@@ -136,21 +140,21 @@ Performance is a measured contract, not a hope. Budgets are defined in config, c
 export default defineConfig({
   performance: {
     budgets: {
-      adminBundleKb: 220,        // initial admin JS, gzipped
-      apiP95Ms: 80,             // Local API p95 per operation
-      queryDepthMax: 4,         // default relationship resolution depth
-      listResponseMs: 150,      // collection list endpoint p95
+      adminBundleKb: 220, // initial admin JS, gzipped
+      apiP95Ms: 80, // Local API p95 per operation
+      queryDepthMax: 4, // default relationship resolution depth
+      listResponseMs: 150, // collection list endpoint p95
     },
   },
 })
 ```
 
-| Budget | Target | Enforced by |
-|---|---|---|
-| Admin initial bundle | <= 220 KB gzip | `kernel build --check-budgets` in CI |
-| Local API operation p95 | <= 80 ms | Benchmark suite in CI |
-| List view render | virtualized, O(visible rows) | TanStack Virtual + Table |
-| Relationship depth | bounded by `depth` param | Query planner |
+| Budget                  | Target                       | Enforced by                          |
+| ----------------------- | ---------------------------- | ------------------------------------ |
+| Admin initial bundle    | <= 220 KB gzip               | `kernel build --check-budgets` in CI |
+| Local API operation p95 | <= 80 ms                     | Benchmark suite in CI                |
+| List view render        | virtualized, O(visible rows) | TanStack Virtual + Table             |
+| Relationship depth      | bounded by `depth` param     | Query planner                        |
 
 The admin's use of TanStack Virtual means a 50,000-row collection renders only the visible window; memory and paint cost stay flat as data grows. Relationship resolution is bounded by an explicit `depth` parameter so a single query can never trigger unbounded join fan-out — a class of accidental N+1 that Strapi's `populate` and Sanity's deep GROQ projections make easy to hit. The CLI's `kernel build --check-budgets` compares the produced admin bundle and benchmark results against the declared budgets and exits non-zero on regression, so a slow change fails review rather than shipping. See [performance](../10-cloud-operations/07-scaling-and-performance-operations.md).
 

@@ -53,7 +53,9 @@ describe('diffSchema', () => {
     const current = schema(table('posts', [col('title'), col('legacy')]), table('drafts', [col('x')]))
     const next = schema(table('posts', [col('title')]))
     const plan = diffSchema(current, next)
-    expect(plan.ops.some((o) => o.kind === 'dropColumn' && o.column === 'legacy' && o.class === 'destructive')).toBe(true)
+    expect(plan.ops.some((o) => o.kind === 'dropColumn' && o.column === 'legacy' && o.class === 'destructive')).toBe(
+      true,
+    )
     expect(plan.ops.some((o) => o.kind === 'dropTable' && o.table === 'drafts')).toBe(true)
     expect(plan.hasDestructive).toBe(true)
   })
@@ -63,7 +65,9 @@ describe('diffSchema', () => {
     const next = schema(table('posts', [col('views', 'integer'), col('slug', 'text', { required: true })]))
     const plan = diffSchema(current, next)
     expect(plan.ops.some((o) => o.kind === 'alterColumnType' && o.from === 'text' && o.to === 'integer')).toBe(true)
-    expect(plan.ops.some((o) => o.kind === 'setColumnRequired' && o.required === true && o.class === 'destructive')).toBe(true)
+    expect(
+      plan.ops.some((o) => o.kind === 'setColumnRequired' && o.required === true && o.class === 'destructive'),
+    ).toBe(true)
   })
 
   it('orders creates before destructive drops', () => {

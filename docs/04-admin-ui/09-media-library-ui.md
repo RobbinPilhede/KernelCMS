@@ -32,7 +32,7 @@ export interface MediaUIState {
   folderId: string | null
   selected: Set<string>
   multiple: boolean
-  uploads: UploadTask[]   // optimistic, drives progress chips
+  uploads: UploadTask[] // optimistic, drives progress chips
 }
 
 export const mediaStore = new Store<MediaUIState>({
@@ -68,8 +68,8 @@ export const media = defineCollection({
   },
   admin: {
     media: {
-      defaultView: 'grid',          // 'grid' | 'list'
-      thumbnailSize: 'thumbnail',   // which imageSize feeds the grid
+      defaultView: 'grid', // 'grid' | 'list'
+      thumbnailSize: 'thumbnail', // which imageSize feeds the grid
       gridColumns: { base: 2, md: 4, xl: 6 },
     },
   },
@@ -82,10 +82,10 @@ export const media = defineCollection({
 
 The list query requests `depth: 0` and a narrow projection so the table stays light. Grid thumbnails are served from the `thumbnail` `imageSize`, never the original — the original may be a 30MB TIFF. Each cell is keyed by document `id`, so reordering on sort never remounts an image and re-triggers a network fetch.
 
-| View | Renderer | Virtualizer | Best for |
-|------|----------|-------------|----------|
-| Grid | `MediaGrid` (CSS grid + `aspect-ratio`) | row windowing | visual scanning, image collections |
-| List | `@kernel/ui` `DataTable` (Table) | row virtualizer | metadata, audit, bulk ops |
+| View | Renderer                                | Virtualizer     | Best for                           |
+| ---- | --------------------------------------- | --------------- | ---------------------------------- |
+| Grid | `MediaGrid` (CSS grid + `aspect-ratio`) | row windowing   | visual scanning, image collections |
+| List | `@kernel/ui` `DataTable` (Table)        | row virtualizer | metadata, audit, bulk ops          |
 
 Selection works identically in both: click selects, `Shift+Click` range-selects against the current query order, `Cmd/Ctrl+Click` toggles, and the whole thing is keyboard-drivable (arrow keys move a roving focus, `Space` toggles, `Enter` confirms in picker mode) to hold the WCAG 2.2 AA line.
 
@@ -106,11 +106,11 @@ export function useUpload(collection: string) {
       assertAllowed(file, collection)
       // 2. presigned direct-to-storage when the adapter supports it
       const { url, fields, key } = await client.storage.presign({
-        collection, filename: file.name, contentType: file.type,
+        collection,
+        filename: file.name,
+        contentType: file.type,
       })
-      await putWithProgress(url, fields, file, (pct) =>
-        mediaStore.setState((s) => patchProgress(s, file, pct)),
-      )
+      await putWithProgress(url, fields, file, (pct) => mediaStore.setState((s) => patchProgress(s, file, pct)))
       // 3. finalize: create the doc, run hooks, generate imageSizes
       return client.collections[collection].create({
         data: { filename: file.name, mimeType: file.type, filesize: file.size, storageKey: key },
@@ -149,10 +149,7 @@ Search is a debounced query against the upload collection using the same `where`
 const { data } = client.collections.media.find({
   where: {
     folder: { equals: folderId },
-    or: [
-      { filename: { contains: q } },
-      { alt: { like: q } },
-    ],
+    or: [{ filename: { contains: q } }, { alt: { like: q } }],
     mimeType: { in: ['image/png', 'image/jpeg'] }, // facet chip
   },
   sort: '-createdAt',
@@ -176,7 +173,7 @@ admin: {
 }
 ```
 
-The folder tree is a `Store`-backed component on the left. Dropping files onto a folder uploads into it; dropping a *selected asset* onto a folder moves it (with an optimistic update + invalidation). Strapi added folders relatively late and they remain a separate construct; Payload leans on relationships and collection filters instead of a folder UI. KernelCMS models folders as relationships *and* gives them a real tree UI — you get the queryable data model and the spatial navigation.
+The folder tree is a `Store`-backed component on the left. Dropping files onto a folder uploads into it; dropping a _selected asset_ onto a folder moves it (with an optimistic update + invalidation). Strapi added folders relatively late and they remain a separate construct; Payload leans on relationships and collection filters instead of a folder UI. KernelCMS models folders as relationships _and_ gives them a real tree UI — you get the queryable data model and the spatial navigation.
 
 ## Selecting media inside fields
 

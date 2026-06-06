@@ -13,11 +13,11 @@ import { defineConfig } from '@kernel/core'
 export default defineConfig({
   localization: {
     locales: [
-      { code: 'en',    label: 'English' },
+      { code: 'en', label: 'English' },
       { code: 'en-GB', label: 'English (UK)', fallback: 'en' },
-      { code: 'da',    label: 'Dansk',        fallback: 'en' },
-      { code: 'de',    label: 'Deutsch',      fallback: 'en' },
-      { code: 'ar',    label: 'العربية',       fallback: 'en', rtl: true },
+      { code: 'da', label: 'Dansk', fallback: 'en' },
+      { code: 'de', label: 'Deutsch', fallback: 'en' },
+      { code: 'ar', label: 'العربية', fallback: 'en', rtl: true },
     ],
     defaultLocale: 'en',
     // Resolve a missing localized value from the fallback chain at read time.
@@ -28,13 +28,13 @@ export default defineConfig({
 
 The `code` is an opaque string — we do not validate it against BCP 47, because real projects use region tags (`en-GB`), script tags (`zh-Hans`), and occasionally non-standard internal codes. The codes become a `const`-derived union throughout the typed API, so `Locale = 'en' | 'en-GB' | 'da' | 'de' | 'ar'` is inferred and a typo like `locale: 'eng'` fails at compile time. That inference is the practical win over Strapi, where locale codes are runtime strings configured in the admin and never reach your types.
 
-| Option | Type | Purpose |
-| --- | --- | --- |
-| `locales` | `LocaleConfig[]` | The full locale set; order controls switcher order |
-| `defaultLocale` | `string` | Used when a request omits `locale` |
-| `fallback` | `boolean` | Default read-time fallback behavior (overridable per request) |
-| `LocaleConfig.fallback` | `string` | Per-locale fallback target; chains are resolved transitively |
-| `LocaleConfig.rtl` | `boolean` | Flips admin direction and richText editor base direction |
+| Option                  | Type             | Purpose                                                       |
+| ----------------------- | ---------------- | ------------------------------------------------------------- |
+| `locales`               | `LocaleConfig[]` | The full locale set; order controls switcher order            |
+| `defaultLocale`         | `string`         | Used when a request omits `locale`                            |
+| `fallback`              | `boolean`        | Default read-time fallback behavior (overridable per request) |
+| `LocaleConfig.fallback` | `string`         | Per-locale fallback target; chains are resolved transitively  |
+| `LocaleConfig.rtl`      | `boolean`        | Flips admin direction and richText editor base direction      |
 
 Turning `localization` on after a project already has content is a non-breaking migration: existing single-value columns are migrated into the default locale's slot. See [Migrations](../03-persistence/08-migrations-engine.md) for how the schema diff handles the localized-column reshape per adapter.
 
@@ -49,12 +49,12 @@ import { defineCollection } from '@kernel/core'
 export const Posts = defineCollection({
   slug: 'posts',
   fields: [
-    { name: 'title',   type: 'text',     localized: true, required: true },
-    { name: 'slug',    type: 'text',     localized: true, unique: true },
-    { name: 'body',    type: 'richText', localized: true },
+    { name: 'title', type: 'text', localized: true, required: true },
+    { name: 'slug', type: 'text', localized: true, unique: true },
+    { name: 'body', type: 'richText', localized: true },
     // Shared across locales — one value, edited once.
-    { name: 'author',  type: 'relationship', to: 'users' },
-    { name: 'hero',    type: 'upload',   relationTo: 'media' },
+    { name: 'author', type: 'relationship', to: 'users' },
+    { name: 'hero', type: 'upload', relationTo: 'media' },
     // A localized array: each locale has its own ordering and items.
     {
       name: 'sections',
@@ -62,7 +62,7 @@ export const Posts = defineCollection({
       localized: true,
       fields: [
         { name: 'heading', type: 'text' },
-        { name: 'copy',    type: 'richText' },
+        { name: 'copy', type: 'richText' },
       ],
     },
   ],
@@ -153,10 +153,10 @@ const raw = await kernel.findByID('posts', 'p_8231', {
 
 Over the wire the parameter shapes are consistent:
 
-| Surface | Single locale | All locales | Disable fallback |
-| --- | --- | --- | --- |
-| REST | `GET /api/posts?locale=da` | `?locale=all` | `&fallback=false` |
-| GraphQL | `posts(locale: da)` | `locale: all` | `fallback: false` |
+| Surface     | Single locale               | All locales     | Disable fallback  |
+| ----------- | --------------------------- | --------------- | ----------------- |
+| REST        | `GET /api/posts?locale=da`  | `?locale=all`   | `&fallback=false` |
+| GraphQL     | `posts(locale: da)`         | `locale: all`   | `fallback: false` |
 | RPC / Local | `find('posts', { locale })` | `locale: 'all'` | `fallback: false` |
 
 GraphQL exposes the locale set as an enum generated from your config, so `locale: da` is validated by the schema rather than passed as a free string — another place where Strapi's stringly-typed locales lose to generated types. The typed [`@kernel/client`](../09-developer-experience/03-client-sdk-and-data-fetching.md) carries the same `Locale` union to the frontend, so a Next.js or TanStack DB-backed app cannot request a locale that does not exist.

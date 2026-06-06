@@ -20,7 +20,14 @@ import {
   type GraphQLFieldConfigMap,
   type ValueNode,
 } from 'graphql'
-import { describeConfig, type AdminCollection, type AdminField, type AuthUser, type Kernel, type Row } from '@kernel/core'
+import {
+  describeConfig,
+  type AdminCollection,
+  type AdminField,
+  type AuthUser,
+  type Kernel,
+  type Row,
+} from '@kernel/core'
 
 /** Per-request context: the resolved caller identity. */
 export interface GraphQLContext {
@@ -220,7 +227,8 @@ export function buildGraphQLSchema(kernel: Kernel): GraphQLSchema {
     mutationFields[`create${Name}`] = {
       type: objectType,
       args: { data: { type: new GraphQLNonNull(JSONScalar) } },
-      resolve: (_src, args, ctx) => kernel.create({ collection: collection.slug, data: args.data as Row, ...base(ctx) }),
+      resolve: (_src, args, ctx) =>
+        kernel.create({ collection: collection.slug, data: args.data as Row, ...base(ctx) }),
     }
     mutationFields[`update${Name}`] = {
       type: objectType,

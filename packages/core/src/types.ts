@@ -1,10 +1,4 @@
-import type {
-  DatabaseAdapter,
-  KernelSchema,
-  PaginatedResult,
-  Row,
-  Where,
-} from '@kernel/db'
+import type { DatabaseAdapter, KernelSchema, PaginatedResult, Row, Where } from '@kernel/db'
 import type { RichTextFeature, RichTextPreset } from '@kernel/richtext'
 import type { ImageProcessor, StorageAdapter } from '@kernel/storage'
 import type { KernelPlugin } from './plugins'
@@ -677,7 +671,16 @@ export interface Kernel {
 /** The Local-API surface handlers get, to read/write content from a job. */
 export type JobLocalApi = Pick<
   Kernel,
-  'find' | 'findByID' | 'create' | 'update' | 'updateMany' | 'delete' | 'deleteMany' | 'count' | 'findGlobal' | 'updateGlobal'
+  | 'find'
+  | 'findByID'
+  | 'create'
+  | 'update'
+  | 'updateMany'
+  | 'delete'
+  | 'deleteMany'
+  | 'count'
+  | 'findGlobal'
+  | 'updateGlobal'
 >
 
 export interface JobRunContext {

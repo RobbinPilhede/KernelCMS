@@ -66,18 +66,18 @@ const results = await kernel.find({
 
 Core responsibilities:
 
-| Concern | What the core owns |
-| --- | --- |
-| Config compilation | `kernel.config.ts` → runtime schema + generated TS types |
-| Operations | `find`, `findByID`, `create`, `update`, `delete`, `count` for collections; `findGlobal`/`updateGlobal` for globals |
-| Validation | sync, async, and cross-field validators per field type |
-| Access control | operation-, document-, and field-level checks, evaluated centrally |
-| Hooks | `beforeValidate`, `beforeChange`, `afterChange`, `beforeRead`, `afterRead`, `afterDelete` |
-| Versions & drafts | autosave snapshots, draft/published split, version history |
-| Localization | per-field locale resolution and fallback |
-| Query language | one `where`/`sort`/`pagination`/`depth` shape, compiled per adapter |
+| Concern            | What the core owns                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Config compilation | `kernel.config.ts` → runtime schema + generated TS types                                                           |
+| Operations         | `find`, `findByID`, `create`, `update`, `delete`, `count` for collections; `findGlobal`/`updateGlobal` for globals |
+| Validation         | sync, async, and cross-field validators per field type                                                             |
+| Access control     | operation-, document-, and field-level checks, evaluated centrally                                                 |
+| Hooks              | `beforeValidate`, `beforeChange`, `afterChange`, `beforeRead`, `afterRead`, `afterDelete`                          |
+| Versions & drafts  | autosave snapshots, draft/published split, version history                                                         |
+| Localization       | per-field locale resolution and fallback                                                                           |
+| Query language     | one `where`/`sort`/`pagination`/`depth` shape, compiled per adapter                                                |
 
-Because the core is in-process, the Local API has **zero serialization cost and full type inference** — calling `kernel.find` returns `Post[]`, not `unknown`. This is the same idea Payload's Local API exposes, but in KernelCMS the Local API is not a parallel path bolted beside REST; it *is* the path. REST, GraphQL, and RPC are thin shells over it, so there is exactly one place where access control and validation run. Sanity, by contrast, centralizes logic in a hosted dataset with GROQ; you do not get an in-process, fully typed operation core you can call from a server function.
+Because the core is in-process, the Local API has **zero serialization cost and full type inference** — calling `kernel.find` returns `Post[]`, not `unknown`. This is the same idea Payload's Local API exposes, but in KernelCMS the Local API is not a parallel path bolted beside REST; it _is_ the path. REST, GraphQL, and RPC are thin shells over it, so there is exactly one place where access control and validation run. Sanity, by contrast, centralizes logic in a hosted dataset with GROQ; you do not get an in-process, fully typed operation core you can call from a server function.
 
 ## The server layer (`@kernel/server`)
 
@@ -108,24 +108,24 @@ Three packages render the surfaces, all backed by the identical core operations:
 - **`@kernel/graphql`** generates a schema and resolvers from the same config; each resolver is a one-liner that forwards to `kernel.find`/`kernel.create`.
 - **`@kernel/rpc`** exposes the Local API as **typed RPC via TanStack Start server functions**, so the admin and `@kernel/client` call operations with the exact input/output types the core inferred — no codegen drift, no hand-written DTOs.
 
-Auth (`@kernel/auth`) runs as server middleware: it resolves the request into a `user`, and that `user` is threaded into every core call so access control evaluates server-side, on by default. This is a hard line — the admin never decides authorization; it only renders what the server returns after field-level filtering. Strapi’s role/permission plugin lives at the route layer and can be bypassed if you write a custom controller that forgets the policy. KernelCMS evaluates access in the core, so *every* surface inherits it for free.
+Auth (`@kernel/auth`) runs as server middleware: it resolves the request into a `user`, and that `user` is threaded into every core call so access control evaluates server-side, on by default. This is a hard line — the admin never decides authorization; it only renders what the server returns after field-level filtering. Strapi’s role/permission plugin lives at the route layer and can be bypassed if you write a custom controller that forgets the policy. KernelCMS evaluates access in the core, so _every_ surface inherits it for free.
 
 ## The admin layer (`@kernel/admin`)
 
 The admin is a **React application on TanStack Start**, config-driven end to end. It never imports an adapter or the core directly; it talks to the server over typed RPC (and uses REST/GraphQL only for external consumers). Each TanStack library maps to a concrete admin job:
 
-| Library | Admin responsibility |
-| --- | --- |
-| TanStack Start | SSR, server functions, routing for the admin host |
-| TanStack Router | type-safe routes + search-param state for list filters |
-| TanStack Query | all fetching, caching, and invalidation against RPC |
-| TanStack Table | collection list views: sort, filter, column sizing, virtualization |
-| TanStack Form | document edit forms, per-field binding and validation |
-| TanStack Store | lightweight reactive UI state (palette, panels, theme) |
-| TanStack Virtual | virtualized long lists and long documents |
-| TanStack DB | optional reactive client collections for live/offline editing |
+| Library          | Admin responsibility                                               |
+| ---------------- | ------------------------------------------------------------------ |
+| TanStack Start   | SSR, server functions, routing for the admin host                  |
+| TanStack Router  | type-safe routes + search-param state for list filters             |
+| TanStack Query   | all fetching, caching, and invalidation against RPC                |
+| TanStack Table   | collection list views: sort, filter, column sizing, virtualization |
+| TanStack Form    | document edit forms, per-field binding and validation              |
+| TanStack Store   | lightweight reactive UI state (palette, panels, theme)             |
+| TanStack Virtual | virtualized long lists and long documents                          |
+| TanStack DB      | optional reactive client collections for live/offline editing      |
 
-The field registry built in the core has a UI mirror in `@kernel/ui`: each field type ships a renderer, so the edit form is assembled from config, not hand-coded per collection. Validation is shared — the same validator definition runs client-side in TanStack Form for instant feedback and server-side in the core as the authority. Payload also drives its admin from config; KernelCMS’s wedge is that the *entire* admin runtime is TanStack, so list virtualization, form state, routing, and cache invalidation are one coherent system rather than a grab-bag of libraries.
+The field registry built in the core has a UI mirror in `@kernel/ui`: each field type ships a renderer, so the edit form is assembled from config, not hand-coded per collection. Validation is shared — the same validator definition runs client-side in TanStack Form for instant feedback and server-side in the core as the authority. Payload also drives its admin from config; KernelCMS’s wedge is that the _entire_ admin runtime is TanStack, so list virtualization, form state, routing, and cache invalidation are one coherent system rather than a grab-bag of libraries.
 
 ## The cloud layer (`@kernel/cloud`)
 
@@ -161,15 +161,15 @@ The same path serves a public REST read — only the entry shell differs (`@kern
 
 ## Subsystem responsibilities at a glance
 
-| Subsystem | Package | Owns | Must not |
-| --- | --- | --- | --- |
-| Core | `@kernel/core` | operations, validation, access, hooks, query language | touch HTTP, React, or a concrete DB driver |
-| Transports | `@kernel/rest`, `@kernel/graphql`, `@kernel/rpc` | request ↔ operation translation | re-implement access control |
-| Auth | `@kernel/auth` | resolve `user`, sessions, strategies | be consulted client-side as the authority |
-| Adapters | `@kernel/db-*`, `@kernel/storage`, … | persistence, blobs, queues, search | leak driver types into the core API |
-| Admin | `@kernel/admin`, `@kernel/ui` | config-driven UI, rendering, UX | call adapters or run authorization |
-| Client | `@kernel/client` | typed fetch for frontends | bypass access control |
-| Cloud | `@kernel/cloud` | multi-tenant hosting, billing, CDN | break config/data portability |
+| Subsystem  | Package                                          | Owns                                                  | Must not                                   |
+| ---------- | ------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------ |
+| Core       | `@kernel/core`                                   | operations, validation, access, hooks, query language | touch HTTP, React, or a concrete DB driver |
+| Transports | `@kernel/rest`, `@kernel/graphql`, `@kernel/rpc` | request ↔ operation translation                       | re-implement access control                |
+| Auth       | `@kernel/auth`                                   | resolve `user`, sessions, strategies                  | be consulted client-side as the authority  |
+| Adapters   | `@kernel/db-*`, `@kernel/storage`, …             | persistence, blobs, queues, search                    | leak driver types into the core API        |
+| Admin      | `@kernel/admin`, `@kernel/ui`                    | config-driven UI, rendering, UX                       | call adapters or run authorization         |
+| Client     | `@kernel/client`                                 | typed fetch for frontends                             | bypass access control                      |
+| Cloud      | `@kernel/cloud`                                  | multi-tenant hosting, billing, CDN                    | break config/data portability              |
 
 For the persistence contract every `@kernel/db-*` package implements, see [the adapter contract](../03-persistence/00-persistence-overview-and-adapter-contract.md). For how generated types flow from config to client, see [config-as-code](./adr/0003-config-as-code.md).
 

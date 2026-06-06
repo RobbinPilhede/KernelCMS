@@ -21,8 +21,7 @@ import {
 } from './index'
 import type { AuthUser, Kernel, KernelPlugin } from './index'
 
-const isAdmin = ({ req }: { req: { user: AuthUser | null } }): boolean =>
-  Boolean(req.user?.roles?.includes('admin'))
+const isAdmin = ({ req }: { req: { user: AuthUser | null } }): boolean => Boolean(req.user?.roles?.includes('admin'))
 
 function buildConfig() {
   return defineConfig({
@@ -220,9 +219,7 @@ describe('bulk operations', () => {
 
 describe('validation', () => {
   it('rejects a document missing a required field', async () => {
-    await expect(kernel.create({ collection: 'posts', data: {}, ...admin })).rejects.toBeInstanceOf(
-      ValidationError,
-    )
+    await expect(kernel.create({ collection: 'posts', data: {}, ...admin })).rejects.toBeInstanceOf(ValidationError)
   })
 
   it('reports the failing field path and message', async () => {
@@ -382,7 +379,7 @@ describe('blocks', () => {
     const layout = builder.fields.find((f) => f.name === 'layout')!
     expect(layout.type).toBe('blocks')
     expect(layout.blocks?.map((b) => b.slug).sort()).toEqual(['cta', 'hero'])
-    const hero = layout.blocks?.find((b) => b.slug === 'hero')!
+    const hero = layout.blocks!.find((b) => b.slug === 'hero')!
     expect(hero.labels.plural).toBe('Heroes')
     expect(hero.fields.map((f) => f.name)).toEqual(['heading', 'subheading'])
   })
@@ -480,13 +477,23 @@ describe('uploads', () => {
   it('enforces the size limit and the mime allow-list', async () => {
     const tooBig = Buffer.concat([PNG, Buffer.alloc(2048)])
     await expect(
-      kernel.upload({ collection: 'media', file: { data: tooBig, name: 'big.png', mimeType: 'image/png' }, data: { alt: 'x' }, ...admin }),
+      kernel.upload({
+        collection: 'media',
+        file: { data: tooBig, name: 'big.png', mimeType: 'image/png' },
+        data: { alt: 'x' },
+        ...admin,
+      }),
     ).rejects.toBeInstanceOf(ValidationError)
 
     const gif = Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])
     // image/gif matches 'image/*', so the allow-list passes — but declare a disallowed type.
     await expect(
-      kernel.upload({ collection: 'media', file: { data: gif, name: 'a.txt', mimeType: 'text/plain' }, data: { alt: 'x' }, ...admin }),
+      kernel.upload({
+        collection: 'media',
+        file: { data: gif, name: 'a.txt', mimeType: 'text/plain' },
+        data: { alt: 'x' },
+        ...admin,
+      }),
     ).rejects.toBeInstanceOf(ValidationError)
   })
 
@@ -812,8 +819,7 @@ describe('login + brute-force protection', () => {
   })
 
   it('locks the identifier after repeated failures', async () => {
-    const attempt = () =>
-      secure.login({ collection: 'users', email: 'ghost@example.com', password: 'wrong-password' })
+    const attempt = () => secure.login({ collection: 'users', email: 'ghost@example.com', password: 'wrong-password' })
 
     for (let i = 0; i < 10; i++) {
       await expect(attempt()).rejects.toBeInstanceOf(UnauthorizedError)
@@ -833,7 +839,13 @@ describe('presentational fields (row / tabs / ui)', () => {
             slug: 'pages',
             access: { read: () => true },
             fields: [
-              { type: 'row', fields: [{ name: 'title', type: 'text', required: true }, { name: 'subtitle', type: 'text' }] },
+              {
+                type: 'row',
+                fields: [
+                  { name: 'title', type: 'text', required: true },
+                  { name: 'subtitle', type: 'text' },
+                ],
+              },
               {
                 type: 'tabs',
                 tabs: [
@@ -884,7 +896,10 @@ describe('presentational fields (row / tabs / ui)', () => {
             {
               slug: 'pages',
               access: { read: () => true },
-              fields: [{ type: 'row', fields: [{ name: 'title', type: 'text' }] }, { type: 'ui', name: 'btn' }],
+              fields: [
+                { type: 'row', fields: [{ name: 'title', type: 'text' }] },
+                { type: 'ui', name: 'btn' },
+              ],
             },
           ],
         }),
@@ -901,7 +916,9 @@ describe('systemInfo', () => {
     const info = systemInfo(kernel)
     expect(info.name).toBe('KernelCMS')
     expect(info.version).toMatch(/^\d+\.\d+\.\d+$/)
-    expect(info.collections.map((c) => c.slug)).toEqual(expect.arrayContaining(['media', 'authors', 'posts', 'articles']))
+    expect(info.collections.map((c) => c.slug)).toEqual(
+      expect.arrayContaining(['media', 'authors', 'posts', 'articles']),
+    )
     expect(info.globals).toContain('settings')
     // Derived from the buildConfig fixture: media=upload+storage, articles=drafts, posts=versions.
     expect(info.capabilities.uploads).toBe(true)
@@ -952,7 +969,9 @@ describe('doctor', () => {
       sanitizeConfig({
         secret: 'a-sufficiently-long-secret-value',
         db: sqliteAdapter({ url: ':memory:' }),
-        collections: [{ slug: 'media', upload: true, access: { read: () => true }, fields: [{ name: 'alt', type: 'text' }] }],
+        collections: [
+          { slug: 'media', upload: true, access: { read: () => true }, fields: [{ name: 'alt', type: 'text' }] },
+        ],
       }),
     )
     expect(report.ok).toBe(false)
@@ -965,7 +984,11 @@ describe('doctor', () => {
         secret: 'a-sufficiently-long-secret-value',
         db: sqliteAdapter({ url: ':memory:' }),
         collections: [
-          { slug: 'posts', access: { read: () => true }, fields: [{ name: 'author', type: 'relationship', relationTo: 'ghosts' }] },
+          {
+            slug: 'posts',
+            access: { read: () => true },
+            fields: [{ name: 'author', type: 'relationship', relationTo: 'ghosts' }],
+          },
         ],
       }),
     ).toContain('unknown-relation')
@@ -974,7 +997,9 @@ describe('doctor', () => {
   it('escalates the insecure dev secret to an error in production', () => {
     const cfg = defineConfig({
       db: sqliteAdapter({ url: ':memory:' }),
-      collections: [{ slug: 'posts', auth: true, access: { read: () => true }, fields: [{ name: 'title', type: 'text' }] }],
+      collections: [
+        { slug: 'posts', auth: true, access: { read: () => true }, fields: [{ name: 'title', type: 'text' }] },
+      ],
     })
     const dev = runDoctor(sanitizeConfig(cfg), { env: 'development' })
     const prod = runDoctor(sanitizeConfig(cfg), { env: 'production' })
@@ -1063,7 +1088,11 @@ describe('API keys', () => {
 
 describe('plugins', () => {
   const admin = { overrideAccess: true }
-  const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const slugify = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
 
   async function pluginKernel(plugins: KernelPlugin[]): Promise<Kernel> {
     const k = await initKernel(
@@ -1108,7 +1137,10 @@ describe('plugins', () => {
             ...collection.hooks,
             beforeChange: [
               ...(collection.hooks?.beforeChange ?? []),
-              ({ data }: { data: Record<string, unknown> }) => ({ ...data, auto_slug: slugify(String(data[options.from] ?? '')) }),
+              ({ data }: { data: Record<string, unknown> }) => ({
+                ...data,
+                auto_slug: slugify(String(data[options.from] ?? '')),
+              }),
             ],
           },
         })),
@@ -1124,12 +1156,17 @@ describe('plugins', () => {
     const a = definePlugin(() => ({
       name: 'test/a',
       setup: (ctx) =>
-        ctx.extend.addCollections({ slug: 'widgets', access: { read: () => true }, fields: [{ name: 'name', type: 'text' }] }),
+        ctx.extend.addCollections({
+          slug: 'widgets',
+          access: { read: () => true },
+          fields: [{ name: 'name', type: 'text' }],
+        }),
     }))
     const b = definePlugin(() => ({
       name: 'test/b',
       dependsOn: ['test/a'],
-      setup: (ctx) => ctx.extend.collections(['widgets'], (c) => ({ ...c, fields: [...c.fields, { name: 'color', type: 'text' }] })),
+      setup: (ctx) =>
+        ctx.extend.collections(['widgets'], (c) => ({ ...c, fields: [...c.fields, { name: 'color', type: 'text' }] })),
     }))
     const k = await pluginKernel([b(), a()]) // b before a in the array
     const schema = describeConfig(k.config)

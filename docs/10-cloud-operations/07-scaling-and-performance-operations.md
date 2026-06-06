@@ -50,12 +50,12 @@ export default defineConfig({
 
 Scale on the signals that actually correlate with KernelCMS load: request concurrency and event-loop lag, not raw CPU. A node saturating its DB pool will show high latency at low CPU, and CPU-based autoscaling will under-provision. On Kubernetes, drive the HPA from a custom metric exported by `@kernel/server`'s `/metrics` endpoint.
 
-| Signal | Source | Scale-out trigger | Why |
-|---|---|---|---|
-| In-flight requests / replica | `kernel_inflight_requests` | > 70% of `concurrency` | Direct saturation measure |
-| Event-loop lag p99 | `kernel_eventloop_lag_ms` | > 50ms | JS single-thread starvation |
-| DB pool wait time | `kernel_db_pool_wait_ms` | > 20ms sustained | DB is the bottleneck, not the node |
-| Queue depth | `kernel_queue_depth` | per-job SLA | Background work backing up |
+| Signal                       | Source                     | Scale-out trigger      | Why                                |
+| ---------------------------- | -------------------------- | ---------------------- | ---------------------------------- |
+| In-flight requests / replica | `kernel_inflight_requests` | > 70% of `concurrency` | Direct saturation measure          |
+| Event-loop lag p99           | `kernel_eventloop_lag_ms`  | > 50ms                 | JS single-thread starvation        |
+| DB pool wait time            | `kernel_db_pool_wait_ms`   | > 20ms sustained       | DB is the bottleneck, not the node |
+| Queue depth                  | `kernel_queue_depth`       | per-job SLA            | Background work backing up         |
 
 The admin app deserves separate scaling. It's a TanStack Start SSR app that does little CPU work per request once TanStack Query has warmed its caches client-side. Run it as its own deployment so a traffic spike on the public REST/GraphQL API never starves editors in the panel.
 
@@ -71,10 +71,7 @@ import { postgresAdapter } from '@kernel/db-postgres'
 export default defineConfig({
   db: postgresAdapter({
     primary: { url: process.env.DATABASE_URL },
-    replicas: [
-      { url: process.env.DATABASE_REPLICA_1_URL },
-      { url: process.env.DATABASE_REPLICA_2_URL },
-    ],
+    replicas: [{ url: process.env.DATABASE_REPLICA_1_URL }, { url: process.env.DATABASE_REPLICA_2_URL }],
     pool: { max: 20, idleTimeoutMs: 30_000 },
     // Operations within this window after a write are pinned to the
     // primary for the same session, so editors never see stale reads.
@@ -154,12 +151,12 @@ On the client and admin, caching is TanStack Query, not an ad-hoc layer. `@kerne
 
 The edge tier matters most for read-heavy public sites. KernelCMS Cloud fronts the auto-generated REST and GraphQL `GET` surfaces with a global CDN and propagates invalidation events to purge by tag on publish — the same mental model Sanity offers with its CDN, but over your own content config and exposed on self-host via standard `Cache-Control` plus a purge webhook. Draft and access-controlled reads are never cached at the edge; the access-control layer runs server-side per request, so personalized responses bypass tiers 1 and 2 entirely.
 
-| Tier | TTL | Invalidation | Caches drafts/private? |
-|---|---|---|---|
-| CDN / edge | minutes–hours | tag purge on publish | No |
-| `@kernel/cache` | seconds–minutes | tag-based on every write | No (per-user keyed) |
-| TanStack Query | `staleTime` | mutation invalidation | Yes (client memory) |
-| DB plan cache | connection | automatic | n/a |
+| Tier            | TTL             | Invalidation             | Caches drafts/private? |
+| --------------- | --------------- | ------------------------ | ---------------------- |
+| CDN / edge      | minutes–hours   | tag purge on publish     | No                     |
+| `@kernel/cache` | seconds–minutes | tag-based on every write | No (per-user keyed)    |
+| TanStack Query  | `staleTime`     | mutation invalidation    | Yes (client memory)    |
+| DB plan cache   | connection      | automatic                | n/a                    |
 
 ## Load Testing
 
@@ -178,9 +175,14 @@ import http from 'k6/http'
 
 export const options = {
   scenarios: {
-    reads: { executor: 'ramping-vus', exec: 'listAndRead', stages: [
-      { duration: '2m', target: 200 }, { duration: '5m', target: 200 },
-    ]},
+    reads: {
+      executor: 'ramping-vus',
+      exec: 'listAndRead',
+      stages: [
+        { duration: '2m', target: 200 },
+        { duration: '5m', target: 200 },
+      ],
+    },
     writes: { executor: 'constant-vus', exec: 'publish', vus: 10, duration: '7m' },
   },
   thresholds: { 'http_req_duration{scenario:reads}': ['p(99)<400'] },

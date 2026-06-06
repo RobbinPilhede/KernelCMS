@@ -46,10 +46,10 @@ export interface ChangeEvent {
 
 KernelCMS ships two transports and picks deliberately rather than forcing one. The selection is per-use-case, not per-deploy.
 
-| Transport | Direction | Use case | Reconnect | Cost |
-|-----------|-----------|----------|-----------|------|
-| SSE | server → client | Live queries, list views, live preview, dashboards | Native `Last-Event-ID` resume | Cheap, HTTP/2-friendly, proxy-friendly |
-| WebSocket | bidirectional | Presence, collaborative editing, cursor/awareness | Manual resume token | Heavier, sticky sessions or shared pub/sub needed |
+| Transport | Direction       | Use case                                           | Reconnect                     | Cost                                              |
+| --------- | --------------- | -------------------------------------------------- | ----------------------------- | ------------------------------------------------- |
+| SSE       | server → client | Live queries, list views, live preview, dashboards | Native `Last-Event-ID` resume | Cheap, HTTP/2-friendly, proxy-friendly            |
+| WebSocket | bidirectional   | Presence, collaborative editing, cursor/awareness  | Manual resume token           | Heavier, sticky sessions or shared pub/sub needed |
 
 The rule: **if the client only consumes, use SSE; if the client also publishes ephemeral state (cursors, locks, typing), use WebSocket.** Most read-side realtime — the bulk of CMS traffic — is one-directional, so SSE is the default and degrades gracefully through corporate proxies and serverless edges where long-lived WebSockets are painful. This is a sharper split than Strapi, which routes everything through Socket.IO.
 
@@ -134,7 +134,9 @@ export default defineConfig({
     {
       slug: 'posts',
       realtime: { enabled: true, presence: true, collaboration: true },
-      fields: [/* ... */],
+      fields: [
+        /* ... */
+      ],
     },
     { slug: 'audit-logs', realtime: { enabled: false } }, // never streamed
   ],
@@ -191,13 +193,13 @@ clients ────┤  SSE/WS    │     │  SSE/WS    │     │  SSE/WS   
 
 **Backpressure and limits.** Each subscriber has a bounded outbound queue; slow consumers are coalesced (multiple updates to the same `id` collapse to the latest) and, past a watermark, dropped to a `resync` directive rather than blowing memory. Per-connection and per-user subscription caps, plus message-rate limits, are enforced at the host and reuse the same rate-limit config as the REST/RPC surfaces.
 
-| Concern | Mechanism | Default |
-|---------|-----------|---------|
-| Slow consumer | Per-id coalescing + bounded queue | 1k events / conn |
-| Queue overflow | Emit `resync`, drop buffer | watermark 80% |
-| Connection cap | Per-user / per-IP limit | 50 / user |
-| Liveness | Heartbeat ping/comment | 15s |
-| Cross-node delivery | Shared pub/sub adapter | required > 1 node |
+| Concern             | Mechanism                         | Default           |
+| ------------------- | --------------------------------- | ----------------- |
+| Slow consumer       | Per-id coalescing + bounded queue | 1k events / conn  |
+| Queue overflow      | Emit `resync`, drop buffer        | watermark 80%     |
+| Connection cap      | Per-user / per-IP limit           | 50 / user         |
+| Liveness            | Heartbeat ping/comment            | 15s               |
+| Cross-node delivery | Shared pub/sub adapter            | required > 1 node |
 
 **Cloud vs self-host.** Self-hosting realtime is fully supported — pick `pgRealtime` for one Postgres-backed box, graduate to Redis or NATS as you scale, and front WebSockets with a sticky or hashed load balancer. KernelCMS Cloud runs a managed multi-region fan-out tier with global edge SSE termination and replicated presence, so live preview and collaboration work across regions without you operating the bus. Because the adapter contract is identical in both, a subscription written against self-host behaves identically on Cloud — no lock-in, per the project's portability tenet.
 

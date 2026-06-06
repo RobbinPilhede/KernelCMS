@@ -6,15 +6,15 @@ KernelCMS treats security as a property of the operation core, not a middleware 
 
 A headless CMS is an attractive target because it sits between untrusted public traffic and a privileged data store, and because it generates APIs automatically from config. The surfaces KernelCMS must defend:
 
-| Surface | Entry points | Primary threats |
-| --- | --- | --- |
-| Public content APIs | `@kernel/rest`, `@kernel/graphql`, public RPC | Unauthorized read, enumeration, query-cost abuse, injection |
-| Admin app | `@kernel/admin` (TanStack Start) | CSRF, XSS via rich text, session theft, privilege escalation |
-| Authoring writes | mutations across all surfaces | Injection, mass-assignment, stored XSS, IDOR |
-| Uploads & media | `@kernel/storage` adapters | SSRF (remote-URL ingest), malicious files, path traversal |
-| Server functions | TanStack Start RPC | Forged calls, deserialization abuse |
-| Webhooks & integrations | outbound hooks, OAuth callbacks | SSRF, signature forgery, secret leakage |
-| Config & deploy | `kernel.config.ts`, env, adapters | Hardcoded secrets, insecure adapter defaults |
+| Surface                 | Entry points                                  | Primary threats                                              |
+| ----------------------- | --------------------------------------------- | ------------------------------------------------------------ |
+| Public content APIs     | `@kernel/rest`, `@kernel/graphql`, public RPC | Unauthorized read, enumeration, query-cost abuse, injection  |
+| Admin app               | `@kernel/admin` (TanStack Start)              | CSRF, XSS via rich text, session theft, privilege escalation |
+| Authoring writes        | mutations across all surfaces                 | Injection, mass-assignment, stored XSS, IDOR                 |
+| Uploads & media         | `@kernel/storage` adapters                    | SSRF (remote-URL ingest), malicious files, path traversal    |
+| Server functions        | TanStack Start RPC                            | Forged calls, deserialization abuse                          |
+| Webhooks & integrations | outbound hooks, OAuth callbacks               | SSRF, signature forgery, secret leakage                      |
+| Config & deploy         | `kernel.config.ts`, env, adapters             | Hardcoded secrets, insecure adapter defaults                 |
 
 The defining property of KernelCMS's surface is that **the API shape is derived from `kernel.config.ts`**. Payload, Sanity, and Strapi share this generative model and inherit the same risk: a field added in config silently becomes queryable and writable. KernelCMS's answer is that generation never produces an open default — every generated endpoint is denied until an access rule grants it. Strapi historically shipped with permissive defaults on its public role, which produced a long tail of accidental data exposure; KernelCMS inverts that. Unspecified access is `false`.
 
@@ -43,28 +43,28 @@ Validation is part of the field definition, not bolted on at the route. Each fie
 
 ```ts
 // kernel.config.ts
-import { defineCollection, fields } from "@kernel/core";
+import { defineCollection, fields } from '@kernel/core'
 
 export const posts = defineCollection({
-  slug: "posts",
+  slug: 'posts',
   fields: {
     title: fields.text({ required: true, maxLength: 200 }),
     slug: fields.text({
       required: true,
-      validate: (v) => /^[a-z0-9-]+$/.test(v) || "slug must be kebab-case",
+      validate: (v) => /^[a-z0-9-]+$/.test(v) || 'slug must be kebab-case',
     }),
     excerpt: fields.textarea({ maxLength: 500 }),
     canonicalUrl: fields.text({
-      validate: async (v) => (await isHttpsUrl(v)) || "must be an https URL",
+      validate: async (v) => (await isHttpsUrl(v)) || 'must be an https URL',
     }),
     body: fields.richText(),
   },
-});
+})
 ```
 
 Three rules hold across the data layer:
 
-- **Whitelist, not blacklist.** Unknown fields in a write payload are rejected, not silently dropped. This closes mass-assignment: a client cannot set `author`, `publishedAt`, or `_id` unless the field exists *and* the field-level access rule permits writing it. Strapi's older content API allowed populating relations a caller shouldn't see; KernelCMS resolves `depth` expansion through the same access checks as a direct read.
+- **Whitelist, not blacklist.** Unknown fields in a write payload are rejected, not silently dropped. This closes mass-assignment: a client cannot set `author`, `publishedAt`, or `_id` unless the field exists _and_ the field-level access rule permits writing it. Strapi's older content API allowed populating relations a caller shouldn't see; KernelCMS resolves `depth` expansion through the same access checks as a direct read.
 - **Parse at the boundary, trust internally.** By the time a value reaches a `beforeChange` hook it is already typed and range-checked. Hooks operate on validated data, so business logic never re-parses untrusted strings.
 - **Query cost is bounded.** Pagination has a hard server `maxLimit`, `depth` has a configurable ceiling, and the GraphQL adapter enforces query depth and complexity limits. This blunts the resource-exhaustion vector that unbounded `populate`/`depth` queries create.
 
@@ -72,13 +72,13 @@ Output encoding is contextual and happens on egress, not in storage. KernelCMS s
 
 ```ts
 // @kernel/richtext — allowlist enforced at serialize time
-import { serializeHtml, defaultSchema } from "@kernel/richtext";
+import { serializeHtml, defaultSchema } from '@kernel/richtext'
 
 const html = serializeHtml(doc.body, {
-  schema: defaultSchema,            // nodes/marks allowlist
+  schema: defaultSchema, // nodes/marks allowlist
   allowedHref: (href) => /^(https?:|mailto:|\/)/.test(href),
   // unknown nodes are dropped, not rendered
-});
+})
 ```
 
 ## CSRF, XSS, and SSRF Defenses
@@ -94,12 +94,12 @@ The admin authenticates with cookie-based sessions issued by `@kernel/auth`. Coo
 export default defineConfig({
   security: {
     csrf: {
-      enabled: true,                 // on by default for cookie auth
-      sameSite: "lax",
-      trustedOrigins: ["https://admin.example.com"],
+      enabled: true, // on by default for cookie auth
+      sameSite: 'lax',
+      trustedOrigins: ['https://admin.example.com'],
     },
   },
-});
+})
 ```
 
 Token-authenticated API clients (Bearer/API key) are exempt from CSRF checks because they don't ride ambient cookies — there is nothing for a cross-site request to forge.
@@ -114,18 +114,18 @@ SSRF is the under-discussed CMS vector: remote-image ingest, webhook delivery, a
 
 ```ts
 // @kernel/server — outbound request guard
-import { guardedFetch } from "@kernel/server";
+import { guardedFetch } from '@kernel/server'
 
 await guardedFetch(remoteUrl, {
-  allowPrivateNetwork: false,   // blocks 10/8, 127/8, 169.254/16, fc00::/7, ::1
-  allowedProtocols: ["https:"],
-  maxRedirects: 2,              // each hop re-validated post-DNS-resolution
+  allowPrivateNetwork: false, // blocks 10/8, 127/8, 169.254/16, fc00::/7, ::1
+  allowedProtocols: ['https:'],
+  maxRedirects: 2, // each hop re-validated post-DNS-resolution
   timeoutMs: 5000,
   maxBytes: 25 * 1024 * 1024,
-});
+})
 ```
 
-The guard resolves DNS first and validates the *resolved* IP against the private-range denylist, which defeats DNS-rebinding and `http://localhost` tricks. Redirects are followed manually and re-checked at every hop. Webhook destinations are restricted to an operator-configured allowlist, and outbound calls never inherit ambient cloud credentials — relevant on KernelCMS Cloud, where an unguarded fetch to `169.254.169.254` would expose the instance metadata service.
+The guard resolves DNS first and validates the _resolved_ IP against the private-range denylist, which defeats DNS-rebinding and `http://localhost` tricks. Redirects are followed manually and re-checked at every hop. Webhook destinations are restricted to an operator-configured allowlist, and outbound calls never inherit ambient cloud credentials — relevant on KernelCMS Cloud, where an unguarded fetch to `169.254.169.254` would expose the instance metadata service.
 
 ## CSP and Security Headers
 
@@ -146,15 +146,15 @@ Content-Security-Policy:
 
 The full header set, applied by `@kernel/server`:
 
-| Header | Value | Purpose |
-| --- | --- | --- |
-| `Content-Security-Policy` | strict, nonce-based | XSS containment |
-| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains; preload` | force HTTPS |
-| `X-Content-Type-Options` | `nosniff` | block MIME sniffing |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | limit referrer leakage |
-| `X-Frame-Options` / `frame-ancestors` | `DENY` / `'none'` | clickjacking |
-| `Permissions-Policy` | deny camera, geolocation, etc. | reduce feature surface |
-| `Cross-Origin-Opener-Policy` | `same-origin` | isolate browsing context |
+| Header                                | Value                                          | Purpose                  |
+| ------------------------------------- | ---------------------------------------------- | ------------------------ |
+| `Content-Security-Policy`             | strict, nonce-based                            | XSS containment          |
+| `Strict-Transport-Security`           | `max-age=63072000; includeSubDomains; preload` | force HTTPS              |
+| `X-Content-Type-Options`              | `nosniff`                                      | block MIME sniffing      |
+| `Referrer-Policy`                     | `strict-origin-when-cross-origin`              | limit referrer leakage   |
+| `X-Frame-Options` / `frame-ancestors` | `DENY` / `'none'`                              | clickjacking             |
+| `Permissions-Policy`                  | deny camera, geolocation, etc.                 | reduce feature surface   |
+| `Cross-Origin-Opener-Policy`          | `same-origin`                                  | isolate browsing context |
 
 ```ts
 // kernel.config.ts — headers are configurable but secure by default
@@ -163,14 +163,14 @@ export default defineConfig({
     headers: {
       csp: {
         directives: {
-          imgSrc: ["'self'", "data:", "https://cdn.example.com"],
-          connectSrc: ["'self'", "https://api.example.com"],
+          imgSrc: ["'self'", 'data:', 'https://cdn.example.com'],
+          connectSrc: ["'self'", 'https://api.example.com'],
         },
       },
       hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
     },
   },
-});
+})
 ```
 
 CORS is explicit-allowlist only. A wildcard origin combined with credentials is a configuration error that `@kernel/server` refuses to start with — you cannot accidentally ship `Access-Control-Allow-Origin: *` alongside cookie auth. This is stricter than the defaults several competing CMSs ship for local development and then forget to tighten.
@@ -181,17 +181,17 @@ Secrets are never literals in `kernel.config.ts`. Config reads them from the env
 
 ```ts
 // kernel.config.ts
-import { defineConfig, env } from "@kernel/core";
+import { defineConfig, env } from '@kernel/core'
 
 export default defineConfig({
-  secret: env.required("KERNEL_SECRET"),     // throws at boot if absent
-  db: postgres({ url: env.required("DATABASE_URL") }),
+  secret: env.required('KERNEL_SECRET'), // throws at boot if absent
+  db: postgres({ url: env.required('DATABASE_URL') }),
   storage: s3({
-    accessKeyId: env.required("S3_ACCESS_KEY_ID"),
-    secretAccessKey: env.required("S3_SECRET_ACCESS_KEY"),
+    accessKeyId: env.required('S3_ACCESS_KEY_ID'),
+    secretAccessKey: env.required('S3_SECRET_ACCESS_KEY'),
   }),
-  email: resend({ apiKey: env.required("RESEND_API_KEY") }),
-});
+  email: resend({ apiKey: env.required('RESEND_API_KEY') }),
+})
 ```
 
 Handling rules:
@@ -201,7 +201,7 @@ Handling rules:
 - **At rest.** Session secrets and OAuth client secrets live in env or a secret manager. On KernelCMS Cloud, secrets are stored encrypted and injected at runtime, never written to the project's config repo — preserving the config-as-code portability guarantee without committing credentials.
 - **Rotation.** `KERNEL_SECRET` supports a primary/previous pair so signing keys rotate without invalidating every active session at once.
 
-The principle: config-as-code is the source of truth for *shape*, never for *secrets*. The shape is committed; the values are injected.
+The principle: config-as-code is the source of truth for _shape_, never for _secrets_. The shape is committed; the values are injected.
 
 ## Open Questions
 

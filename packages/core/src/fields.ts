@@ -78,7 +78,8 @@ export function joinFields(
 ): Array<{ name: string; collection: string; on: string; limit: number }> {
   const out: Array<{ name: string; collection: string; on: string; limit: number }> = []
   for (const field of fields) {
-    if (field.type === 'join') out.push({ name: field.name, collection: field.collection, on: field.on, limit: field.limit ?? 100 })
+    if (field.type === 'join')
+      out.push({ name: field.name, collection: field.collection, on: field.on, limit: field.limit ?? 100 })
     else if (field.type === 'row') out.push(...joinFields(field.fields))
     else if (field.type === 'tabs') for (const tab of field.tabs) out.push(...joinFields(tab.fields))
   }
@@ -164,12 +165,7 @@ export function applyDefaults(fieldsIn: ConfigField[], data: Row): Row {
 }
 
 function isEmpty(value: unknown): boolean {
-  return (
-    value === undefined ||
-    value === null ||
-    value === '' ||
-    (Array.isArray(value) && value.length === 0)
-  )
+  return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
 }
 
 export interface ValidateContext {
@@ -312,7 +308,9 @@ function validateFieldType(field: AnyField, value: unknown, label: string): stri
         const ref = v as { relationTo?: unknown; value?: unknown }
         return (
           typeof ref.relationTo === 'string' &&
-          (typeof ref.value === 'string' || typeof ref.value === 'number' || (typeof ref.value === 'object' && ref.value !== null))
+          (typeof ref.value === 'string' ||
+            typeof ref.value === 'number' ||
+            (typeof ref.value === 'object' && ref.value !== null))
         )
       }
       if (field.hasMany) {

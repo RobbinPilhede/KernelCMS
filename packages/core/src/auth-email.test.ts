@@ -84,9 +84,7 @@ describe('password reset', () => {
   })
 
   it('does not reveal whether an email exists (no enumeration)', async () => {
-    await expect(
-      kernel.forgotPassword({ collection: 'users', email: 'nobody@example.com' }),
-    ).resolves.toBeUndefined()
+    await expect(kernel.forgotPassword({ collection: 'users', email: 'nobody@example.com' })).resolves.toBeUndefined()
     expect(email.sent).toHaveLength(0)
   })
 

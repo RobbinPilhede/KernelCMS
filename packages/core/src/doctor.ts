@@ -52,7 +52,11 @@ export function runDoctor(config: SanitizedConfig, options: DoctorOptions = {}):
 
   // Secret hygiene.
   if (config.secret === DEV_SECRET) {
-    add(isProd ? 'error' : 'warn', 'insecure-secret', 'No `secret`/KERNEL_SECRET set — using the insecure development secret.')
+    add(
+      isProd ? 'error' : 'warn',
+      'insecure-secret',
+      'No `secret`/KERNEL_SECRET set — using the insecure development secret.',
+    )
   } else if (config.secret.length < 16) {
     add('warn', 'weak-secret', 'Configured `secret` is short (<16 chars); use a long random value.')
   }
@@ -62,7 +66,12 @@ export function runDoctor(config: SanitizedConfig, options: DoctorOptions = {}):
   const uploadCollections = config.collections.filter((c) => c.upload)
   if (uploadCollections.length > 0 && !hasStorage) {
     for (const c of uploadCollections) {
-      add('error', 'upload-no-storage', `Upload collection "${c.slug}" has no storage adapter (config.storage).`, c.slug)
+      add(
+        'error',
+        'upload-no-storage',
+        `Upload collection "${c.slug}" has no storage adapter (config.storage).`,
+        c.slug,
+      )
     }
   }
 
@@ -70,7 +79,12 @@ export function runDoctor(config: SanitizedConfig, options: DoctorOptions = {}):
   for (const c of config.collections) {
     walkRelations(c.fields, (field) => {
       if (!slugs.has(field.relationTo)) {
-        add('error', 'unknown-relation', `Field "${field.name}" references unknown collection "${field.relationTo}".`, c.slug)
+        add(
+          'error',
+          'unknown-relation',
+          `Field "${field.name}" references unknown collection "${field.relationTo}".`,
+          c.slug,
+        )
       }
     })
 
@@ -100,7 +114,9 @@ export function runDoctor(config: SanitizedConfig, options: DoctorOptions = {}):
 export function formatDoctorReport(report: DoctorReport): string {
   if (report.diagnostics.length === 0) return '✓ No issues found.'
   const icon = { error: '✖', warn: '⚠', info: 'ℹ' } as const
-  const lines = report.diagnostics.map((d) => `${icon[d.level]} [${d.code}]${d.collection ? ` (${d.collection})` : ''} ${d.message}`)
+  const lines = report.diagnostics.map(
+    (d) => `${icon[d.level]} [${d.code}]${d.collection ? ` (${d.collection})` : ''} ${d.message}`,
+  )
   lines.push('', `${report.errors} error(s), ${report.warnings} warning(s).`)
   return lines.join('\n')
 }

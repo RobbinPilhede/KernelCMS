@@ -77,7 +77,14 @@ export function diffSchema(current: KernelSchema, next: KernelSchema): Migration
         continue
       }
       if (before.type !== col.type) {
-        alters.push({ kind: 'alterColumnType', table: nextTable.table, column: col.name, from: before.type, to: col.type, class: 'destructive' })
+        alters.push({
+          kind: 'alterColumnType',
+          table: nextTable.table,
+          column: col.name,
+          from: before.type,
+          to: col.type,
+          class: 'destructive',
+        })
       }
       if (before.required !== col.required) {
         // Tightening (false→true) can fail on existing nulls; loosening is safe.

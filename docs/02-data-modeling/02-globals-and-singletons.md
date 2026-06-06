@@ -80,17 +80,17 @@ export default buildConfig({
 })
 ```
 
-Every field type from the [field reference](./04-field-types-catalog.md) is available inside a global: `text`, `richText`, `array`, `blocks`, `group`, `tabs`, `relationship`, `upload`, and custom field types. A global *is* its fields plus a small envelope of behavior flags. The notable config keys:
+Every field type from the [field reference](./04-field-types-catalog.md) is available inside a global: `text`, `richText`, `array`, `blocks`, `group`, `tabs`, `relationship`, `upload`, and custom field types. A global _is_ its fields plus a small envelope of behavior flags. The notable config keys:
 
-| Key | Purpose | Notes |
-| --- | --- | --- |
-| `slug` | Stable identity and table name | Immutable once data exists; renaming requires a migration |
-| `label` | Admin display name | `singular` only — there is no plural for a singleton |
-| `fields` | The document schema | Full field system, including localized fields |
-| `access` | Operation-level guards | Only `read` and `update` apply |
-| `versions` | Drafts, autosave, history depth | Same engine as collections |
-| `admin.group` | Sidebar grouping | Cluster related globals under one heading |
-| `hooks` | `beforeChange` / `afterChange` / `beforeRead` | No `beforeDelete` — globals are never deleted |
+| Key           | Purpose                                       | Notes                                                     |
+| ------------- | --------------------------------------------- | --------------------------------------------------------- |
+| `slug`        | Stable identity and table name                | Immutable once data exists; renaming requires a migration |
+| `label`       | Admin display name                            | `singular` only — there is no plural for a singleton      |
+| `fields`      | The document schema                           | Full field system, including localized fields             |
+| `access`      | Operation-level guards                        | Only `read` and `update` apply                            |
+| `versions`    | Drafts, autosave, history depth               | Same engine as collections                                |
+| `admin.group` | Sidebar grouping                              | Cluster related globals under one heading                 |
+| `hooks`       | `beforeChange` / `afterChange` / `beforeRead` | No `beforeDelete` — globals are never deleted             |
 
 ### Schema and storage
 
@@ -217,10 +217,10 @@ Access control on a global is evaluated server-side at two of the three levels d
 }
 ```
 
-| Level | Functions | Effect |
-| --- | --- | --- |
-| Operation | `read`, `update` | Gates the whole `findGlobal` / `updateGlobal` call |
-| Field | per-field `read`, `update` | Strips unreadable fields from responses; rejects unauthorized field writes |
+| Level     | Functions                  | Effect                                                                     |
+| --------- | -------------------------- | -------------------------------------------------------------------------- |
+| Operation | `read`, `update`           | Gates the whole `findGlobal` / `updateGlobal` call                         |
+| Field     | per-field `read`, `update` | Strips unreadable fields from responses; rejects unauthorized field writes |
 
 Field-level `read` access is enforced on the way out: a non-admin requesting `site-settings` receives the document with `analyticsKey` omitted, not nulled and not erroring. Field-level `update` access is enforced on the way in: a write that touches a forbidden field is rejected before it reaches the database, never silently dropped. Returning a `Where` constraint from an operation function is meaningless for a singleton, so a global's access functions return only `boolean` — a deliberate narrowing of the collection contract that the types enforce at compile time.
 

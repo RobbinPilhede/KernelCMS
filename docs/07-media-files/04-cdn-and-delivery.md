@@ -1,6 +1,6 @@
 # CDN & Delivery
 
-KernelCMS treats media delivery as a first-class adapter concern, not an afterthought bolted onto storage. The `@kernel/storage` adapter knows where bytes *live*; the delivery layer decides how they reach a browser — which CDN fronts them, how cache keys are derived, whether a URL must be signed, and where transforms execute. This document specifies that delivery layer: how to wire a CDN, how cache keys and invalidation work, how signed URLs gate private assets, and how edge transforms turn a single stored original into a globally cached, format-negotiated variant. The design goal is the same as everywhere else in KernelCMS — sensible defaults that work on day one, with an escape hatch at every seam.
+KernelCMS treats media delivery as a first-class adapter concern, not an afterthought bolted onto storage. The `@kernel/storage` adapter knows where bytes _live_; the delivery layer decides how they reach a browser — which CDN fronts them, how cache keys are derived, whether a URL must be signed, and where transforms execute. This document specifies that delivery layer: how to wire a CDN, how cache keys and invalidation work, how signed URLs gate private assets, and how edge transforms turn a single stored original into a globally cached, format-negotiated variant. The design goal is the same as everywhere else in KernelCMS — sensible defaults that work on day one, with an escape hatch at every seam.
 
 ## CDN integration
 
@@ -67,14 +67,14 @@ example:
   media/2026/hero.jpg@v7/w=800,q=82,fit=cover.webp
 ```
 
-The version token is stored on the upload document and bumped whenever the underlying bytes change — a re-upload, a focal-point edit, or a manual "regenerate". Because the token is *in the URL path*, a new version produces a brand-new cache key, and the old cached objects simply age out. This is how Sanity avoids stale assets, and it is strictly better than the alternative most Strapi/Payload deployments fall back on: a global wildcard purge that hammers the CDN API and momentarily cold-caches everything.
+The version token is stored on the upload document and bumped whenever the underlying bytes change — a re-upload, a focal-point edit, or a manual "regenerate". Because the token is _in the URL path_, a new version produces a brand-new cache key, and the old cached objects simply age out. This is how Sanity avoids stale assets, and it is strictly better than the alternative most Strapi/Payload deployments fall back on: a global wildcard purge that hammers the CDN API and momentarily cold-caches everything.
 
-| Strategy | When KernelCMS uses it | Trade-off |
-|---|---|---|
-| Version-token (immutable URL) | Default for all rendered variants | Zero purge calls; old bytes age out via TTL |
-| Targeted purge (`invalidate(keys)`) | Original re-uploaded under a stable URL | One API call per affected key |
-| Tag/surrogate-key purge | Bulk operations (re-encode a collection) | One call purges many; needs provider support |
-| Wildcard purge | Manual escape hatch only | Expensive; cold cache; rate-limited |
+| Strategy                            | When KernelCMS uses it                   | Trade-off                                    |
+| ----------------------------------- | ---------------------------------------- | -------------------------------------------- |
+| Version-token (immutable URL)       | Default for all rendered variants        | Zero purge calls; old bytes age out via TTL  |
+| Targeted purge (`invalidate(keys)`) | Original re-uploaded under a stable URL  | One API call per affected key                |
+| Tag/surrogate-key purge             | Bulk operations (re-encode a collection) | One call purges many; needs provider support |
+| Wildcard purge                      | Manual escape hatch only                 | Expensive; cold cache; rate-limited          |
 
 Invalidation is wired to the operation lifecycle, not left to the developer to remember. The upload collection hook fires `invalidate` on the exact derived keys:
 
@@ -153,7 +153,7 @@ Signing keys live in `@kernel/storage` config (or the provider's keypair for Clo
 // @kernel/client usage
 const url = await client.media.url(asset, {
   width: 1200,
-  signed: true,       // forced; ignored if collection is public
+  signed: true, // forced; ignored if collection is public
 })
 // url is valid for `ttl`; the client refetches before expiry
 ```
@@ -162,11 +162,11 @@ const url = await client.media.url(asset, {
 
 The cleanest delivery model is one stored original and every variant generated on demand, cached at the edge, keyed immutably. KernelCMS supports three transform locations, chosen by the `transforms` field on the CDN adapter, so the same `kernel.config.ts` runs whether or not your provider can resize at the edge.
 
-| Mode | Where it runs | Use when |
-|---|---|---|
-| `edge` | CDN POP (Cloudflare Images, Fastly IO, CloudFront + Lambda@Edge) | Provider supports it; best global latency |
-| `origin` | `@kernel/server` via sharp / imgproxy | Self-host, full control, no provider transform fees |
-| `none` | Pre-generated sizes only | Locked-down environments, no on-the-fly resizing |
+| Mode     | Where it runs                                                    | Use when                                            |
+| -------- | ---------------------------------------------------------------- | --------------------------------------------------- |
+| `edge`   | CDN POP (Cloudflare Images, Fastly IO, CloudFront + Lambda@Edge) | Provider supports it; best global latency           |
+| `origin` | `@kernel/server` via sharp / imgproxy                            | Self-host, full control, no provider transform fees |
+| `none`   | Pre-generated sizes only                                         | Locked-down environments, no on-the-fly resizing    |
 
 Transform parameters are a single normalized vocabulary shared across all modes, so switching from `origin` to `edge` never changes a URL's meaning — only where the work happens.
 
@@ -176,7 +176,7 @@ interface TransformParams {
   height?: number
   fit?: 'cover' | 'contain' | 'fill' | 'inside' | 'outside'
   format?: 'auto' | 'webp' | 'avif' | 'jpeg' | 'png'
-  quality?: number          // 1–100
+  quality?: number // 1–100
   dpr?: 1 | 2 | 3
   focal?: { x: number; y: number } // from the focal-point editor
 }

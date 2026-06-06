@@ -6,7 +6,14 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AuthUser, Kernel, Row, Where } from '@kernel/core'
-import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError, describeConfig, isKernelError } from '@kernel/core'
+import {
+  BadRequestError,
+  ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
+  describeConfig,
+  isKernelError,
+} from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
 import { ADMIN_HTML } from './admin-assets.generated'
 
@@ -63,9 +70,7 @@ function html(body: string, status = 200): Response {
 function adminShell(options: HandlerOptions): string {
   const scripts = typeof options.admin === 'object' ? (options.admin.scripts ?? []) : []
   if (scripts.length === 0) return ADMIN_HTML
-  const tags = scripts
-    .map((src) => `<script src="${src.replace(/"/g, '&quot;')}" type="module"></script>`)
-    .join('')
+  const tags = scripts.map((src) => `<script src="${src.replace(/"/g, '&quot;')}" type="module"></script>`).join('')
   return ADMIN_HTML.includes('</body>') ? ADMIN_HTML.replace('</body>', `${tags}</body>`) : ADMIN_HTML + tags
 }
 
@@ -171,19 +176,18 @@ async function maybeServeFile(kernel: Kernel, options: HandlerOptions, request: 
   return null
 }
 
-function collectAdapters(kernel: Kernel): { servePath?: string; head: (k: string) => Promise<{ size: number } | null>; get: (k: string) => Promise<Buffer> }[] {
+function collectAdapters(kernel: Kernel): {
+  servePath?: string
+  head: (k: string) => Promise<{ size: number } | null>
+  get: (k: string) => Promise<Buffer>
+}[] {
   const storage = kernel.config.storage
   if (!storage) return []
   if (typeof (storage as { put?: unknown }).put === 'function') return [storage as never]
   return Object.values(storage as Record<string, never>)
 }
 
-async function route(
-  kernel: Kernel,
-  options: HandlerOptions,
-  request: Request,
-  apiBase: string,
-): Promise<Response> {
+async function route(kernel: Kernel, options: HandlerOptions, request: Request, apiBase: string): Promise<Response> {
   const url = new URL(request.url)
   if (!url.pathname.startsWith(apiBase)) {
     return json({ error: { code: 'NOT_FOUND', message: `No route for ${url.pathname}` } }, 404)
@@ -566,7 +570,10 @@ export function parseWhere(params: URLSearchParams): Where | undefined {
   for (const [key, value] of params) {
     if (!key.startsWith('where[')) continue
     found = true
-    const path = key.slice('where'.length).split(/[[\]]+/).filter(Boolean)
+    const path = key
+      .slice('where'.length)
+      .split(/[[\]]+/)
+      .filter(Boolean)
     setDeep(root, path, coerce(value))
   }
   return found ? (root as Where) : undefined

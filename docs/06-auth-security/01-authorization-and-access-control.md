@@ -33,28 +33,26 @@ import type { AccessArgs, Where } from '@kernel/core'
 
 // The shape of `req.user` is your own auth strategy's user type,
 // inferred end-to-end. No `any`, no casting at the call site.
-type Access<TUser, TDoc = unknown> = (
-  args: AccessArgs<TUser, TDoc>,
-) => boolean | Where | Promise<boolean | Where>
+type Access<TUser, TDoc = unknown> = (args: AccessArgs<TUser, TDoc>) => boolean | Where | Promise<boolean | Where>
 
 interface AccessArgs<TUser, TDoc> {
   req: { user: TUser | null; locale?: string; ip: string }
   operation: 'create' | 'read' | 'update' | 'delete'
-  id?: string                 // present for update/delete/read-by-id
-  data?: Partial<TDoc>        // proposed data on create/update
-  doc?: TDoc                  // the stored document, when resolved
+  id?: string // present for update/delete/read-by-id
+  data?: Partial<TDoc> // proposed data on create/update
+  doc?: TDoc // the stored document, when resolved
 }
 ```
 
 The three return types carry distinct meaning, and the distinction is load-bearing:
 
-| Return value | Meaning | Applied at |
-| --- | --- | --- |
-| `true` | Allow unconditionally | any level |
-| `false` | Deny | any level |
-| `Where` | Allow only rows matching this filter | operation/document level only |
+| Return value | Meaning                              | Applied at                    |
+| ------------ | ------------------------------------ | ----------------------------- |
+| `true`       | Allow unconditionally                | any level                     |
+| `false`      | Deny                                 | any level                     |
+| `Where`      | Allow only rows matching this filter | operation/document level only |
 
-Returning a `Where` is what makes row-level security ergonomic. Instead of "can this user read this collection?" you answer "*which* rows can they read?" — and the engine merges that filter into the query before it hits `@kernel/db`. Field-level functions may only return a boolean; narrowing a single field by query makes no sense.
+Returning a `Where` is what makes row-level security ergonomic. Instead of "can this user read this collection?" you answer "_which_ rows can they read?" — and the engine merges that filter into the query before it hits `@kernel/db`. Field-level functions may only return a boolean; narrowing a single field by query makes no sense.
 
 Helpers in `@kernel/auth` keep common rules terse and composable:
 
@@ -70,7 +68,7 @@ const canManage = or(isAdmin, and(isEditor, isAuthenticated))
 
 ## Operation-level access
 
-Operation access answers a single yes/no/which-rows question per operation, evaluated *before* the adapter runs. It is the first and cheapest gate. Define it under `access` on a collection:
+Operation access answers a single yes/no/which-rows question per operation, evaluated _before_ the adapter runs. It is the first and cheapest gate. Define it under `access` on a collection:
 
 ```ts
 // kernel.config.ts
@@ -86,17 +84,16 @@ export const Posts = defineCollection<User>({
       if (req.user?.role === 'admin') return true
       if (!req.user) return { status: { equals: 'published' } }
       return {
-        or: [
-          { status: { equals: 'published' } },
-          { author: { equals: req.user.id } },
-        ],
+        or: [{ status: { equals: 'published' } }, { author: { equals: req.user.id } }],
       }
     },
     create: isAuthenticated,
     update: hasRole('editor', 'admin'),
     delete: hasRole('admin'),
   },
-  fields: [/* … */],
+  fields: [
+    /* … */
+  ],
 })
 ```
 
@@ -116,7 +113,9 @@ export const Settings = defineGlobal<User>({
     read: () => true,
     update: hasRole('admin'),
   },
-  fields: [/* … */],
+  fields: [
+    /* … */
+  ],
 })
 ```
 
@@ -124,7 +123,7 @@ Unlike Strapi, where public/authenticated role permissions are toggled in the ad
 
 ## Field-level access
 
-A document is rarely uniform in sensitivity. An editor may read a post but not its `internalNotes`; a user may update their `name` but not their `role`. Field access handles exactly this, and runs *after* the document resolves so it can inspect `doc` and `req.user` together.
+A document is rarely uniform in sensitivity. An editor may read a post but not its `internalNotes`; a user may update their `name` but not their `role`. Field access handles exactly this, and runs _after_ the document resolves so it can inspect `doc` and `req.user` together.
 
 Field access supports two operations — `read` and `update` (there is no `create`/`delete` at the field level; field creation is governed by `update` on create) — and must return a boolean:
 
@@ -134,7 +133,9 @@ import { hasRole } from '@kernel/auth'
 
 export const Users = defineCollection<User>({
   slug: 'users',
-  access: { /* operation-level … */ },
+  access: {
+    /* operation-level … */
+  },
   fields: [
     { name: 'name', type: 'text' },
     {
@@ -160,14 +161,14 @@ export const Users = defineCollection<User>({
 
 Enforcement is symmetric on both sides of the wire:
 
-- **On read**, a field that fails `read` access is *omitted* from the serialized document. The GraphQL schema still types it as nullable; REST and RPC simply drop the key. The client cannot distinguish "null" from "withheld," which is the point.
-- **On write**, a field that fails `update` access is *discarded* from the incoming `data` before validation and persistence. The engine does not throw — it silently ignores the attempted change, so a forged payload that sets `role: 'admin'` is dropped, not honored. (This mirrors Payload's behavior and is the safe default; a stricter "reject the whole request" mode is an open question below.)
+- **On read**, a field that fails `read` access is _omitted_ from the serialized document. The GraphQL schema still types it as nullable; REST and RPC simply drop the key. The client cannot distinguish "null" from "withheld," which is the point.
+- **On write**, a field that fails `update` access is _discarded_ from the incoming `data` before validation and persistence. The engine does not throw — it silently ignores the attempted change, so a forged payload that sets `role: 'admin'` is dropped, not honored. (This mirrors Payload's behavior and is the safe default; a stricter "reject the whole request" mode is an open question below.)
 
 This granularity is something Sanity approximates only through document-level grants plus client-side projection, and Strapi cannot express per-field without custom controllers. In KernelCMS it is one `access` block on the field definition, type-checked against the field's value type.
 
 ## Document and row-level rules
 
-"Document-level" and "row-level" are two views of the same mechanism: an access function that depends on the *content* of the record, not just the caller's role. The engine applies them in two modes depending on the operation:
+"Document-level" and "row-level" are two views of the same mechanism: an access function that depends on the _content_ of the record, not just the caller's role. The engine applies them in two modes depending on the operation:
 
 **Filtered (list) mode** — for `find`/`read` collection queries, a `Where` returned from operation access is composed with the user's own filters using `and`, so it cannot be widened by a crafted query:
 
@@ -195,7 +196,7 @@ access: {
 Two guarantees make this trustworthy:
 
 1. **Stored state, not submitted state.** Ownership checks read `doc` (what's in the database), never `data` (what the request claims). A request cannot smuggle `author: <me>` to pass an ownership gate it would otherwise fail.
-2. **404 over 403 for invisible rows.** When document access denies a `read`/`findByID`, the engine returns *not found*. We never leak the existence of records a caller has no right to see — the difference between a CMS and an information-disclosure bug.
+2. **404 over 403 for invisible rows.** When document access denies a `read`/`findByID`, the engine returns _not found_. We never leak the existence of records a caller has no right to see — the difference between a CMS and an information-disclosure bug.
 
 For multi-tenant deployments, the same primitive carries tenant isolation. A `req.user.tenantId` folded into every `Where` is the row-level security boundary, and because it lives in code it is applied identically across REST, GraphQL, RPC, and the Local API — see [Multi-tenancy](../10-cloud-operations/03-multi-tenancy-and-isolation.md) for the tenant-context wiring.
 
@@ -215,5 +216,5 @@ The typed `@kernel/client` and RPC surface inherit the same guarantees. Because 
 
 - **Strict write rejection.** Should failed field-`update` access silently drop the field (current default, Payload-style) or reject the entire mutation with a `403`? A per-collection `accessMode: 'strip' | 'reject'` is the leading proposal.
 - **Caching resolved `Where` filters.** Async access functions that hit a store (e.g., team-membership lookups) run per request. We need a documented, opt-in memoization boundary in `@kernel/core` without risking stale authorization.
-- **Field access on relationship depth.** When `depth > 0` populates related documents, field-level `read` should re-evaluate against the *related* collection's rules. The composition is specified; the performance budget under deep population is not yet measured.
+- **Field access on relationship depth.** When `depth > 0` populates related documents, field-level `read` should re-evaluate against the _related_ collection's rules. The composition is specified; the performance budget under deep population is not yet measured.
 - **Block/array nested field access.** Whether field access on a `blocks` or `array` member applies per-row or per-field-across-rows needs a final ruling before the editor renders partial blocks.

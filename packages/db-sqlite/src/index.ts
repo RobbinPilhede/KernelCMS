@@ -259,12 +259,7 @@ class SQLiteAdapter implements DatabaseAdapter {
     return operand as unknown
   }
 
-  private fieldClause(
-    field: string,
-    cond: WhereCondition,
-    col: ColumnSchema | undefined,
-    params: unknown[],
-  ): string {
+  private fieldClause(field: string, cond: WhereCondition, col: ColumnSchema | undefined, params: unknown[]): string {
     const id = quote(field)
     const parts: string[] = []
     for (const [op, operand] of Object.entries(cond)) {
@@ -331,10 +326,7 @@ class SQLiteAdapter implements DatabaseAdapter {
     return parts.length ? `(${parts.join(' AND ')})` : ''
   }
 
-  private whereSql(
-    table: TableSchema,
-    where: Where | undefined,
-  ): { sql: string; params: unknown[] } {
+  private whereSql(table: TableSchema, where: Where | undefined): { sql: string; params: unknown[] } {
     if (!where) return { sql: '', params: [] }
     const params: unknown[] = []
     const allowed = this.allowedCols.get(table.table) ?? new Set(['id'])
@@ -449,7 +441,9 @@ class SQLiteAdapter implements DatabaseAdapter {
     const table = this.table(args.collection)
     const existing = this.rawGet(table, args.id)
     if (!existing) return null
-    this.conn().prepare(`DELETE FROM ${quote(table.table)} WHERE ${quote('id')} = ?`).run(args.id)
+    this.conn()
+      .prepare(`DELETE FROM ${quote(table.table)} WHERE ${quote('id')} = ?`)
+      .run(args.id)
     return existing
   }
 

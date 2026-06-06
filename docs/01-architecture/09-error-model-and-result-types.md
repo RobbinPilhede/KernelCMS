@@ -4,7 +4,7 @@ KernelCMS treats failure as a first-class, typed value rather than an afterthoug
 
 ## Why typed errors at all
 
-Payload, Sanity, and Strapi all lean on thrown exceptions with loosely structured shapes. Payload throws `APIError` subclasses and relies on a Boom-style status code; Strapi wraps everything in Koa context errors and a `strapi-utils` error factory; Sanity surfaces transaction errors as opaque HTTP payloads from the hosted backend. In all three, the error *type* is not part of the function signature, so a hook author discovers failure modes by reading source or by crashing in production.
+Payload, Sanity, and Strapi all lean on thrown exceptions with loosely structured shapes. Payload throws `APIError` subclasses and relies on a Boom-style status code; Strapi wraps everything in Koa context errors and a `strapi-utils` error factory; Sanity surfaces transaction errors as opaque HTTP payloads from the hosted backend. In all three, the error _type_ is not part of the function signature, so a hook author discovers failure modes by reading source or by crashing in production.
 
 KernelCMS makes the contract explicit. The `@kernel/core` operation surface is fully typed end-to-end (see [the type-safety overview](./07-content-schema-and-type-generation.md)), and that includes the failure channel. A handler knows at compile time that `findByID` can fail with `NotFound`, `Forbidden`, or `AdapterError`, and nothing else.
 
@@ -17,10 +17,10 @@ All errors descend from a single abstract base, `KernelError`, exported from `@k
 export type ErrorVisibility = 'public' | 'internal'
 
 export interface KernelErrorJSON {
-  code: string            // stable machine code, e.g. 'NOT_FOUND'
-  message: string         // safe, user-facing message
-  status: number          // HTTP status for REST surface
-  details?: unknown       // structured, code-specific payload
+  code: string // stable machine code, e.g. 'NOT_FOUND'
+  message: string // safe, user-facing message
+  status: number // HTTP status for REST surface
+  details?: unknown // structured, code-specific payload
   path?: (string | number)[] // field path for validation errors
 }
 
@@ -52,24 +52,24 @@ export abstract class KernelError extends Error {
 
 The concrete catalogue lives in `@kernel/core` so every adapter and API surface shares it:
 
-| Class | `code` | `status` | `visibility` | When |
-| --- | --- | --- | --- | --- |
-| `ValidationError` | `VALIDATION` | 422 | public | Field-level or cross-field validation failed |
-| `NotFoundError` | `NOT_FOUND` | 404 | public | Document or global does not exist |
-| `ForbiddenError` | `FORBIDDEN` | 403 | public | Access control denied the operation |
-| `UnauthenticatedError` | `UNAUTHENTICATED` | 401 | public | No valid session/token |
-| `ConflictError` | `CONFLICT` | 409 | public | Version mismatch, unique constraint, optimistic-lock clash |
-| `RateLimitError` | `RATE_LIMIT` | 429 | public | Throttle exceeded |
-| `AdapterError` | `ADAPTER` | 500 | internal | Database/storage/queue adapter failed |
-| `ConfigError` | `CONFIG` | 500 | internal | Invalid `kernel.config.ts` at boot |
-| `InternalError` | `INTERNAL` | 500 | internal | Catch-all for unexpected failures |
+| Class                  | `code`            | `status` | `visibility` | When                                                       |
+| ---------------------- | ----------------- | -------- | ------------ | ---------------------------------------------------------- |
+| `ValidationError`      | `VALIDATION`      | 422      | public       | Field-level or cross-field validation failed               |
+| `NotFoundError`        | `NOT_FOUND`       | 404      | public       | Document or global does not exist                          |
+| `ForbiddenError`       | `FORBIDDEN`       | 403      | public       | Access control denied the operation                        |
+| `UnauthenticatedError` | `UNAUTHENTICATED` | 401      | public       | No valid session/token                                     |
+| `ConflictError`        | `CONFLICT`        | 409      | public       | Version mismatch, unique constraint, optimistic-lock clash |
+| `RateLimitError`       | `RATE_LIMIT`      | 429      | public       | Throttle exceeded                                          |
+| `AdapterError`         | `ADAPTER`         | 500      | internal     | Database/storage/queue adapter failed                      |
+| `ConfigError`          | `CONFIG`          | 500      | internal     | Invalid `kernel.config.ts` at boot                         |
+| `InternalError`        | `INTERNAL`        | 500      | internal     | Catch-all for unexpected failures                          |
 
 `ValidationError` is the most heavily used and carries a typed `details` payload — an array of per-field issues that maps cleanly onto TanStack Form's field error model in the admin:
 
 ```ts
 export interface FieldIssue {
-  path: (string | number)[]   // ['meta', 'tags', 2, 'slug']
-  code: string                // 'REQUIRED' | 'TOO_LONG' | custom
+  path: (string | number)[] // ['meta', 'tags', 2, 'slug']
+  code: string // 'REQUIRED' | 'TOO_LONG' | custom
   message: string
 }
 
@@ -90,19 +90,13 @@ Internally, the operation core does not `throw` between layers. It threads a `Re
 
 ```ts
 // @kernel/core
-export type Result<T, E extends KernelError = KernelError> =
-  | { ok: true; value: T }
-  | { ok: false; error: E }
+export type Result<T, E extends KernelError = KernelError> = { ok: true; value: T } | { ok: false; error: E }
 
 export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value })
-export const err = <E extends KernelError>(error: E): Result<never, E> =>
-  ({ ok: false, error })
+export const err = <E extends KernelError>(error: E): Result<never, E> => ({ ok: false, error })
 
 /** Run a Result-returning step; short-circuit on the first error. */
-export function chain<A, B, E extends KernelError>(
-  r: Result<A, E>,
-  f: (a: A) => Result<B, E>,
-): Result<B, E> {
+export function chain<A, B, E extends KernelError>(r: Result<A, E>, f: (a: A) => Result<B, E>): Result<B, E> {
   return r.ok ? f(r.value) : r
 }
 ```
@@ -111,7 +105,7 @@ A `create` operation reads as a pipeline of fallible steps, each narrowing the e
 
 ```ts
 async function create(args: CreateArgs): Promise<Result<Doc, KernelError>> {
-  const access = await checkAccess(args)          // Result<true, ForbiddenError>
+  const access = await checkAccess(args) // Result<true, ForbiddenError>
   if (!access.ok) return access
 
   const validated = await runValidation(args.data) // Result<Doc, ValidationError>
@@ -153,7 +147,7 @@ KernelError
    └──────────────► @kernel/rpc     → { ok:false, error } envelope
 ```
 
-**REST (`@kernel/rest`).** The HTTP status is `error.status`; the body is the JSON object. We do not invent envelope keys — the body *is* the error.
+**REST (`@kernel/rest`).** The HTTP status is `error.status`; the body is the JSON object. We do not invent envelope keys — the body _is_ the error.
 
 ```json
 {
@@ -168,11 +162,18 @@ KernelError
 
 ```json
 {
-  "errors": [{
-    "message": "Validation failed",
-    "path": ["createPost"],
-    "extensions": { "code": "VALIDATION", "details": [/* FieldIssue[] */] }
-  }]
+  "errors": [
+    {
+      "message": "Validation failed",
+      "path": ["createPost"],
+      "extensions": {
+        "code": "VALIDATION",
+        "details": [
+          /* FieldIssue[] */
+        ]
+      }
+    }
+  ]
 }
 ```
 
@@ -233,7 +234,7 @@ export default defineConfig({
 
 ## Open questions
 
-- **Result vs. throw as the *default* Local API surface.** We currently throw by default with `.safe.*` returning `Result`. An alternative is Result-first with a `.orThrow()` escape hatch. The trade-off is ergonomics (most app code wants throw) versus making fallibility impossible to ignore.
+- **Result vs. throw as the _default_ Local API surface.** We currently throw by default with `.safe.*` returning `Result`. An alternative is Result-first with a `.orThrow()` escape hatch. The trade-off is ergonomics (most app code wants throw) versus making fallibility impossible to ignore.
 - **Aggregate validation vs. fail-fast.** `ValidationError` collects all `FieldIssue`s today. For very large `blocks` documents this can be expensive; whether to offer a fail-fast mode per operation is undecided.
 - **GraphQL partial success.** GraphQL allows partial data with errors. Whether KernelCMS ever returns partial collection results (e.g. one document in a list failing field-level access) or always fails the whole field is not settled — it interacts with [field-level access control](../06-auth-security/01-authorization-and-access-control.md).
 - **Stable code namespacing for plugins.** Custom errors from `@kernel/plugin-sdk` need collision-free codes. A `PLUGIN_<name>_<code>` convention is proposed but not finalized.

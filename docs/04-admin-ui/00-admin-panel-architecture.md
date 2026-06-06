@@ -51,8 +51,7 @@ Search-param state is where TanStack Router earns its place. List-view state —
 ```ts
 // _authed/collections/$collection/index.tsx
 export const Route = createFileRoute('/_authed/collections/$collection/')({
-  validateSearch: (search) =>
-    listSearchSchema.parse(search) satisfies ListSearch,
+  validateSearch: (search) => listSearchSchema.parse(search) satisfies ListSearch,
   loaderDeps: ({ search }) => ({
     page: search.page,
     sort: search.sort,
@@ -60,23 +59,21 @@ export const Route = createFileRoute('/_authed/collections/$collection/')({
     locale: search.locale,
   }),
   loader: ({ params, deps, context }) =>
-    context.queryClient.ensureQueryData(
-      collectionListQuery(params.collection, deps),
-    ),
+    context.queryClient.ensureQueryData(collectionListQuery(params.collection, deps)),
   component: CollectionListView,
 })
 ```
 
 The `where` and `sort` fragments in the URL use the same shared query language documented in the query language reference — `where`, `sort`, pagination, and `depth`. One grammar spans the admin URL bar, the REST querystring, and the GraphQL arguments, so a filter you build in the admin is the exact filter you'd send over REST.
 
-| Concern | Where it lives | Mechanism |
-| --- | --- | --- |
-| Which collection/global | Path param (`$collection`) | Validated against config registry |
-| Pagination / sort | Search params | `validateSearch` + `loaderDeps` |
-| Active filters (`where`) | Search params | Shared query-language grammar |
-| Active locale | Search params | Falls back to default locale |
-| Auth requirement | Layout route (`_authed`) | `beforeLoad` session check |
-| Unsaved-form guard | Route `beforeLoad` / blocker | Router navigation blocker |
+| Concern                  | Where it lives               | Mechanism                         |
+| ------------------------ | ---------------------------- | --------------------------------- |
+| Which collection/global  | Path param (`$collection`)   | Validated against config registry |
+| Pagination / sort        | Search params                | `validateSearch` + `loaderDeps`   |
+| Active filters (`where`) | Search params                | Shared query-language grammar     |
+| Active locale            | Search params                | Falls back to default locale      |
+| Auth requirement         | Layout route (`_authed`)     | `beforeLoad` session check        |
+| Unsaved-form guard       | Route `beforeLoad` / blocker | Router navigation blocker         |
 
 Auth is enforced at the `_authed` layout route via `beforeLoad`, which checks the session resolved by `@kernel/auth` and redirects to `/login` with a `redirect` search param. Because it's a layout route, every child inherits the guard — there's no per-page checkbox to forget.
 
@@ -88,10 +85,7 @@ Queries are defined as typed factories that pair a structured query key with a f
 
 ```ts
 // query factories
-export const collectionListQuery = (
-  slug: string,
-  deps: ListSearch,
-) =>
+export const collectionListQuery = (slug: string, deps: ListSearch) =>
   queryOptions({
     queryKey: ['collection', slug, 'list', deps] as const,
     queryFn: () => rpc.collections[slug].find(deps),
@@ -109,8 +103,7 @@ Key conventions are strict because invalidation depends on them. The shape is al
 
 ```ts
 const save = useMutation({
-  mutationFn: (input: UpdateInput) =>
-    rpc.collections[slug].update({ id, data: input, locale }),
+  mutationFn: (input: UpdateInput) => rpc.collections[slug].update({ id, data: input, locale }),
   onMutate: async (input) => {
     await queryClient.cancelQueries({ queryKey: ['collection', slug, 'doc', id] })
     const prev = queryClient.getQueryData(docKey)
@@ -199,12 +192,12 @@ const CodeField = lazy(() => import('./fields/CodeField'))
 
 **Plugin splitting**: components contributed via `@kernel/plugin-sdk` are dynamically imported behind their registry entry, so an installed-but-unused plugin costs nothing on routes that don't render it.
 
-| Layer | Split unit | Trigger |
-| --- | --- | --- |
-| Routes | One chunk per route file | Navigation (TanStack Router) |
-| Field types | `richText`, `code`, `point`, etc. | First render of that field type |
-| Plugin components | Per plugin entry | Registry resolves the component |
-| Vendor | Editor, charts, date libs | Imported by their feature only |
+| Layer             | Split unit                        | Trigger                         |
+| ----------------- | --------------------------------- | ------------------------------- |
+| Routes            | One chunk per route file          | Navigation (TanStack Router)    |
+| Field types       | `richText`, `code`, `point`, etc. | First render of that field type |
+| Plugin components | Per plugin entry                  | Registry resolves the component |
+| Vendor            | Editor, charts, date libs         | Imported by their feature only  |
 
 Long collections and long documents are virtualized with TanStack Virtual rather than split, keeping the DOM bounded regardless of row count. The net effect: initial admin payload tracks the surface you actually open, not the total size of your content model — a meaningful win over Strapi, whose admin bundle grows with installed plugins regardless of the current screen.
 

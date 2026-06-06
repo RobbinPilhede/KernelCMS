@@ -82,23 +82,31 @@ export default defineConfig({
         order: 1,
         useAsTitle: 'title',
       },
-      fields: [/* ... */],
+      fields: [
+        /* ... */
+      ],
     }),
     collection('media', {
       admin: { group: 'Content', icon: 'image', order: 3 },
       upload: true,
-      fields: [/* ... */],
+      fields: [
+        /* ... */
+      ],
     }),
     collection('users', {
       admin: { group: 'System', icon: 'users', order: 1 },
       auth: true,
-      fields: [/* ... */],
+      fields: [
+        /* ... */
+      ],
     }),
   ],
   globals: [
     global('settings', {
       admin: { group: 'Globals', icon: 'settings' },
-      fields: [/* ... */],
+      fields: [
+        /* ... */
+      ],
     }),
   ],
 })
@@ -142,12 +150,12 @@ export function buildNavTree(config: ResolvedConfig, user: User): NavTree {
 
 The nav tree is fetched once per session through TanStack Query with a long `staleTime`, keyed on the user id, and invalidated only when the user changes or a plugin mutates the config. Each link is a typed `<Link>` from TanStack Router, so the destination route, its params, and its loader are all known at build time — a mistyped collection slug is a compile error, not a 404. Plugins extend nav through the `@kernel/plugin-sdk`, which exposes a `nav.register()` hook for non-content destinations (a dashboard, an analytics view, a custom tool) that participates in the same grouping and ordering model.
 
-| Concern | Strapi | Payload | KernelCMS |
-| --- | --- | --- | --- |
-| Nav source | Partly hardcoded + plugin menu | Config-driven | Config-driven, single `admin` block |
-| Access-filtered nav | Partial | Yes | Yes, server-evaluated |
-| Type-safe links | No | Partial | Yes (TanStack Router) |
-| Plugin nav | Separate menu | Custom views | `nav.register()`, same model |
+| Concern             | Strapi                         | Payload       | KernelCMS                           |
+| ------------------- | ------------------------------ | ------------- | ----------------------------------- |
+| Nav source          | Partly hardcoded + plugin menu | Config-driven | Config-driven, single `admin` block |
+| Access-filtered nav | Partial                        | Yes           | Yes, server-evaluated               |
+| Type-safe links     | No                             | Partial       | Yes (TanStack Router)               |
+| Plugin nav          | Separate menu                  | Custom views  | `nav.register()`, same model        |
 
 ## Breadcrumbs
 
@@ -196,11 +204,11 @@ Because crumbs derive from matches, they stay correct through back/forward navig
 
 The shell targets three layout modes driven by container width, using container queries on the shell root rather than viewport media queries, so the admin behaves correctly when embedded in a split-pane live-preview workspace.
 
-| Mode | Width | Sidebar | TopBar |
-| --- | --- | --- | --- |
-| Desktop | ≥ 1024px | Pinned, expanded/collapsed toggle | Full breadcrumbs + actions |
-| Tablet | 640–1023px | Collapsed to icons, hover/focus to expand | Breadcrumbs truncate middle |
-| Mobile | < 640px | Off-canvas drawer behind `☰` | Title + `☰` + `⌘K` only |
+| Mode    | Width      | Sidebar                                   | TopBar                      |
+| ------- | ---------- | ----------------------------------------- | --------------------------- |
+| Desktop | ≥ 1024px   | Pinned, expanded/collapsed toggle         | Full breadcrumbs + actions  |
+| Tablet  | 640–1023px | Collapsed to icons, hover/focus to expand | Breadcrumbs truncate middle |
+| Mobile  | < 640px    | Off-canvas drawer behind `☰`             | Title + `☰` + `⌘K` only    |
 
 ```
 DESKTOP                          MOBILE

@@ -40,7 +40,18 @@ fields: [
     type: 'tabs',
     tabs: [
       { label: 'Content', fields: [{ name: 'body', type: 'richText' }] },
-      { label: 'SEO', fields: [{ name: 'meta', type: 'group', fields: [/* ... */] }] },
+      {
+        label: 'SEO',
+        fields: [
+          {
+            name: 'meta',
+            type: 'group',
+            fields: [
+              /* ... */
+            ],
+          },
+        ],
+      },
     ],
   },
   { name: 'publishedAt', type: 'date', admin: { position: 'sidebar' } },
@@ -65,12 +76,12 @@ Every renderer is bound through a single `useField(path)` hook backed by one Tan
 
 Container field types recurse:
 
-| Field type | Renders | Child paths |
-|------------|---------|-------------|
-| `group`    | nested fieldset | `parent.child` |
-| `array`    | repeatable rows, drag-reorder | `field.0.child` |
-| `blocks`   | typed block list, block picker | `field.2.blockField` |
-| `tabs`/`row` | layout only, no data | inherit parent path |
+| Field type   | Renders                        | Child paths          |
+| ------------ | ------------------------------ | -------------------- |
+| `group`      | nested fieldset                | `parent.child`       |
+| `array`      | repeatable rows, drag-reorder  | `field.0.child`      |
+| `blocks`     | typed block list, block picker | `field.2.blockField` |
+| `tabs`/`row` | layout only, no data           | inherit parent path  |
 
 Custom field types register a renderer in `@kernel/ui`; the config references it by name, and `@kernel/core` generates the TypeScript type so the value is typed end-to-end. The escape hatch is total: any field can supply `admin.components.Field`, and that component receives the same `useField` contract, so a custom field is a first-class citizen, not a sandboxed iframe. This is where we beat Sanity — Sanity's custom inputs are powerful but live inside its own schema/store abstraction; ours are plain React reading a TanStack Form field. See [Field Components](./07-field-components-and-rendering.md) for the renderer contract.
 
@@ -92,13 +103,15 @@ The sidebar answers three questions at a glance: what's the publish state, what 
 
 ```ts
 // kernel.config.ts
-collections: [{
-  slug: 'posts',
-  versions: {
-    drafts: { autosave: { interval: 800 } },
-    maxPerDoc: 200,            // prune older autosaves, keep manual saves
+collections: [
+  {
+    slug: 'posts',
+    versions: {
+      drafts: { autosave: { interval: 800 } },
+      maxPerDoc: 200, // prune older autosaves, keep manual saves
+    },
   },
-}]
+]
 ```
 
 **Locales** renders one chip per configured locale, with a per-locale completeness indicator (computed from required localized fields). Switching locale updates the `locale` search param, which re-runs the loader; the form rehydrates with that locale's values for localized fields while keeping non-localized fields shared. See [Localization](../02-data-modeling/09-localization-and-i18n.md).
@@ -124,14 +137,14 @@ The save call goes through `@kernel/client` to a typed RPC server function — t
 
 The status indicator is a small TanStack Store atom with a tight state set so the UI is never ambiguous:
 
-| State | Trigger | UI |
-|-------|---------|----|
-| `idle` | no unsaved changes | "Saved {relative}" |
-| `editing` | form dirty, debounce pending | "Editing…" |
-| `saving` | RPC in flight | spinner + "Saving…" |
-| `saved` | RPC resolved | "Saved just now" |
-| `error` | RPC rejected | "Save failed — Retry" |
-| `conflict` | server version newer | "Newer version exists — Review" |
+| State      | Trigger                      | UI                              |
+| ---------- | ---------------------------- | ------------------------------- |
+| `idle`     | no unsaved changes           | "Saved {relative}"              |
+| `editing`  | form dirty, debounce pending | "Editing…"                      |
+| `saving`   | RPC in flight                | spinner + "Saving…"             |
+| `saved`    | RPC resolved                 | "Saved just now"                |
+| `error`    | RPC rejected                 | "Save failed — Retry"           |
+| `conflict` | server version newer         | "Newer version exists — Review" |
 
 Conflict handling matters and most CMSs punt on it. Each autosave sends the version it's based on; if another session advanced the draft, the server rejects with a conflict and the sidebar offers a diff-and-merge view instead of clobbering. Real-time co-editing presence is layered on top via `@kernel/db` reactive collections (TanStack DB) when enabled — see [Live Preview](./10-live-preview-and-visual-editing.md) — but the conflict guard works without it.
 

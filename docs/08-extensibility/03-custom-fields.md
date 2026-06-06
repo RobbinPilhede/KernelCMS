@@ -21,9 +21,9 @@ export const color = defineFieldType({
   }),
   // How the value maps onto a column / document path per adapter.
   storage: {
-    sql: { kind: 'jsonb' },          // Postgres/MySQL: one jsonb column
-    sqlite: { kind: 'json-text' },   // SQLite/libSQL: TEXT holding JSON
-    mongo: { kind: 'embedded' },     // MongoDB: embedded sub-document
+    sql: { kind: 'jsonb' }, // Postgres/MySQL: one jsonb column
+    sqlite: { kind: 'json-text' }, // SQLite/libSQL: TEXT holding JSON
+    mongo: { kind: 'embedded' }, // MongoDB: embedded sub-document
   },
   // Admin component contract (see "The admin component").
   admin: { component: ColorInput },
@@ -52,17 +52,17 @@ export default defineConfig({
 
 ### Anatomy
 
-| Key | Purpose | Required |
-| --- | --- | --- |
-| `name` | Unique type identifier used in config and the registry | yes |
-| `schema` | Zod schema for the persisted value; drives the inferred TS type | yes |
-| `storage` | Per-adapter persistence strategy | yes |
-| `admin.component` | React component rendered in the document editor | yes |
-| `validate` | Server-side validation hook (sync or async) | no |
-| `transform` | `beforeChange` / `afterRead` value coercion | no |
-| `index` | Index hints emitted into generated migrations | no |
-| `graphql` | Custom GraphQL type/scalar mapping override | no |
-| `cell` | TanStack Table cell renderer for list views | no |
+| Key               | Purpose                                                         | Required |
+| ----------------- | --------------------------------------------------------------- | -------- |
+| `name`            | Unique type identifier used in config and the registry          | yes      |
+| `schema`          | Zod schema for the persisted value; drives the inferred TS type | yes      |
+| `storage`         | Per-adapter persistence strategy                                | yes      |
+| `admin.component` | React component rendered in the document editor                 | yes      |
+| `validate`        | Server-side validation hook (sync or async)                     | no       |
+| `transform`       | `beforeChange` / `afterRead` value coercion                     | no       |
+| `index`           | Index hints emitted into generated migrations                   | no       |
+| `graphql`         | Custom GraphQL type/scalar mapping override                     | no       |
+| `cell`            | TanStack Table cell renderer for list views                     | no       |
 
 The `schema` is the keystone. Because it is a real Zod schema, KernelCMS derives `z.infer` for the stored value and threads it through `@kernel/client`, the Local API, and the generated `kernel-types.d.ts`. There is no second place to declare the type — contrast Strapi, where the schema JSON, the controller types, and the admin component props are three disconnected declarations you keep in sync by hand.
 
@@ -91,13 +91,13 @@ validate: async (value, ctx) => {
 
 The context surface:
 
-| Field | Meaning |
-| --- | --- |
-| `ctx.operation` | `'create'` or `'update'` |
-| `ctx.siblingData` | Sibling field values in the same group/document |
-| `ctx.data` | The full incoming document |
-| `ctx.req` | Request context: authenticated user, locale, adapter handle |
-| `ctx.previousValue` | Stored value before this operation (update only) |
+| Field               | Meaning                                                     |
+| ------------------- | ----------------------------------------------------------- |
+| `ctx.operation`     | `'create'` or `'update'`                                    |
+| `ctx.siblingData`   | Sibling field values in the same group/document             |
+| `ctx.data`          | The full incoming document                                  |
+| `ctx.req`           | Request context: authenticated user, locale, adapter handle |
+| `ctx.previousValue` | Stored value before this operation (update only)            |
 
 This mirrors Payload's field `validate` signature deliberately — teams migrating from Payload will recognize it — but KernelCMS guarantees the value is already schema-parsed, so you never re-validate primitive shape. See [Access Control](../06-auth-security/01-authorization-and-access-control.md) for how field-level access composes with validation; access denial short-circuits before `validate` runs.
 
@@ -123,12 +123,12 @@ read  path:  adapter.read → afterRead → serialize → REST/GraphQL/RPC → c
 
 The `storage` block tells each adapter how to materialize the value. KernelCMS resolves the active adapter at build time and the migration generator emits the correct DDL from the diff.
 
-| Adapter | `kind` options | Notes |
-| --- | --- | --- |
+| Adapter               | `kind` options                  | Notes                                                                                                       |
+| --------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `@kernel/db-postgres` | `jsonb`, `text`, `column-group` | `jsonb` is default for structured values; `column-group` explodes the object into real columns for indexing |
-| `@kernel/db-mysql` | `json`, `text`, `column-group` | same model on MySQL JSON |
-| `@kernel/db-sqlite` | `json-text`, `text` | JSON stored as TEXT; expression indexes via `json_extract` |
-| `@kernel/db-mongodb` | `embedded`, `reference` | embedded sub-document or a referenced doc id |
+| `@kernel/db-mysql`    | `json`, `text`, `column-group`  | same model on MySQL JSON                                                                                    |
+| `@kernel/db-sqlite`   | `json-text`, `text`             | JSON stored as TEXT; expression indexes via `json_extract`                                                  |
+| `@kernel/db-mongodb`  | `embedded`, `reference`         | embedded sub-document or a referenced doc id                                                                |
 
 For fields that must be queried or sorted, prefer `column-group` so `where` and `sort` hit native columns instead of JSON extraction. Declare index intent in the definition and let the generator handle the rest:
 
@@ -166,7 +166,9 @@ export function ColorInput(props: FieldComponentProps<ColorValue>) {
 
   return (
     <div className="kc-field" role="group" aria-labelledby={field.labelId}>
-      <label id={field.labelId} htmlFor={field.inputId}>{field.label}</label>
+      <label id={field.labelId} htmlFor={field.inputId}>
+        {field.label}
+      </label>
       <input
         id={field.inputId}
         type="color"
@@ -177,13 +179,18 @@ export function ColorInput(props: FieldComponentProps<ColorValue>) {
         aria-describedby={field.errors.length ? field.errorId : undefined}
       />
       <input
-        type="range" min={0} max={1} step={0.01}
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
         value={field.value?.alpha ?? 1}
         onChange={(e) => field.setValue({ ...field.value!, alpha: Number(e.target.value) })}
         aria-label="Opacity"
       />
       {field.errors.length > 0 && (
-        <p id={field.errorId} className="kc-field-error" role="alert">{field.errors[0]}</p>
+        <p id={field.errorId} className="kc-field-error" role="alert">
+          {field.errors[0]}
+        </p>
       )}
     </div>
   )
@@ -192,14 +199,14 @@ export function ColorInput(props: FieldComponentProps<ColorValue>) {
 
 `useFieldComponent` is the bridge to TanStack Form. It exposes:
 
-| Member | Type | Purpose |
-| --- | --- | --- |
-| `value` / `setValue` | `T` / `(v: T) => void` | controlled value binding |
-| `errors` | `string[]` | merged client + server validation messages |
-| `handleBlur` | `() => void` | triggers validate-on-blur, not per-keystroke |
-| `disabled` | `boolean` | resolved from access control + draft state |
-| `locale` | `string` | active locale for localized fields |
-| `label` / `inputId` / `labelId` / `errorId` | `string` | accessibility wiring (WCAG 2.2 AA) |
+| Member                                      | Type                   | Purpose                                      |
+| ------------------------------------------- | ---------------------- | -------------------------------------------- |
+| `value` / `setValue`                        | `T` / `(v: T) => void` | controlled value binding                     |
+| `errors`                                    | `string[]`             | merged client + server validation messages   |
+| `handleBlur`                                | `() => void`           | triggers validate-on-blur, not per-keystroke |
+| `disabled`                                  | `boolean`              | resolved from access control + draft state   |
+| `locale`                                    | `string`               | active locale for localized fields           |
+| `label` / `inputId` / `labelId` / `errorId` | `string`               | accessibility wiring (WCAG 2.2 AA)           |
 
 Two rules the standard library enforces and custom fields should too: validate on blur (not every keystroke), and never render inline styles — use the design tokens from [@kernel/ui](../04-admin-ui/12-theming-and-white-label.md) so the field inherits dark mode and white-label themes. For long repeatable values, wrap rows in TanStack Virtual; the editor already virtualizes long documents, and a custom field that renders an unbounded list without it will blow the performance budget.
 
@@ -227,7 +234,9 @@ import { slug } from './fields/slug'
 
 export default defineConfig({
   fields: [color, slug], // registers types into the schema + admin registry
-  collections: [/* ... */],
+  collections: [
+    /* ... */
+  ],
 })
 ```
 

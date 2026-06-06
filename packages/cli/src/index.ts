@@ -156,7 +156,9 @@ export async function run(argv: string[]): Promise<void> {
       const payload = JSON.parse(readFileSync(resolve(process.cwd(), file), 'utf8')) as ImportPayload
       const kernel = await initKernel(config, { autoMigrate: true })
       const report = await importData(kernel, payload)
-      const summary = Object.entries(report.created).map(([slug, n]) => `${slug}: ${n}`).join(', ')
+      const summary = Object.entries(report.created)
+        .map(([slug, n]) => `${slug}: ${n}`)
+        .join(', ')
       console.log(`✓ Imported ${report.total - report.errors.length}/${report.total} document(s) — ${summary}`)
       for (const e of report.errors) console.error(`  ✖ ${e.collection}[${e.index}] ${e.message}`)
       await kernel.destroy()

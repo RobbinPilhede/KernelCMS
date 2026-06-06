@@ -31,7 +31,11 @@ export interface ImportOptions {
 }
 
 /** Import a portable payload into the kernel. Unknown collections are reported, not thrown. */
-export async function importData(kernel: Kernel, payload: ImportPayload, options: ImportOptions = {}): Promise<ImportReport> {
+export async function importData(
+  kernel: Kernel,
+  payload: ImportPayload,
+  options: ImportOptions = {},
+): Promise<ImportReport> {
   const overrideAccess = options.overrideAccess ?? true
   const created: Record<string, number> = {}
   const errors: ImportError[] = []
@@ -50,7 +54,10 @@ export async function importData(kernel: Kernel, payload: ImportPayload, options
         await kernel.create({ collection, data: rows[i]!, overrideAccess })
         created[collection]++
       } catch (err) {
-        const message = err instanceof ValidationError ? err.errors.map((e) => `${e.path}: ${e.message}`).join('; ') : (err as Error).message
+        const message =
+          err instanceof ValidationError
+            ? err.errors.map((e) => `${e.path}: ${e.message}`).join('; ')
+            : (err as Error).message
         errors.push({ collection, index: i, message })
         if (options.stopOnError) return finalize(created, errors, total)
       }

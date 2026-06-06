@@ -66,13 +66,13 @@ The `mfa.policy` field can also be a function evaluated per user, so you can req
 
 KernelCMS supports two enrollment families. TOTP (RFC 6238) covers the universal case — Google Authenticator, 1Password, Authy — and works fully offline. WebAuthn covers hardware security keys and platform authenticators (Touch ID, Windows Hello, passkeys), giving phishing-resistant, origin-bound credentials.
 
-| Property | TOTP | WebAuthn |
-| --- | --- | --- |
-| Phishing-resistant | No (shared secret) | Yes (origin-bound) |
-| Offline | Yes | Platform-dependent |
-| Secret storage | Encrypted secret in DB | Public key only in DB |
-| Replay protection | Time window + last-used counter | Signature counter |
-| Best for | Universal fallback | Primary high-trust factor |
+| Property           | TOTP                            | WebAuthn                  |
+| ------------------ | ------------------------------- | ------------------------- |
+| Phishing-resistant | No (shared secret)              | Yes (origin-bound)        |
+| Offline            | Yes                             | Platform-dependent        |
+| Secret storage     | Encrypted secret in DB          | Public key only in DB     |
+| Replay protection  | Time window + last-used counter | Signature counter         |
+| Best for           | Universal fallback              | Primary high-trust factor |
 
 ### TOTP enrollment
 
@@ -133,12 +133,12 @@ delay:     0    1s   2s   4s   8s    →   hard lock (admin unlock)
                 └──── exponential backoff ────┘
 ```
 
-| Layer | Trigger | Effect |
-| --- | --- | --- |
-| Soft throttle | per-IP burst | exponential backoff delay |
-| Account lockout | `maxAttempts` in `window` | temporary lock, auto-clears after window |
-| Hard lock | `hardLockAfter` total failures | requires admin unlock |
-| MFA challenge limiter | failed second factors | separate, stricter budget |
+| Layer                 | Trigger                        | Effect                                   |
+| --------------------- | ------------------------------ | ---------------------------------------- |
+| Soft throttle         | per-IP burst                   | exponential backoff delay                |
+| Account lockout       | `maxAttempts` in `window`      | temporary lock, auto-clears after window |
+| Hard lock             | `hardLockAfter` total failures | requires admin unlock                    |
+| MFA challenge limiter | failed second factors          | separate, stricter budget                |
 
 The MFA challenge limiter is intentionally separate from the password limiter: a correct password followed by repeated TOTP failures is a distinct threat signal and gets a tighter budget. Lockout state lives in the configured cache adapter (`@kernel/auth` reuses the cache adapter, so Redis-backed deployments get distributed counters for free across instances). This is a concrete advantage over stock Strapi, whose brute-force protection is minimal and per-instance.
 
@@ -155,10 +155,15 @@ Every security-relevant action emits a structured, append-only audit event. The 
 interface AuditEvent {
   id: string
   type:
-    | 'login.success' | 'login.failure'
-    | 'mfa.enrolled' | 'mfa.challenge.success' | 'mfa.challenge.failure'
-    | 'recovery.redeemed' | 'recovery.regenerated'
-    | 'account.locked' | 'account.unlocked'
+    | 'login.success'
+    | 'login.failure'
+    | 'mfa.enrolled'
+    | 'mfa.challenge.success'
+    | 'mfa.challenge.failure'
+    | 'recovery.redeemed'
+    | 'recovery.regenerated'
+    | 'account.locked'
+    | 'account.unlocked'
     | 'session.revoked'
   actorId: string | null
   ip: string

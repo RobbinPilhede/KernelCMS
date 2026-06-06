@@ -50,18 +50,18 @@ where: {
 
 ### Operator reference
 
-| Operator | Applies to | Meaning |
-| --- | --- | --- |
-| `equals` / `not_equals` | all scalar types | exact match / negation |
-| `greater_than` / `greater_than_equal` | number, date | `>` / `>=` |
-| `less_than` / `less_than_equal` | number, date | `<` / `<=` |
-| `in` / `not_in` | scalars, relationship ids | membership against an array |
-| `exists` | all | `true` = field is set; `false` = null/unset |
-| `like` | text, textarea, email, richText (plain) | case-insensitive substring (`ILIKE %v%`) |
-| `contains` | text, array of scalars | substring / array membership |
-| `near` | point | geospatial radius, `[lng, lat, maxMeters, minMeters]` |
-| `within` / `intersects` | point | geometry containment (Postgres + Mongo only) |
-| `all` | array, relationship (hasMany) | every supplied value must be present |
+| Operator                              | Applies to                              | Meaning                                               |
+| ------------------------------------- | --------------------------------------- | ----------------------------------------------------- |
+| `equals` / `not_equals`               | all scalar types                        | exact match / negation                                |
+| `greater_than` / `greater_than_equal` | number, date                            | `>` / `>=`                                            |
+| `less_than` / `less_than_equal`       | number, date                            | `<` / `<=`                                            |
+| `in` / `not_in`                       | scalars, relationship ids               | membership against an array                           |
+| `exists`                              | all                                     | `true` = field is set; `false` = null/unset           |
+| `like`                                | text, textarea, email, richText (plain) | case-insensitive substring (`ILIKE %v%`)              |
+| `contains`                            | text, array of scalars                  | substring / array membership                          |
+| `near`                                | point                                   | geospatial radius, `[lng, lat, maxMeters, minMeters]` |
+| `within` / `intersects`               | point                                   | geometry containment (Postgres + Mongo only)          |
+| `all`                                 | array, relationship (hasMany)           | every supplied value must be present                  |
 
 Operators are deliberately spelled out (`greater_than_equal`, not `gte`) so a serialized REST query is self-documenting and matches the GraphQL input field names one-to-one. This is the Payload convention, and we keep it; Strapi's `$gte`/`$contains` MongoDB-flavored operators are terse but leak a backend dialect into the public API.
 
@@ -71,8 +71,16 @@ The operator set is constrained at the type level. Each field type maps to an al
 
 ```ts
 // number field -> numeric + equality operators only
-{ views: { greater_than: 1000 } }      // ok
-{ views: { like: 'foo' } }             // type error: 'like' not assignable
+{
+  views: {
+    greater_than: 1000
+  }
+} // ok
+{
+  views: {
+    like: 'foo'
+  }
+} // type error: 'like' not assignable
 ```
 
 This is the concrete win over Strapi and Sanity: invalid filters fail in your editor, not at runtime against the database.
@@ -103,13 +111,13 @@ Filters never bypass authorization. Collection-level `access.read` can return a 
 `sort` is an array of field paths. A leading `-` means descending; bare means ascending. Order in the array is sort precedence (primary, secondary, …). A single string is accepted as shorthand.
 
 ```ts
-sort: ['-publishedAt', 'title']   // newest first, then A→Z by title
-sort: 'title'                      // shorthand, ascending
+sort: ['-publishedAt', 'title'] // newest first, then A→Z by title
+sort: 'title' // shorthand, ascending
 ```
 
-| Input | SQL `ORDER BY` |
-| --- | --- |
-| `['-publishedAt']` | `published_at DESC` |
+| Input                        | SQL `ORDER BY`                  |
+| ---------------------------- | ------------------------------- |
+| `['-publishedAt']`           | `published_at DESC`             |
 | `['priority', '-createdAt']` | `priority ASC, created_at DESC` |
 
 Sortable fields are validated against config. Only fields backed by a column or index are sortable; computed/virtual and `ui` fields are rejected. We strongly recommend marking sort fields with `index: true` in `kernel.config.ts` — the query layer emits a dev-time warning when you sort on an unindexed column, because unindexed sorts plus large offsets are the classic source of slow list views.
@@ -175,13 +183,13 @@ LIMIT 500
 
 Because the sort key must be unique to be stable, KernelCMS automatically appends `id` as the final tie-breaker to any cursor query. `totalDocs` is omitted from cursor responses by default (counting defeats the point of keyset paging); request it explicitly with `count: true` if you accept the extra query.
 
-| | Offset | Cursor |
-| --- | --- | --- |
-| Random page access | yes | no |
-| Stable under inserts | no | yes |
-| Cost at depth | O(offset) | O(limit) |
-| Total count | always | opt-in |
-| Best for | admin lists | exports, feeds, infinite scroll |
+|                      | Offset      | Cursor                          |
+| -------------------- | ----------- | ------------------------------- |
+| Random page access   | yes         | no                              |
+| Stable under inserts | no          | yes                             |
+| Cost at depth        | O(offset)   | O(limit)                        |
+| Total count          | always      | opt-in                          |
+| Best for             | admin lists | exports, feeds, infinite scroll |
 
 This is a sharper split than the competition. Payload is offset-only out of the box. Strapi's REST is offset/page-based; cursor support is partial and inconsistent across its APIs. Sanity's GROQ does range slicing (`[0...20]`) which behaves like offset. Making keyset pagination a first-class, typed option — with the tie-breaker handled for you — is a deliberate KernelCMS differentiator for data-heavy frontends backed by [TanStack Query](../09-developer-experience/03-client-sdk-and-data-fetching.md) infinite queries.
 
@@ -217,14 +225,14 @@ Unbounded `depth` is a footgun: a graph with cycles plus high `depth` can fan ou
 
 ```ts
 // kernel.config.ts
-collections: [{
-  slug: 'posts',
-  defaultDepth: 1,
-  maxDepth: 4,
-  fields: [
-    { name: 'author', type: 'relationship', relationTo: 'users', maxDepth: 1 },
-  ],
-}]
+collections: [
+  {
+    slug: 'posts',
+    defaultDepth: 1,
+    maxDepth: 4,
+    fields: [{ name: 'author', type: 'relationship', relationTo: 'users', maxDepth: 1 }],
+  },
+]
 ```
 
 ### `select` and `populate` for precise payloads
@@ -235,8 +243,8 @@ collections: [{
 await kernel.find({
   collection: 'posts',
   depth: 1,
-  select: { title: true, slug: true, author: true },   // only these columns
-  populate: { author: { name: true, avatar: true } },   // only these from the author
+  select: { title: true, slug: true, author: true }, // only these columns
+  populate: { author: { name: true, avatar: true } }, // only these from the author
 })
 ```
 

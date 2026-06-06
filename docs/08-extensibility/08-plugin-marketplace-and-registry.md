@@ -30,16 +30,16 @@ A plugin enters the index in one of two ways. Either the author opts in by addin
 
 ```ts
 // @kernel/client — registry queries are typed, cached via TanStack Query
-import { registry } from "@kernel/client";
+import { registry } from '@kernel/client'
 
 const results = await registry.search({
-  query: "algolia",
+  query: 'algolia',
   // facet by the things that actually matter in a CMS
-  provides: ["search-adapter"],
-  compatibleWith: { core: "^2.4.0", db: "@kernel/db-postgres" },
+  provides: ['search-adapter'],
+  compatibleWith: { core: '^2.4.0', db: '@kernel/db-postgres' },
   trust: { minScore: 70, verifiedOnly: false },
-  sort: "trust",
-});
+  sort: 'trust',
+})
 ```
 
 The in-admin Marketplace is a TanStack Table view over exactly this query, with TanStack Router holding the facet state in search params so a filtered catalog is a shareable URL. Installing from the admin does not download code into a running process; it writes the dependency, prints the `kernel.config.ts` wiring snippet, and (on Cloud) triggers a rebuild. Self-hosters get a copy-paste command. We never hot-load untrusted code into the admin runtime — see Plugin Security & Sandboxing.
@@ -55,17 +55,17 @@ Every indexed plugin carries a manifest. The minimum lives in `package.json`; th
   "version": "1.3.0",
   "kernel": {
     "displayName": "Algolia Search",
-    "provides": ["search-adapter"],          // capability tags, controlled vocabulary
-    "fieldTypes": [],                          // custom field types it registers
+    "provides": ["search-adapter"], // capability tags, controlled vocabulary
+    "fieldTypes": [], // custom field types it registers
     "adapters": { "search": "algolia" },
     "peerSurfaces": ["@kernel/server", "@kernel/admin"],
-    "compat": { "core": "^2.0.0" },           // semver range against @kernel/core
-    "config": "./schema/config.json",          // JSON Schema for the plugin's options
+    "compat": { "core": "^2.0.0" }, // semver range against @kernel/core
+    "config": "./schema/config.json", // JSON Schema for the plugin's options
     "screenshots": ["./media/list.png"],
     "license": "MIT",
-    "pricing": { "model": "free" }
+    "pricing": { "model": "free" },
   },
-  "peerDependencies": { "@kernel/core": "^2.0.0" }
+  "peerDependencies": { "@kernel/core": "^2.0.0" },
 }
 ```
 
@@ -73,24 +73,24 @@ Every indexed plugin carries a manifest. The minimum lives in `package.json`; th
 
 Trust is the registry's real product. We compute a 0–100 score from objective signals and surface every input, never a black box:
 
-| Signal | Weight | Source |
-| --- | --- | --- |
-| Verified publisher (domain/org proof) | 20 | Cloud submission |
-| Provenance attestation (npm + Sigstore) | 15 | npm publish metadata |
-| Compat tests pass on current core | 20 | registry CI matrix |
-| No critical advisories in deps | 15 | `dependency-audit` scan |
-| Maintenance (release cadence, open-issue ratio) | 15 | GitHub/GitLab API |
-| Adoption (weekly downloads, deduped) | 10 | npm stats |
-| Docs + screenshots present | 5 | manifest check |
+| Signal                                          | Weight | Source                  |
+| ----------------------------------------------- | ------ | ----------------------- |
+| Verified publisher (domain/org proof)           | 20     | Cloud submission        |
+| Provenance attestation (npm + Sigstore)         | 15     | npm publish metadata    |
+| Compat tests pass on current core               | 20     | registry CI matrix      |
+| No critical advisories in deps                  | 15     | `dependency-audit` scan |
+| Maintenance (release cadence, open-issue ratio) | 15     | GitHub/GitLab API       |
+| Adoption (weekly downloads, deduped)            | 10     | npm stats               |
+| Docs + screenshots present                      | 5      | manifest check          |
 
 ```ts
 interface TrustReport {
-  score: number;                 // 0–100
-  tier: "verified" | "community" | "unscored";
-  signals: TrustSignal[];        // every input, with its raw value
-  advisories: Advisory[];        // open security advisories, by severity
-  provenance: ProvenanceAttestation | null;
-  lastScannedAt: string;
+  score: number // 0–100
+  tier: 'verified' | 'community' | 'unscored'
+  signals: TrustSignal[] // every input, with its raw value
+  advisories: Advisory[] // open security advisories, by severity
+  provenance: ProvenanceAttestation | null
+  lastScannedAt: string
 }
 ```
 
@@ -102,21 +102,21 @@ A CMS plugin couples to far more surface than a typical library. It can depend o
 
 ```ts
 // @kernel/plugin-sdk
-export const definePlugin = (p: PluginDefinition) => p;
+export const definePlugin = (p: PluginDefinition) => p
 
 export interface CompatDeclaration {
-  core: string;        // @kernel/core operation pipeline + config schema
-  admin?: string;      // @kernel/admin component + view API (if it ships UI)
-  sdkSurface: number;  // monotonic plugin-SDK contract version, e.g. 3
+  core: string // @kernel/core operation pipeline + config schema
+  admin?: string // @kernel/admin component + view API (if it ships UI)
+  sdkSurface: number // monotonic plugin-SDK contract version, e.g. 3
 }
 ```
 
 The plugin SDK surface is a single integer that bumps only on breaking changes to the plugin contract itself — install hooks, field registration, lifecycle. Core and admin follow semver independently. The registry's compat matrix runs each plugin's smoke test against the latest patch of every supported minor, so the catalog can answer "does this work on the version I'm pinned to" without trusting the author's hand-written range. A red cell in the matrix downgrades trust and hides the plugin from filtered installs for incompatible cores.
 
 | Plugin v | core ^2.0 | core ^2.4 | core ^3.0 | sdkSurface |
-| --- | --- | --- | --- | --- |
-| 1.3.0 | ✅ | ✅ | ❌ | 3 |
-| 2.0.0 | ❌ | ✅ | ✅ | 4 |
+| -------- | --------- | --------- | --------- | ---------- |
+| 1.3.0    | ✅        | ✅        | ❌        | 3          |
+| 2.0.0    | ❌        | ✅        | ✅        | 4          |
 
 The `kernel` CLI enforces this on install. It refuses a plugin whose declared `core` range excludes the installed core, and warns when the registry compat matrix disagrees with the author's declaration:
 
@@ -135,52 +135,50 @@ The open-source core stays MIT and the npm install path is never gated — that 
 
 ```ts
 type Pricing =
-  | { model: "free" }
-  | { model: "paid"; price: number; interval: "one-time" | "monthly" | "yearly"; currency: "usd" }
-  | { model: "freemium"; freeTier: string[]; paidFeatures: string[]; price: number; interval: "monthly" }
-  | { model: "byo"; note: string }; // bring-your-own license (e.g. enterprise SaaS the plugin wraps)
+  | { model: 'free' }
+  | { model: 'paid'; price: number; interval: 'one-time' | 'monthly' | 'yearly'; currency: 'usd' }
+  | { model: 'freemium'; freeTier: string[]; paidFeatures: string[]; price: number; interval: 'monthly' }
+  | { model: 'byo'; note: string } // bring-your-own license (e.g. enterprise SaaS the plugin wraps)
 ```
 
-| Model | Who collects payment | Enforcement | Best for |
-| --- | --- | --- | --- |
-| Free / MIT | nobody | none | community adapters, field types |
+| Model              | Who collects payment     | Enforcement                         | Best for                           |
+| ------------------ | ------------------------ | ----------------------------------- | ---------------------------------- |
+| Free / MIT         | nobody                   | none                                | community adapters, field types    |
 | Paid (license key) | KernelCMS Cloud (Stripe) | `@kernel/plugin-sdk` license verify | premium adapters, advanced editors |
-| Freemium | Cloud | feature-flag check at runtime | open core + paid pro features |
-| Sponsorship | GitHub/OpenCollective | none (badge only) | maintainers funding free work |
+| Freemium           | Cloud                    | feature-flag check at runtime       | open core + paid pro features      |
+| Sponsorship        | GitHub/OpenCollective    | none (badge only)                   | maintainers funding free work      |
 
 Paid plugins are still published as readable npm packages — we do not ship obfuscated tarballs — but the gated features call a license-verification hook that checks a signed, offline-verifiable license token. The token is an asymmetrically signed JWT, so self-hosters validate it without phoning home:
 
 ```ts
 // inside a paid plugin
-import { verifyLicense } from "@kernel/plugin-sdk";
+import { verifyLicense } from '@kernel/plugin-sdk'
 
 export default definePlugin({
-  name: "@acme/kernel-plugin-visual-workflow",
+  name: '@acme/kernel-plugin-visual-workflow',
   async setup(ctx) {
     const license = await verifyLicense(ctx, {
-      sku: "visual-workflow-pro",
+      sku: 'visual-workflow-pro',
       // offline check against KernelCMS Cloud's published public key
-    });
+    })
     if (!license.valid) {
-      ctx.logger.warn("Visual Workflow running in free mode — pro nodes disabled");
+      ctx.logger.warn('Visual Workflow running in free mode — pro nodes disabled')
     }
-    return { features: license.valid ? proNodes : freeNodes };
+    return { features: license.valid ? proNodes : freeNodes }
   },
-});
+})
 ```
 
 Cloud is the merchant of record: it runs Stripe, handles tax/VAT, issues license tokens, and pays out authors (we take a platform fee on the curated paid tier; sponsorship and free plugins cost nothing). On Cloud, buying a plugin and provisioning its license key is one click and the key lands in the project's secret store. Self-hosters paste the key into `kernel.config.ts` via an env reference:
 
 ```ts
 // kernel.config.ts
-import { defineConfig } from "@kernel/core";
-import visualWorkflow from "@acme/kernel-plugin-visual-workflow";
+import { defineConfig } from '@kernel/core'
+import visualWorkflow from '@acme/kernel-plugin-visual-workflow'
 
 export default defineConfig({
-  plugins: [
-    visualWorkflow({ license: process.env.VISUAL_WORKFLOW_LICENSE }),
-  ],
-});
+  plugins: [visualWorkflow({ license: process.env.VISUAL_WORKFLOW_LICENSE })],
+})
 ```
 
 This is the gap Payload, Sanity, and Strapi all leave open. None of them ships a native paid-plugin rail — authors hand-roll Gumroad links and homegrown license servers, and self-hosted enforcement is ad hoc. KernelCMS makes paid distribution a first-class, MIT-compatible primitive: source stays open, payment and licensing are handled by Cloud, and the offline token means a paid plugin keeps working on a self-hosted, air-gapped install without a runtime dependency on our servers.

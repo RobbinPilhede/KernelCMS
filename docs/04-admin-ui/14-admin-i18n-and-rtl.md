@@ -1,6 +1,6 @@
 # Admin i18n & RTL
 
-The KernelCMS admin panel ships translatable from the first commit, not as a retrofit. Every string the panel renders flows through a single typed translation registry, locale bundles are code-split and loaded on demand through TanStack Query, layout direction is derived from the active locale rather than hand-toggled, and dates and numbers are formatted with the platform `Intl` APIs against that locale. This document specifies how admin UI translation, locale loading, RTL layout, and date/number formatting work, and how plugins and self-hosters extend or override them. It covers the *admin chrome* — the panel's own UI language — which is orthogonal to field-level content localization: a German editor can author Arabic content, and a single editor can flip the panel to RTL without touching the locales their content is published in.
+The KernelCMS admin panel ships translatable from the first commit, not as a retrofit. Every string the panel renders flows through a single typed translation registry, locale bundles are code-split and loaded on demand through TanStack Query, layout direction is derived from the active locale rather than hand-toggled, and dates and numbers are formatted with the platform `Intl` APIs against that locale. This document specifies how admin UI translation, locale loading, RTL layout, and date/number formatting work, and how plugins and self-hosters extend or override them. It covers the _admin chrome_ — the panel's own UI language — which is orthogonal to field-level content localization: a German editor can author Arabic content, and a single editor can flip the panel to RTL without touching the locales their content is published in.
 
 ## The UI translation system
 
@@ -47,12 +47,12 @@ t('upload.selected', { count }) // "{count, plural, one {# file} other {# files}
 
 The key advantage over the field is **type safety**. `@kernel/core` generates an augmentation file during `kernel generate` that registers every known key as a literal union, so `t('publsihNow')` is a compile error, not a runtime `myPlugin.publsihNow` leak. Payload's i18n (i18next-based) and Strapi's (formatjs-based) both validate keys only at runtime; a typo ships as raw key text. Sanity Studio's `defineLocaleResourceBundle` is closer in spirit but still untyped at the call site. KernelCMS treats a missing translation key the same way it treats a missing route param — a build-time failure in CI, a logged warning plus fallback-locale string at runtime, never a silent blank.
 
-| Concern | KernelCMS | Payload | Strapi | Sanity |
-| --- | --- | --- | --- | --- |
-| Engine | Custom, ICU-based | i18next | formatjs | Custom bundles |
-| Key typing | Compile-time union | Runtime | Runtime | Runtime |
-| Bundle loading | Code-split per locale | Eager merge | Eager | Lazy bundles |
-| RTL | Derived from locale | Manual flag | Partial | Manual |
+| Concern        | KernelCMS             | Payload     | Strapi   | Sanity         |
+| -------------- | --------------------- | ----------- | -------- | -------------- |
+| Engine         | Custom, ICU-based     | i18next     | formatjs | Custom bundles |
+| Key typing     | Compile-time union    | Runtime     | Runtime  | Runtime        |
+| Bundle loading | Code-split per locale | Eager merge | Eager    | Lazy bundles   |
+| RTL            | Derived from locale   | Manual flag | Partial  | Manual         |
 
 ## Locale loading
 
@@ -114,7 +114,9 @@ The non-negotiable rule: **logical CSS properties only** in admin and `@kernel/u
   border-inline-start: 2px solid var(--color-border);
   text-align: start;
 }
-.field__icon { inset-inline-end: var(--space-2); } /* flips automatically */
+.field__icon {
+  inset-inline-end: var(--space-2);
+} /* flips automatically */
 ```
 
 Direction is exposed to JS through the same hook (`const { dir } = useTranslation()`) and through a `useDirection()` selector for components that must compute geometry — virtualized tables, the rich-text caret, drag-and-drop reordering — where CSS logical properties cannot reach. TanStack Table column resizing, TanStack Virtual horizontal offsets, and the command palette's arrow-key navigation all read `dir` to mirror their math.
@@ -125,7 +127,7 @@ import { useDirection } from '@kernel/admin'
 function ResizableColumn() {
   const dir = useDirection() // 'ltr' | 'rtl'
   const sign = dir === 'rtl' ? -1 : 1
-  const onDrag = (dx: number) => setWidth(w => w + dx * sign)
+  const onDrag = (dx: number) => setWidth((w) => w + dx * sign)
   // ...
 }
 ```
@@ -178,11 +180,11 @@ Three things matter here that off-the-shelf CMS admins routinely get wrong:
 - **Time zones.** Timestamps are stored UTC and rendered in the user's zone via `Intl.DateTimeFormat({ timeZone })`. The version-history and [drafts/publish](../02-data-modeling/10-versioning-drafts-and-autosave.md) timelines depend on this being consistent across surfaces.
 - **Relative time.** `Intl.RelativeTimeFormat` powers "edited 3 hours ago" labels and is locale- and direction-correct for free.
 
-| Value | `en-US` | `ar-EG` (arab) | `de-DE` |
-| --- | --- | --- | --- |
-| `number(2400.5)` | `2,400.5` | `٢٬٤٠٠٫٥` | `2.400,5` |
-| `date(d)` medium | `Jan 5, 2026` | `٥ يناير ٢٠٢٦` | `05.01.2026` |
-| `fileSize(2_516_582)` | `2.4 MB` | `٢٫٤ م.ب` | `2,4 MB` |
+| Value                 | `en-US`       | `ar-EG` (arab) | `de-DE`      |
+| --------------------- | ------------- | -------------- | ------------ |
+| `number(2400.5)`      | `2,400.5`     | `٢٬٤٠٠٫٥`      | `2.400,5`    |
+| `date(d)` medium      | `Jan 5, 2026` | `٥ يناير ٢٠٢٦` | `05.01.2026` |
+| `fileSize(2_516_582)` | `2.4 MB`      | `٢٫٤ م.ب`      | `2,4 MB`     |
 
 Because everything routes through `Intl`, adding a locale adds zero formatting code; the runtime is already in every supported JS engine, so the admin bundle stays small. Payload and Strapi both pull in `date-fns`/`dayjs` locale data; KernelCMS ships none of it.
 

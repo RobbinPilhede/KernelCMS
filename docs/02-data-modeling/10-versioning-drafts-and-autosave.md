@@ -18,22 +18,22 @@ export const Posts = defineCollection({
   ],
   versions: {
     drafts: {
-      autosave: { interval: 800 },     // ms of idle before a snapshot
+      autosave: { interval: 800 }, // ms of idle before a snapshot
       schedulePublish: true,
-      validate: false,                  // skip required-field checks on drafts
+      validate: false, // skip required-field checks on drafts
     },
-    maxPerDoc: 50,                       // prune oldest beyond this
+    maxPerDoc: 50, // prune oldest beyond this
   },
 })
 ```
 
 Three shapes are valid:
 
-| `versions` value | Behavior |
-| --- | --- |
-| `false` / omitted | No version log. Saves mutate the row in place. |
-| `true` | Version history on, but no draft/publish split — every save is immediately live, history is kept. |
-| `{ drafts: {...} }` | Full draft/publish workflow plus history, autosave, and scheduling. |
+| `versions` value    | Behavior                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
+| `false` / omitted   | No version log. Saves mutate the row in place.                                                    |
+| `true`              | Version history on, but no draft/publish split — every save is immediately live, history is kept. |
+| `{ drafts: {...} }` | Full draft/publish workflow plus history, autosave, and scheduling.                               |
 
 The distinction between `true` and `{ drafts }` matters. Sanity always splits documents into a `drafts.` perspective and a published one; Strapi's Draft & Publish is a per-content-type toggle that gives you a two-state status but, until recent versions, no real history. KernelCMS lets you keep an audit trail (`versions: true`) without forcing editors through a publish step, which is the right default for internal tools and settings globals.
 
@@ -78,15 +78,15 @@ const preview = await kernel.find({
 
 Every save appends a version row. The shape stored per version:
 
-| Column | Meaning |
-| --- | --- |
-| `id` | Version ID (ULID, monotonic) |
-| `parent` | Document ID this version belongs to |
-| `version` | Full field snapshot (JSON) at save time |
-| `status` | `draft` \| `published` |
-| `autosave` | `true` if written by the autosave loop |
-| `createdAt` | Timestamp |
-| `createdBy` | User ID from the request context |
+| Column      | Meaning                                 |
+| ----------- | --------------------------------------- |
+| `id`        | Version ID (ULID, monotonic)            |
+| `parent`    | Document ID this version belongs to     |
+| `version`   | Full field snapshot (JSON) at save time |
+| `status`    | `draft` \| `published`                  |
+| `autosave`  | `true` if written by the autosave loop  |
+| `createdAt` | Timestamp                               |
+| `createdBy` | User ID from the request context        |
 
 Snapshots are full, not deltas. Storing complete field state per version trades disk for correctness and read speed — reconstructing a point-in-time document is a single row read, and diffs are computed on demand rather than replayed. Postgres/MySQL store `version` as `jsonb`; the MongoDB adapter stores it as a subdocument. With `maxPerDoc` set, autosave versions are pruned first (oldest, `autosave: true`), then non-autosave drafts, never the published lineage.
 
@@ -96,8 +96,8 @@ Diffs are computed by `@kernel/core`'s field-aware differ, which walks the colle
 const { from, to, changes } = await kernel.diffVersions({
   collection: 'posts',
   parent: postId,
-  fromVersion: 'v_01J...A',   // older
-  toVersion: 'v_01J...K',     // newer
+  fromVersion: 'v_01J...A', // older
+  toVersion: 'v_01J...K', // newer
 })
 
 for (const change of changes) {
@@ -149,21 +149,21 @@ Symmetric scheduled **unpublish** is supported via `unpublishAt`, which writes a
 
 ## Restore a version
 
-Restore never rewinds the log — it appends. Restoring version *N* reads its snapshot, runs it through `beforeChange` hooks, and writes a **new** version with those values, so the audit trail stays linear and you can always restore the restore.
+Restore never rewinds the log — it appends. Restoring version _N_ reads its snapshot, runs it through `beforeChange` hooks, and writes a **new** version with those values, so the audit trail stays linear and you can always restore the restore.
 
 ```ts
 const restored = await kernel.restoreVersion({
   collection: 'posts',
   parent: postId,
-  versionId: 'v_01J...A',   // the snapshot to bring back
-  draft: true,               // restore into a draft; omit to republish directly
+  versionId: 'v_01J...A', // the snapshot to bring back
+  draft: true, // restore into a draft; omit to republish directly
 })
 ```
 
-| Option | Result |
-| --- | --- |
-| `draft: true` | New draft version with the old values; editor reviews, then publishes. |
-| `draft: false` (default) | New published version immediately; `documents` row updated. |
+| Option                   | Result                                                                 |
+| ------------------------ | ---------------------------------------------------------------------- |
+| `draft: true`            | New draft version with the old values; editor reviews, then publishes. |
+| `draft: false` (default) | New published version immediately; `documents` row updated.            |
 
 ```
 v1 pub ── v2 draft ── v3 pub ── v4 (restore of v1) pub

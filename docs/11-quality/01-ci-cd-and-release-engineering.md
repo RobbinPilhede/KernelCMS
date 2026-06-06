@@ -34,15 +34,15 @@ CI runs on GitHub Actions, triggered on `pull_request` and on `push` to `main`. 
 
 Each stage is opinionated about what fails the build:
 
-| Stage | Tooling | Hard fail on |
-| --- | --- | --- |
-| `lint` | ESLint + Biome | any error rule, `any` in shipped code, unused exports |
-| `typecheck` | `tsc -b` project references | any type error; `--strict` is non-negotiable |
-| `build` | `turbo run build` | broken build, missing `exports` map, dual ESM/CJS mismatch |
-| `changeset` | `@changesets/cli status` | a code-touching PR with no changeset (see below) |
-| `test` | Vitest (matrix) | failing test, coverage below 80% line / 70% branch |
-| `e2e` | Playwright | broken admin flow, WCAG 2.2 AA axe violation |
-| `perf` | custom bench + `size-limit` | `@kernel/admin` over budget, op latency regression |
+| Stage       | Tooling                     | Hard fail on                                               |
+| ----------- | --------------------------- | ---------------------------------------------------------- |
+| `lint`      | ESLint + Biome              | any error rule, `any` in shipped code, unused exports      |
+| `typecheck` | `tsc -b` project references | any type error; `--strict` is non-negotiable               |
+| `build`     | `turbo run build`           | broken build, missing `exports` map, dual ESM/CJS mismatch |
+| `changeset` | `@changesets/cli status`    | a code-touching PR with no changeset (see below)           |
+| `test`      | Vitest (matrix)             | failing test, coverage below 80% line / 70% branch         |
+| `e2e`       | Playwright                  | broken admin flow, WCAG 2.2 AA axe violation               |
+| `perf`      | custom bench + `size-limit` | `@kernel/admin` over budget, op latency regression         |
 
 The `changeset check` stage is what most monorepos get wrong. Strapi and Payload publish from a single version line, so a missing changelog entry is a process problem, not a CI failure. Because KernelCMS publishes ~25 independently versioned packages, we fail the PR if it touches `packages/**/src` but adds no `.changeset/*.md` file. The escape hatch is an empty changeset (`pnpm changeset --empty`) for genuinely non-publishable changes like test-only fixes — explicit, reviewable, and rare.
 
@@ -87,7 +87,7 @@ strategy:
 # edge runtime tested separately against sqlite/libSQL only
 ```
 
-`fail-fast: false` is deliberate: we want to see *all* adapter failures on a PR, not just the first. The `capabilities` flags are how we stay honest about backend differences instead of pretending they don't exist — MongoDB skips SQL-specific `jsonbWhere` assertions but still must satisfy the shared query language (`where`/`sort`/pagination/`depth`) at the API surface. That shared query language is what lets us assert *identical* result shapes across all four backends; see [Adapters & the database layer](../01-architecture/adr/0002-drizzle-and-pluggable-db.md) for the contract itself.
+`fail-fast: false` is deliberate: we want to see _all_ adapter failures on a PR, not just the first. The `capabilities` flags are how we stay honest about backend differences instead of pretending they don't exist — MongoDB skips SQL-specific `jsonbWhere` assertions but still must satisfy the shared query language (`where`/`sort`/pagination/`depth`) at the API surface. That shared query language is what lets us assert _identical_ result shapes across all four backends; see [Adapters & the database layer](../01-architecture/adr/0002-drizzle-and-pluggable-db.md) for the contract itself.
 
 Migrations get their own matrix lane. Because Drizzle generates migrations from schema diffs, we snapshot a generated migration for a representative `kernel.config.ts` and assert it's byte-stable per dialect — a regression there would corrupt real deployments.
 
@@ -169,12 +169,12 @@ Stable tags are not the only way code reaches users, and waiting for them is too
 
 **Preview environments** spin up a full KernelCMS instance per PR — the TanStack Start admin app plus a seeded SQLite/libSQL database — so reviewers click through the actual admin UI, command palette, live preview, and a sample `kernel.config.ts`, not a Storybook approximation. The preview uses libSQL specifically because it needs no external service and boots on edge/serverless preview hosts in seconds.
 
-| Channel | Trigger | dist-tag / target | Lifetime |
-| --- | --- | --- | --- |
-| `canary` | every PR + `main` | `@canary` snapshot | rolling, GC'd after 30 days |
-| `next` | merge to `main` | `@next` | until next stable |
-| preview app | every PR | per-PR URL | torn down on PR close |
-| `latest` | Version Packages merge | `@latest` | permanent |
+| Channel     | Trigger                | dist-tag / target  | Lifetime                    |
+| ----------- | ---------------------- | ------------------ | --------------------------- |
+| `canary`    | every PR + `main`      | `@canary` snapshot | rolling, GC'd after 30 days |
+| `next`      | merge to `main`        | `@next`            | until next stable           |
+| preview app | every PR               | per-PR URL         | torn down on PR close       |
+| `latest`    | Version Packages merge | `@latest`          | permanent                   |
 
 The `next` tag is the integration channel: everything merged to `main` lands there continuously, so adopters tracking `@next` are effectively running `main`. Promotion to `@latest` only happens through the Changesets Version Packages PR — there is exactly one path to a stable version, and it always runs the full adapter matrix first.
 

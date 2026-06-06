@@ -31,18 +31,18 @@ const post = await kernel.create({
 
 The operation set is deliberately small and uniform. Every collection method takes the same option bag and shares one query language — `where`, `sort`, pagination, `depth`, `locale`, and `fallbackLocale`. Globals collapse pagination away since they are singletons.
 
-| Method | Target | Returns | Notes |
-| --- | --- | --- | --- |
-| `find` | collection | `PaginatedDocs<T>` | `where` / `sort` / `limit` / `page` / `depth` |
-| `findByID` | collection | `T` | `disableErrors` returns `null` instead of throwing |
-| `create` | collection | `T` | runs validation + `beforeChange` hooks |
-| `update` | collection | `T` or `BulkResult<T>` | by `id` or by `where` for bulk |
-| `delete` | collection | `T` or `BulkResult<T>` | by `id` or by `where` |
-| `count` | collection | `{ totalDocs }` | cheap existence/size checks |
-| `findGlobal` | global | `G` | `slug` + `depth` + `locale` |
-| `updateGlobal` | global | `G` | partial `data` merge |
-| `findVersions` / `restoreVersion` | both | version records | pairs with [drafts & versions](../02-data-modeling/10-versioning-drafts-and-autosave.md) |
-| `auth.*` | — | sessions/users | login, refresh, me, via @kernel/auth |
+| Method                            | Target     | Returns                | Notes                                                                                    |
+| --------------------------------- | ---------- | ---------------------- | ---------------------------------------------------------------------------------------- |
+| `find`                            | collection | `PaginatedDocs<T>`     | `where` / `sort` / `limit` / `page` / `depth`                                            |
+| `findByID`                        | collection | `T`                    | `disableErrors` returns `null` instead of throwing                                       |
+| `create`                          | collection | `T`                    | runs validation + `beforeChange` hooks                                                   |
+| `update`                          | collection | `T` or `BulkResult<T>` | by `id` or by `where` for bulk                                                           |
+| `delete`                          | collection | `T` or `BulkResult<T>` | by `id` or by `where`                                                                    |
+| `count`                           | collection | `{ totalDocs }`        | cheap existence/size checks                                                              |
+| `findGlobal`                      | global     | `G`                    | `slug` + `depth` + `locale`                                                              |
+| `updateGlobal`                    | global     | `G`                    | partial `data` merge                                                                     |
+| `findVersions` / `restoreVersion` | both       | version records        | pairs with [drafts & versions](../02-data-modeling/10-versioning-drafts-and-autosave.md) |
+| `auth.*`                          | —          | sessions/users         | login, refresh, me, via @kernel/auth                                                     |
 
 Two flags govern how privileged a call is. `overrideAccess` (default `true` for in-process calls, `false` for anything originating from an HTTP/RPC boundary) bypasses [access control](../06-auth-security/01-authorization-and-access-control.md). `user` carries the acting principal so that document- and field-level access, `createdBy`, and audit metadata resolve correctly. This is the single most important difference from Sanity, whose `@sanity/client` always speaks to a remote API and always serializes; the Local API runs the same code Sanity would run on its servers, in your process, with no round trip.
 
@@ -69,7 +69,7 @@ await kernel.transaction(async (tx) => {
 })
 ```
 
-Payload pioneered this in-process Local API and it is the model KernelCMS extends; the difference is that KernelCMS threads the *same* types out to the client over RPC, which Payload's Local API cannot do because it is server-only.
+Payload pioneered this in-process Local API and it is the model KernelCMS extends; the difference is that KernelCMS threads the _same_ types out to the client over RPC, which Payload's Local API cannot do because it is server-only.
 
 ## TanStack Start server functions
 
@@ -106,7 +106,7 @@ export const postsFind = createServerFn({ method: 'POST' })
   })
 ```
 
-The crucial property: the boundary flips `overrideAccess` to `false` and binds `user` from the verified session. You cannot accidentally ship an un-authorized endpoint, because the *only* way content leaves the process over RPC is through a server function whose handler already applied access control. This is server-side-by-default in the literal sense — there is no public Local API.
+The crucial property: the boundary flips `overrideAccess` to `false` and binds `user` from the verified session. You cannot accidentally ship an un-authorized endpoint, because the _only_ way content leaves the process over RPC is through a server function whose handler already applied access control. This is server-side-by-default in the literal sense — there is no public Local API.
 
 `@kernel/client` wraps these with a typed proxy so application frontends get the same ergonomics as the admin:
 
@@ -120,7 +120,7 @@ const { docs } = await client.find('posts', { where: { status: { equals: 'publis
 //      ^ Post[] — inferred, including populated relationships at the requested depth
 ```
 
-Strapi requires you to learn its REST/GraphQL plugin conventions and write fetch calls by hand or lean on a community SDK; the types are bolted on afterward and drift. KernelCMS derives the client signature *from the same config object* that defines the schema, so a renamed field is a compile error in the frontend, not a 200 with a missing key.
+Strapi requires you to learn its REST/GraphQL plugin conventions and write fetch calls by hand or lean on a community SDK; the types are bolted on afterward and drift. KernelCMS derives the client signature _from the same config object_ that defines the schema, so a renamed field is a compile error in the frontend, not a 200 with a missing key.
 
 ### Caching and invalidation
 
@@ -145,7 +145,7 @@ The Local API does not open a socket, does not serialize to JSON, and does not p
 
 - **Latency.** No localhost HTTP hop, no JSON encode/decode of large documents, no re-parsing of `Date`/`Buffer` into strings. A `depth: 2` document with nested arrays stays as live objects the whole way.
 - **Fidelity.** Values keep their real types. A `point` field is a tuple, a `date` is a `Date`, an `upload` carries its resolved file object — none of it is flattened to wire-safe primitives and rehydrated.
-- **Composition.** Server functions, [REST](./01-rest-api.md) handlers, and [GraphQL](./02-graphql-api.md) resolvers are all *thin shells* over the same Local API call. There is exactly one place where business logic lives.
+- **Composition.** Server functions, [REST](./01-rest-api.md) handlers, and [GraphQL](./02-graphql-api.md) resolvers are all _thin shells_ over the same Local API call. There is exactly one place where business logic lives.
 
 ```
                  ┌───────────── one operation core ─────────────┐
@@ -212,14 +212,14 @@ const b = await kernel.findByID({ collection: 'posts', id, depth: 1 })
 //    b.author : User                   — populated
 ```
 
-Run `kernel generate:types` in CI to emit `kernel.d.ts` for faster editor performance and to fail the build when config and code disagree. Unlike Strapi's `strapi ts:generate-types`, which types the data layer but not a typed client, KernelCMS's emitted types are the *same* types the RPC client and server functions enforce — one source, three surfaces.
+Run `kernel generate:types` in CI to emit `kernel.d.ts` for faster editor performance and to fail the build when config and code disagree. Unlike Strapi's `strapi ts:generate-types`, which types the data layer but not a typed client, KernelCMS's emitted types are the _same_ types the RPC client and server functions enforce — one source, three surfaces.
 
-| Concern | Payload | Sanity | Strapi | KernelCMS |
-| --- | --- | --- | --- | --- |
-| In-process Local API | Yes (server-only) | No (always remote) | Partial (`entityService`) | Yes |
-| Typed client over the wire | Limited | GROQ, weak types | Community SDKs | Generated, fully typed RPC |
-| Same types client + server | No | No | No | Yes, from one config |
-| Transport | Express | HTTP API | HTTP API | TanStack Start server fns |
+| Concern                    | Payload           | Sanity             | Strapi                    | KernelCMS                  |
+| -------------------------- | ----------------- | ------------------ | ------------------------- | -------------------------- |
+| In-process Local API       | Yes (server-only) | No (always remote) | Partial (`entityService`) | Yes                        |
+| Typed client over the wire | Limited           | GROQ, weak types   | Community SDKs            | Generated, fully typed RPC |
+| Same types client + server | No                | No                 | No                        | Yes, from one config       |
+| Transport                  | Express           | HTTP API           | HTTP API                  | TanStack Start server fns  |
 
 ## Open questions
 

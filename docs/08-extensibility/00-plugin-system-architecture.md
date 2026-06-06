@@ -10,36 +10,31 @@ A plugin is a factory that returns a `KernelPlugin`. The factory takes the plugi
 // @kernel/plugin-sdk
 export interface KernelPlugin {
   /** Stable, namespaced id. Used for ordering, dedupe, and diagnostics. */
-  name: `${string}/${string}`;
+  name: `${string}/${string}`
   /** Semver of the plugin package, surfaced in the admin and CLI doctor. */
-  version: string;
+  version: string
   /** Plugins that must run before this one. Resolved topologically. */
-  dependsOn?: ReadonlyArray<string>;
+  dependsOn?: ReadonlyArray<string>
   /** The transform. Receives the config-so-far, returns the next config. */
-  setup: (ctx: PluginContext) => Config | Promise<Config>;
+  setup: (ctx: PluginContext) => Config | Promise<Config>
 }
 
-export type KernelPluginFactory<TOptions = void> = (
-  options: TOptions,
-) => KernelPlugin;
+export type KernelPluginFactory<TOptions = void> = (options: TOptions) => KernelPlugin
 ```
 
 In `kernel.config.ts`, plugins are values in an array, no different from collections or adapters:
 
 ```ts
-import { defineConfig } from '@kernel/core';
-import { postgresAdapter } from '@kernel/db-postgres';
-import { seoPlugin } from '@kernel/plugin-seo';
-import { stripePlugin } from '@kernel/plugin-stripe';
+import { defineConfig } from '@kernel/core'
+import { postgresAdapter } from '@kernel/db-postgres'
+import { seoPlugin } from '@kernel/plugin-seo'
+import { stripePlugin } from '@kernel/plugin-stripe'
 
 export default defineConfig({
   db: postgresAdapter({ url: process.env.DATABASE_URL! }),
   collections: [Posts, Authors],
-  plugins: [
-    seoPlugin({ collections: ['posts'], generateTitle: true }),
-    stripePlugin({ webhookSlug: 'stripe' }),
-  ],
-});
+  plugins: [seoPlugin({ collections: ['posts'], generateTitle: true }), stripePlugin({ webhookSlug: 'stripe' })],
+})
 ```
 
 This is deliberately closer to Payload than to Strapi. Strapi plugins are filesystem packages with a fixed directory contract (`server/`, `admin/`, `strapi-server.js`) discovered by convention; you extend behavior by overriding generated files and registering services through a global `strapi` object. Sanity's plugins are closer to ours — a plugin returns a config object that the `definePlugin` helper merges — but Sanity's surface is overwhelmingly studio (admin) configuration. KernelCMS plugins are first-class config transformers with equal authority over server, schema, and admin, and they are ordinary npm packages with no magic directory layout. There is no plugin registry to scan, no autoloader, no `enabled: true` toggle in a separate file. If it is in the `plugins` array, it runs; if not, it does not exist.
@@ -63,49 +58,47 @@ defineConfig input
 ```ts
 export interface PluginContext {
   /** The config produced so far. Treat as immutable. */
-  readonly config: Readonly<Config>;
+  readonly config: Readonly<Config>
   /** Structured, validated mutation helpers — see the capability surface. */
-  readonly extend: PluginExtensions;
+  readonly extend: PluginExtensions
   /** Logger scoped to this plugin's name. */
-  readonly log: Logger;
+  readonly log: Logger
   /** Read-only view of which other plugins are present and their options. */
-  readonly peers: ReadonlyArray<PluginManifest>;
+  readonly peers: ReadonlyArray<PluginManifest>
 }
 ```
 
 A small but real plugin — add a `slug` field and a `beforeChange` hook to selected collections:
 
 ```ts
-import { definePlugin } from '@kernel/plugin-sdk';
-import { slugify } from './slugify';
+import { definePlugin } from '@kernel/plugin-sdk'
+import { slugify } from './slugify'
 
-export const slugPlugin = definePlugin<{ collections: string[]; from: string }>(
-  (options) => ({
-    name: 'kernel/slug',
-    version: '1.4.0',
-    setup: (ctx) =>
-      ctx.extend.collections(options.collections, (collection) => ({
-        ...collection,
-        fields: [
-          ...collection.fields,
-          {
-            name: 'slug',
-            type: 'text',
-            unique: true,
-            index: true,
-            admin: { position: 'sidebar', readOnly: true },
-          },
-        ],
-        hooks: {
-          ...collection.hooks,
-          beforeChange: [
-            ...(collection.hooks?.beforeChange ?? []),
-            ({ data }) => ({ ...data, slug: slugify(data[options.from]) }),
-          ],
+export const slugPlugin = definePlugin<{ collections: string[]; from: string }>((options) => ({
+  name: 'kernel/slug',
+  version: '1.4.0',
+  setup: (ctx) =>
+    ctx.extend.collections(options.collections, (collection) => ({
+      ...collection,
+      fields: [
+        ...collection.fields,
+        {
+          name: 'slug',
+          type: 'text',
+          unique: true,
+          index: true,
+          admin: { position: 'sidebar', readOnly: true },
         },
-      })),
-  }),
-);
+      ],
+      hooks: {
+        ...collection.hooks,
+        beforeChange: [
+          ...(collection.hooks?.beforeChange ?? []),
+          ({ data }) => ({ ...data, slug: slugify(data[options.from]) }),
+        ],
+      },
+    })),
+}))
 ```
 
 Three properties make this safe and predictable:
@@ -118,17 +111,17 @@ Three properties make this safe and predictable:
 
 `ctx.extend` is the allowlist. A plugin can only do what the surface exposes, which keeps plugins from reaching into the operation engine or the Drizzle connection directly. The surface maps one-to-one onto the four extension domains.
 
-| Domain   | Helper                       | What it adds                                                        |
-|----------|------------------------------|--------------------------------------------------------------------|
-| Config   | `extend.collections(...)`    | Collections, globals, fields, custom field types                   |
-| Config   | `extend.globals(...)`        | Singletons (settings, navigation)                                  |
-| Schema   | `extend.schema(...)`         | Extra Drizzle tables/columns + a migration contribution            |
-| Runtime  | `extend.hooks(...)`          | `beforeChange` / `afterRead` / `afterDelete` operation hooks       |
-| Runtime  | `extend.endpoints(...)`      | Custom REST/RPC routes via TanStack Start server functions         |
-| Runtime  | `extend.jobs(...)`           | Queue handlers on the configured queue adapter                     |
-| Admin    | `extend.views(...)`          | TanStack Router routes, nav items, command-palette actions         |
-| Admin    | `extend.fieldComponents(...)`| Custom field UI bound through TanStack Form                        |
-| Admin    | `extend.providers(...)`      | React context providers wrapping the admin shell                   |
+| Domain  | Helper                        | What it adds                                                 |
+| ------- | ----------------------------- | ------------------------------------------------------------ |
+| Config  | `extend.collections(...)`     | Collections, globals, fields, custom field types             |
+| Config  | `extend.globals(...)`         | Singletons (settings, navigation)                            |
+| Schema  | `extend.schema(...)`          | Extra Drizzle tables/columns + a migration contribution      |
+| Runtime | `extend.hooks(...)`           | `beforeChange` / `afterRead` / `afterDelete` operation hooks |
+| Runtime | `extend.endpoints(...)`       | Custom REST/RPC routes via TanStack Start server functions   |
+| Runtime | `extend.jobs(...)`            | Queue handlers on the configured queue adapter               |
+| Admin   | `extend.views(...)`           | TanStack Router routes, nav items, command-palette actions   |
+| Admin   | `extend.fieldComponents(...)` | Custom field UI bound through TanStack Form                  |
+| Admin   | `extend.providers(...)`       | React context providers wrapping the admin shell             |
 
 Schema extensions are where KernelCMS pulls ahead of the competition. Because every backend implements one Adapter contract and migrations are generated from schema diffs, a plugin contributes schema declaratively and the migration is generated, not authored:
 
@@ -158,7 +151,7 @@ ctx.extend.views((views) => [
     component: () => import('./AnalyticsView'),
     access: ({ user }) => user.roles.includes('admin'),
   },
-]);
+])
 ```
 
 ## Isolation and Ordering
@@ -176,14 +169,14 @@ resolved order:  slug → seo → search
 
 **Conflicts are detected, not last-write-wins.** When a plugin adds a field, route path, endpoint slug, or schema table that already exists, the resolver raises a `PluginConflictError` naming both contributors. This is the opposite of Strapi, where override-by-convention means the last plugin to touch a file wins silently. KernelCMS forces an explicit resolution — rename, or have the later plugin transform the earlier contribution intentionally.
 
-| Failure mode            | KernelCMS behavior                                  |
-|-------------------------|-----------------------------------------------------|
-| Duplicate field/route   | `PluginConflictError` at resolve time, build fails  |
-| Dependency cycle        | `PluginCycleError`, names printed, build fails      |
-| `setup` throws          | Boot aborts; only that plugin's frame is unwound    |
-| Slow async `setup`      | Per-plugin timeout (default 10s), logged with name  |
+| Failure mode          | KernelCMS behavior                                 |
+| --------------------- | -------------------------------------------------- |
+| Duplicate field/route | `PluginConflictError` at resolve time, build fails |
+| Dependency cycle      | `PluginCycleError`, names printed, build fails     |
+| `setup` throws        | Boot aborts; only that plugin's frame is unwound   |
+| Slow async `setup`    | Per-plugin timeout (default 10s), logged with name |
 
-**Isolation has limits, and we are honest about them.** Because the admin is one React tree and the server is one process, a plugin's React component or hook runs in the same memory space as core. We do not promise VM-level sandboxing. What we do promise: the *capability surface* is the only sanctioned mutation path, all writes go through validated helpers, plugin errors are attributed by name, and access control on plugin endpoints and views is evaluated by the same server-side engine — at the operation, document, and field level — as everything else. A plugin cannot bypass authz by mounting a route, because route access is checked by core, not by the plugin.
+**Isolation has limits, and we are honest about them.** Because the admin is one React tree and the server is one process, a plugin's React component or hook runs in the same memory space as core. We do not promise VM-level sandboxing. What we do promise: the _capability surface_ is the only sanctioned mutation path, all writes go through validated helpers, plugin errors are attributed by name, and access control on plugin endpoints and views is evaluated by the same server-side engine — at the operation, document, and field level — as everything else. A plugin cannot bypass authz by mounting a route, because route access is checked by core, not by the plugin.
 
 **Determinism.** The resolved config is a pure function of the input array and plugin options. The same `kernel.config.ts` produces byte-identical resolved config across machines, which is what makes config-as-code portable between self-host and KernelCMS Cloud without surprises.
 

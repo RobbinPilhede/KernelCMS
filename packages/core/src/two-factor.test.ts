@@ -72,9 +72,7 @@ describe('two-factor login flow', () => {
   it('rejects enabling 2FA with a bad code, and lets you disable it', async () => {
     const user = (await kernel.find({ collection: 'users', ...trusted })).docs[0]!
     const { secret } = await kernel.setupTwoFactor({ collection: 'users', id: user.id })
-    await expect(
-      kernel.enableTwoFactor({ collection: 'users', id: user.id, code: '000000' }),
-    ).rejects.toThrow()
+    await expect(kernel.enableTwoFactor({ collection: 'users', id: user.id, code: '000000' })).rejects.toThrow()
 
     await kernel.enableTwoFactor({ collection: 'users', id: user.id, code: totpCode(secret) })
     await kernel.disableTwoFactor({ collection: 'users', id: user.id })

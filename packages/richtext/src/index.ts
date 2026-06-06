@@ -21,13 +21,7 @@ export type {
 } from './types'
 export { emptyRichText, isEmptyRichText } from './types'
 
-export type {
-  RichTextFeature,
-  RichTextPreset,
-  ResolvedRichTextSchema,
-  ResolveOptions,
-  HeadingLevel,
-} from './schema'
+export type { RichTextFeature, RichTextPreset, ResolvedRichTextSchema, ResolveOptions, HeadingLevel } from './schema'
 export { resolveRichTextSchema, presetFeatures } from './schema'
 
 export type { SanitizeResult, SanitizeWarning } from './sanitize'

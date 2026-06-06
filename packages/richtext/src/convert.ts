@@ -6,14 +6,7 @@
  * Every switch is exhaustive with `assertNever`, so adding a node/mark type is a
  * compile error until handled here.
  */
-import type {
-  KernelRichText,
-  LinkNode,
-  Mark,
-  RichBlockNode,
-  RichInlineNode,
-  TextNode,
-} from './types'
+import type { KernelRichText, LinkNode, Mark, RichBlockNode, RichInlineNode, TextNode } from './types'
 
 function assertNever(x: never): never {
   throw new Error(`Unhandled rich-text node: ${JSON.stringify(x)}`)
@@ -23,7 +16,11 @@ function assertNever(x: never): never {
 
 /** Flatten to text for search indexing, SEO descriptions, and previews. */
 export function toPlainText(doc: KernelRichText): string {
-  return doc.children.map(blockText).join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  return doc.children
+    .map(blockText)
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 function blockText(node: RichBlockNode): string {

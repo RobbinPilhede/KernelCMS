@@ -44,7 +44,7 @@ export default defineConfig({
         // Never use a denylist — you will always miss a format.
         allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'],
         // Detected type must match declared type, else reject.
-        sniff: 'strict',        // 'strict' | 'detected-wins' | 'off'
+        sniff: 'strict', // 'strict' | 'detected-wins' | 'off'
         // Reject SVG by default: it is an HTML/JS execution surface.
         allowSvg: false,
       },
@@ -55,11 +55,11 @@ export default defineConfig({
 
 The `sniff` modes are deliberately opinionated:
 
-| Mode | Behavior | Use when |
-|------|----------|----------|
-| `strict` | Declared and detected must match **and** be allowlisted. Default. | Public media, anything served to browsers. |
+| Mode            | Behavior                                                                                  | Use when                                                   |
+| --------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `strict`        | Declared and detected must match **and** be allowlisted. Default.                         | Public media, anything served to browsers.                 |
 | `detected-wins` | Ignore the declared type; allowlist the detected type and rewrite `Content-Type` from it. | Trusted internal pipelines where filenames are unreliable. |
-| `off` | Allowlist the declared type only. | Never in production. Exists for tests and exotic adapters. |
+| `off`           | Allowlist the declared type only.                                                         | Never in production. Exists for tests and exotic adapters. |
 
 ### SVG, polyglots, and HTML smuggling
 
@@ -81,10 +81,13 @@ Type detection is an adapter so you can swap the implementation (the default wra
 ```ts
 interface TypeDetector {
   // Reads only the head of the stream; never buffers the whole file.
-  detect(head: Uint8Array, declared: {
-    filename: string
-    contentType: string
-  }): Promise<{ mime: string; ext: string } | null>
+  detect(
+    head: Uint8Array,
+    declared: {
+      filename: string
+      contentType: string
+    },
+  ): Promise<{ mime: string; ext: string } | null>
 }
 ```
 
@@ -105,12 +108,12 @@ upload: {
 
 Resolution order: a `perType` entry wins over the collection `maxFileSize`, which wins over the global default in `kernel.config.ts`. The limit is enforced as a streaming counter, so a client that lies about `Content-Length` and then streams 4 GB still gets cut off at the cap with a `413`.
 
-| Concern | KernelCMS behavior |
-|---------|--------------------|
-| Oversized upload | Stream aborted at threshold, `413 Payload Too Large`, nothing written. |
-| Falsified `Content-Length` | Ignored; actual byte count governs. |
-| Decompression bomb (SVG/PDF/zip) | Caught by the tight `perType` cap on the *compressed* bytes; downstream image processing has its own pixel-dimension cap. |
-| Multipart with many small files | `maxFiles` per request cap (default 10) rejects flood requests. |
+| Concern                          | KernelCMS behavior                                                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Oversized upload                 | Stream aborted at threshold, `413 Payload Too Large`, nothing written.                                                    |
+| Falsified `Content-Length`       | Ignored; actual byte count governs.                                                                                       |
+| Decompression bomb (SVG/PDF/zip) | Caught by the tight `perType` cap on the _compressed_ bytes; downstream image processing has its own pixel-dimension cap. |
+| Multipart with many small files  | `maxFiles` per request cap (default 10) rejects flood requests.                                                           |
 
 Strapi and Payload expose a single global size limit; per-type caps are the difference between a usable video field and a wide-open DoS hole.
 
@@ -146,10 +149,7 @@ interface ScanContext {
   user: AuthUser | null
 }
 
-type ScanResult =
-  | { status: 'clean' }
-  | { status: 'infected'; signature: string }
-  | { status: 'error'; reason: string }
+type ScanResult = { status: 'clean' } | { status: 'infected'; signature: string } | { status: 'error'; reason: string }
 ```
 
 ### Sync vs. async
@@ -189,10 +189,10 @@ Storage and authorization are separate concerns. A file living in S3 is not "sec
 
 `serve` has three modes:
 
-| Mode | URL shape | Authorization |
-|------|-----------|---------------|
-| `public` | Stable CDN URL | None — only for genuinely public assets. |
-| `signed` | Time-limited signed URL minted per request | Access checked when the signed URL is issued; URL expires. |
+| Mode      | URL shape                                               | Authorization                                                  |
+| --------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| `public`  | Stable CDN URL                                          | None — only for genuinely public assets.                       |
+| `signed`  | Time-limited signed URL minted per request              | Access checked when the signed URL is issued; URL expires.     |
 | `private` | `/api/media/:id/file` brokered through `@kernel/server` | Access checked on **every** request; no shareable URL escapes. |
 
 For `signed`, KernelCMS asks the storage adapter to mint a short-lived URL only after the `read` evaluator passes:

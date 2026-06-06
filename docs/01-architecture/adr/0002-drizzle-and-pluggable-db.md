@@ -12,11 +12,11 @@ Content in KernelCMS is modeled in code. A `kernel.config.ts` declares collectio
 
 That job pulls in three hard requirements:
 
-1. **We do not own the database choice.** The wedge of the product is *choose everything*. Payload effectively centers on Mongo (with a newer Postgres path), Strapi defaults to its own knex-based layer, and Sanity is a proprietary hosted datastore you cannot self-host. KernelCMS has to support Postgres (default), SQLite/libSQL, MySQL, and MongoDB *behind one contract*, and let a community ship a sixth.
+1. **We do not own the database choice.** The wedge of the product is _choose everything_. Payload effectively centers on Mongo (with a newer Postgres path), Strapi defaults to its own knex-based layer, and Sanity is a proprietary hosted datastore you cannot self-host. KernelCMS has to support Postgres (default), SQLite/libSQL, MySQL, and MongoDB _behind one contract_, and let a community ship a sixth.
 2. **Types must survive the round trip.** A field declared `text` and `required` must produce a non-nullable `string` at the call site of `payload.find()` (our Local API) with zero `any`. The ORM cannot be a type black hole.
-3. **Migrations come from schema diffs.** The user never writes a migration by hand for a field they added in `kernel.config.ts`. The CLI diffs the desired schema against the live database and emits a migration. That means the schema representation has to be *introspectable as data*, not buried in a code generator we don't control.
+3. **Migrations come from schema diffs.** The user never writes a migration by hand for a field they added in `kernel.config.ts`. The CLI diffs the desired schema against the live database and emits a migration. That means the schema representation has to be _introspectable as data_, not buried in a code generator we don't control.
 
-A CMS schema is also unusually dynamic. Collections are user-defined, fields can be localized (one column or one row per locale), drafts and versions multiply the physical tables, and relationships and `upload` fields create join tables. We are not mapping a fixed set of hand-written models — we are *constructing* Drizzle table definitions at boot from the content config. The ORM must let us build schema objects programmatically and still type the results.
+A CMS schema is also unusually dynamic. Collections are user-defined, fields can be localized (one column or one row per locale), drafts and versions multiply the physical tables, and relationships and `upload` fields create join tables. We are not mapping a fixed set of hand-written models — we are _constructing_ Drizzle table definitions at boot from the content config. The ORM must let us build schema objects programmatically and still type the results.
 
 ```
 kernel.config.ts (collections, globals, fields)
@@ -39,7 +39,7 @@ kernel.config.ts (collections, globals, fields)
 Drizzle is a thin, SQL-first query builder with a fully typed schema-as-data model. Three properties made it the choice:
 
 - **Schema is a value, not a DSL file.** `pgTable("posts", { ... })` returns a plain object we can build at runtime from our IR. We need exactly this — our tables don't exist until we read the user's collections.
-- **No separate codegen step or query engine binary.** Drizzle compiles to SQL in-process. There is no Rust query engine to ship per-platform (the operational tax that makes Prisma painful on edge runtimes and serverless cold starts). KernelCMS targets Node, Bun, *and* edge — see [deployment runtimes](../../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md) — so a pure-TS data layer is non-negotiable.
+- **No separate codegen step or query engine binary.** Drizzle compiles to SQL in-process. There is no Rust query engine to ship per-platform (the operational tax that makes Prisma painful on edge runtimes and serverless cold starts). KernelCMS targets Node, Bun, _and_ edge — see [deployment runtimes](../../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md) — so a pure-TS data layer is non-negotiable.
 - **Inference is precise.** A Drizzle column's nullability, type, and default flow through `InferSelectModel` / `InferInsertModel` into our result types without an `as` cast.
 
 ### The adapter contract
@@ -53,21 +53,18 @@ export interface DatabaseAdapter {
 
   init(schema: CompiledSchema): Promise<void>
 
-  find<T extends CollectionSlug>(
-    args: FindArgs<T>,
-  ): Promise<Paginated<DocumentOf<T>>>
+  find<T extends CollectionSlug>(args: FindArgs<T>): Promise<Paginated<DocumentOf<T>>>
 
-  findByID<T extends CollectionSlug>(
-    args: { collection: T; id: ID; depth?: number; locale?: Locale },
-  ): Promise<DocumentOf<T> | null>
+  findByID<T extends CollectionSlug>(args: {
+    collection: T
+    id: ID
+    depth?: number
+    locale?: Locale
+  }): Promise<DocumentOf<T> | null>
 
-  create<T extends CollectionSlug>(
-    args: { collection: T; data: InsertOf<T>; locale?: Locale },
-  ): Promise<DocumentOf<T>>
+  create<T extends CollectionSlug>(args: { collection: T; data: InsertOf<T>; locale?: Locale }): Promise<DocumentOf<T>>
 
-  update<T extends CollectionSlug>(
-    args: { collection: T; id: ID; data: Partial<InsertOf<T>> },
-  ): Promise<DocumentOf<T>>
+  update<T extends CollectionSlug>(args: { collection: T; id: ID; data: Partial<InsertOf<T>> }): Promise<DocumentOf<T>>
 
   delete<T extends CollectionSlug>(args: { collection: T; id: ID }): Promise<DocumentOf<T>>
 
@@ -82,7 +79,7 @@ export interface DatabaseAdapter {
 }
 ```
 
-The shared query language (`where` / `sort` / pagination / `depth`) is the *same* across every surface and every adapter. The SQL adapters translate a `where` tree into Drizzle conditions; the Mongo adapter translates the identical tree into a filter document. The user — and the REST/GraphQL/RPC generators — never see the difference.
+The shared query language (`where` / `sort` / pagination / `depth`) is the _same_ across every surface and every adapter. The SQL adapters translate a `where` tree into Drizzle conditions; the Mongo adapter translates the identical tree into a filter document. The user — and the REST/GraphQL/RPC generators — never see the difference.
 
 ### Selecting an adapter in `kernel.config.ts`
 
@@ -145,12 +142,12 @@ Generated migrations are versioned and ordered. The default policy is **generate
 
 ### Negative / costs we accept
 
-| Cost | Mitigation |
-| --- | --- |
-| Drizzle's relational query API is younger than Prisma's; some advanced joins are hand-built. | We control the `where`→SQL translation in `@kernel/db-postgres`; complex relational reads are our code, not a leaky abstraction. |
-| Two physical paradigms (SQL tables vs. Mongo documents) behind one interface. | The `Adapter` contract is behavioral, not structural — versions/drafts are modeled per-adapter, validated by a shared conformance test suite. |
-| SQL-dialect drift (Postgres `jsonb` vs. MySQL `json` vs. SQLite text-JSON). | Field-type→column mapping is centralized per adapter and covered by the conformance suite; the `json`, `point`, and `richText` fields have explicit per-dialect strategies. |
-| We own more low-level SQL than a "batteries-included" ORM would write for us. | This is the intended trade: predictable SQL beats a magic query planner we cannot inspect. |
+| Cost                                                                                         | Mitigation                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Drizzle's relational query API is younger than Prisma's; some advanced joins are hand-built. | We control the `where`→SQL translation in `@kernel/db-postgres`; complex relational reads are our code, not a leaky abstraction.                                            |
+| Two physical paradigms (SQL tables vs. Mongo documents) behind one interface.                | The `Adapter` contract is behavioral, not structural — versions/drafts are modeled per-adapter, validated by a shared conformance test suite.                               |
+| SQL-dialect drift (Postgres `jsonb` vs. MySQL `json` vs. SQLite text-JSON).                  | Field-type→column mapping is centralized per adapter and covered by the conformance suite; the `json`, `point`, and `richText` fields have explicit per-dialect strategies. |
+| We own more low-level SQL than a "batteries-included" ORM would write for us.                | This is the intended trade: predictable SQL beats a magic query planner we cannot inspect.                                                                                  |
 
 ### Conformance suite
 
@@ -162,7 +159,7 @@ Because the contract is behavioral, every adapter must pass the same suite in `@
 
 Prisma offers excellent ergonomics and the most mature relational query API in the TS ecosystem, which is why Payload added a Prisma-adjacent path and many teams reach for it first.
 
-We rejected it for KernelCMS as the *default* for concrete reasons:
+We rejected it for KernelCMS as the _default_ for concrete reasons:
 
 - **The schema is a `.prisma` DSL, not data.** Our collections are user-defined at runtime; we'd have to generate a `.prisma` file from config, run codegen, and reload the client. That is a build step inside a content operation — wrong shape entirely.
 - **The query engine binary.** Prisma historically shipped a Rust engine per platform. Even with the newer driver-adapter / pure-JS direction, the operational and cold-start cost on edge and serverless conflicted with our runtime matrix.
@@ -175,7 +172,7 @@ Prisma is a fine choice for an app with a fixed, developer-authored schema. Kern
 The maximal-control option: write SQL by hand for each of Postgres, SQLite, and MySQL.
 
 - **Pro:** zero abstraction tax, perfect SQL.
-- **Con:** we'd re-implement parameterization, type inference, and three dialects of DDL ourselves, then maintain it forever. Type safety from a content config to a raw string is something we'd have to *build* — which is most of what Drizzle already gives us for free.
+- **Con:** we'd re-implement parameterization, type inference, and three dialects of DDL ourselves, then maintain it forever. Type safety from a content config to a raw string is something we'd have to _build_ — which is most of what Drizzle already gives us for free.
 
 We use raw SQL surgically — inside specific adapter methods where a Drizzle expression is awkward — but never as the foundation. Drizzle gives us typed parameterized queries by default, which directly satisfies the always-on rule that there is **no string concatenation in SQL**.
 
@@ -188,6 +185,6 @@ We use raw SQL surgically — inside specific adapter methods where a Drizzle ex
 ## Open questions
 
 - **MongoDB migrations.** SQL adapters get schema-diff migrations cleanly. For `@kernel/db-mongodb` we lean on application-level migrations plus document validators; whether the CLI should generate validator updates from config diffs is undecided.
-- **Cross-adapter portability guarantees.** Content is portable between self-host and KernelCMS Cloud, but a Postgres→Mongo *physical* migration needs a defined export/import path (logical documents, not table dumps). The format is being specified in [portability](../../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md).
+- **Cross-adapter portability guarantees.** Content is portable between self-host and KernelCMS Cloud, but a Postgres→Mongo _physical_ migration needs a defined export/import path (logical documents, not table dumps). The format is being specified in [portability](../../10-cloud-operations/00-deployment-models-self-host-vs-cloud.md).
 - **Read replicas and per-operation routing.** Whether the adapter exposes explicit read/write split, or we layer it above the contract, is still open.
 - **`point` field indexing.** PostGIS vs. native `geography` vs. Mongo 2dsphere — the per-adapter strategy for geospatial queries needs a single agreed semantics for the shared `where` language.

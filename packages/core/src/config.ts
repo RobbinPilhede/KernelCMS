@@ -14,7 +14,7 @@ let warnedNoEmail = false
 function consoleEmailFallback(): EmailAdapter {
   if (!warnedNoEmail) {
     warnedNoEmail = true
-    // eslint-disable-next-line no-console
+
     console.warn(
       '[KernelCMS] An auth collection enables verify/forgotPassword but no `email` adapter is configured — using a console adapter (emails are logged, not sent). Configure `email` in production.',
     )
@@ -140,7 +140,10 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 function validateCollection(collection: CollectionConfig): void {
-  assert(IDENT_RE.test(collection.slug), `collection slug "${collection.slug}" must be snake_case starting with a letter`)
+  assert(
+    IDENT_RE.test(collection.slug),
+    `collection slug "${collection.slug}" must be snake_case starting with a letter`,
+  )
   const seen = new Set<string>()
   // Validate the effective (storage-bearing) fields — `row`/`tabs` are flattened,
   // `ui` is dropped — so presentational containers don't need a `name`.
@@ -205,20 +208,14 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     localization = { locales, defaultLocale, fallback: fallback ?? true }
   }
 
-  const secret =
-    config.secret ?? process.env.KERNEL_SECRET ?? devSecret()
+  const secret = config.secret ?? process.env.KERNEL_SECRET ?? devSecret()
 
-  const adminUser =
-    config.admin?.user ??
-    collections.find((c) => c.auth)?.slug ??
-    'users'
+  const adminUser = config.admin?.user ?? collections.find((c) => c.auth)?.slug ?? 'users'
 
   // Auth flows that send mail need an email adapter. If the project enables
   // verify/forgotPassword but configures none, fall back to a console adapter so
   // local dev keeps working — with a one-time warning so it's never silent in prod.
-  const needsEmail = collections.some(
-    (c) => typeof c.auth === 'object' && (c.auth.verify || c.auth.forgotPassword),
-  )
+  const needsEmail = collections.some((c) => typeof c.auth === 'object' && (c.auth.verify || c.auth.forgotPassword))
   let email = config.email
   if (!email && needsEmail) {
     email = consoleEmailFallback()
@@ -251,7 +248,7 @@ let warned = false
 function devSecret(): string {
   if (!warned) {
     warned = true
-    // eslint-disable-next-line no-console
+
     console.warn(
       '[KernelCMS] No `secret` or KERNEL_SECRET set — using an insecure development secret. Set KERNEL_SECRET in production.',
     )

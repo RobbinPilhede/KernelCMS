@@ -4,7 +4,7 @@
 
 ## Why SQLite is a first-class backend
 
-Payload treats SQLite as a supported-but-secondary database and Strapi's SQLite story is explicitly "development only, do not use in production." Sanity has no SQLite path at all — it is a hosted document store. KernelCMS takes the opposite position: SQLite, via libSQL, is a legitimate production target. The wedge is that the *same content config* and the *same operation core* run on an in-process file during `kernel dev` and on a globally replicated Turso database in production, with no code changes and no schema drift. You get Postgres-grade correctness for the relational pieces (foreign keys, transactions, generated columns) and SQLite's near-zero operational footprint.
+Payload treats SQLite as a supported-but-secondary database and Strapi's SQLite story is explicitly "development only, do not use in production." Sanity has no SQLite path at all — it is a hosted document store. KernelCMS takes the opposite position: SQLite, via libSQL, is a legitimate production target. The wedge is that the _same content config_ and the _same operation core_ run on an in-process file during `kernel dev` and on a globally replicated Turso database in production, with no code changes and no schema drift. You get Postgres-grade correctness for the relational pieces (foreign keys, transactions, generated columns) and SQLite's near-zero operational footprint.
 
 ```ts
 // kernel.config.ts
@@ -22,7 +22,7 @@ export default defineConfig({
 })
 ```
 
-The adapter inspects `url`: a `file:` scheme selects the embedded driver, while `libsql://` or `https://` selects the libSQL HTTP/WebSocket client. `kernel migrate` generates the same Drizzle migration set for both — the SQL dialect is identical because libSQL *is* SQLite.
+The adapter inspects `url`: a `file:` scheme selects the embedded driver, while `libsql://` or `https://` selects the libSQL HTTP/WebSocket client. `kernel migrate` generates the same Drizzle migration set for both — the SQL dialect is identical because libSQL _is_ SQLite.
 
 ## libSQL and Turso
 
@@ -64,13 +64,13 @@ The embedded-replica mode is the feature that makes libSQL compelling for a CMS.
 
 This sidesteps the classic single-writer objection to SQLite: the primary serializes writes, but reads scale out across every replica. Payload and Strapi on SQLite give you one file and one process — no replication story. KernelCMS gets read-local latency with a durable, replicated primary, exposed through `adapter.sync()` for explicit control in queue workers and cron jobs.
 
-| Turso feature | KernelCMS surface | Notes |
-| --- | --- | --- |
-| Multi-region primary | `url` | Place the primary near your write traffic. |
-| Embedded read replica | `embeddedReplica` | Local-disk reads, periodic or manual `sync()`. |
-| Auth tokens (scoped) | `authToken` | Per-database, rotateable; never inline. |
-| Multi-DB / per-tenant | `resolveDatabase()` hook | One libSQL database per tenant — see [Multi-tenancy](../10-cloud-operations/03-multi-tenancy-and-isolation.md). |
-| Branching (point-in-time) | `kernel db branch` | Fork a DB for preview/staging from the CLI. |
+| Turso feature             | KernelCMS surface        | Notes                                                                                                           |
+| ------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Multi-region primary      | `url`                    | Place the primary near your write traffic.                                                                      |
+| Embedded read replica     | `embeddedReplica`        | Local-disk reads, periodic or manual `sync()`.                                                                  |
+| Auth tokens (scoped)      | `authToken`              | Per-database, rotateable; never inline.                                                                         |
+| Multi-DB / per-tenant     | `resolveDatabase()` hook | One libSQL database per tenant — see [Multi-tenancy](../10-cloud-operations/03-multi-tenancy-and-isolation.md). |
+| Branching (point-in-time) | `kernel db branch`       | Fork a DB for preview/staging from the CLI.                                                                     |
 
 ### Per-tenant databases
 
@@ -116,7 +116,7 @@ export const testDb = sqliteAdapter({ url: 'file::memory:?cache=shared' })
 // kernel test migrates + seeds this fresh per worker.
 ```
 
-This is a real differentiator. Strapi recommends against SQLite in production *and* makes local SQLite the path of least resistance, so teams routinely develop on SQLite and deploy on Postgres — two dialects, two sets of surprises. KernelCMS lets you keep one dialect from laptop to edge, and when you *do* want Postgres in production, the [`Adapter` contract](./00-persistence-overview-and-adapter-contract.md) and migration generator absorb the swap. You opt into divergence; you don't trip into it.
+This is a real differentiator. Strapi recommends against SQLite in production _and_ makes local SQLite the path of least resistance, so teams routinely develop on SQLite and deploy on Postgres — two dialects, two sets of surprises. KernelCMS lets you keep one dialect from laptop to edge, and when you _do_ want Postgres in production, the [`Adapter` contract](./00-persistence-overview-and-adapter-contract.md) and migration generator absorb the swap. You opt into divergence; you don't trip into it.
 
 ### Migrations
 
@@ -134,16 +134,16 @@ Because libSQL and file SQLite share the dialect, a migration generated against 
 
 SQLite is not Postgres, and the adapter is honest about the gaps rather than emulating them silently.
 
-| Concern | SQLite reality | KernelCMS handling |
-| --- | --- | --- |
-| Concurrent writes | Single writer per database file | WAL + `busy_timeout`; route heavy write throughput to Postgres |
-| Column types | Dynamic typing, no native `jsonb` | `json` fields stored as `TEXT`, validated at the field layer |
-| `ALTER TABLE` | No drop/alter column in old engines | Drizzle table-rebuild strategy in generated migrations |
-| Full-text search | `FTS5` extension, not always present | Prefer a search adapter (e.g. Typesense) |
-| Decimal precision | No exact `NUMERIC` | `number` fields are `REAL`; use integer cents for money |
-| Max DB size / write IOPS | Bounded by a single file/primary | Scale reads via replicas; shard via per-tenant DBs |
+| Concern                  | SQLite reality                       | KernelCMS handling                                             |
+| ------------------------ | ------------------------------------ | -------------------------------------------------------------- |
+| Concurrent writes        | Single writer per database file      | WAL + `busy_timeout`; route heavy write throughput to Postgres |
+| Column types             | Dynamic typing, no native `jsonb`    | `json` fields stored as `TEXT`, validated at the field layer   |
+| `ALTER TABLE`            | No drop/alter column in old engines  | Drizzle table-rebuild strategy in generated migrations         |
+| Full-text search         | `FTS5` extension, not always present | Prefer a search adapter (e.g. Typesense)                       |
+| Decimal precision        | No exact `NUMERIC`                   | `number` fields are `REAL`; use integer cents for money        |
+| Max DB size / write IOPS | Bounded by a single file/primary     | Scale reads via replicas; shard via per-tenant DBs             |
 
-The hard limit to internalize: **one writer at a time per database.** For a content workflow — editors saving documents, occasional autosave — this is a non-issue; write contention in a CMS is low and bursty, and WAL plus `busy_timeout` smooths it. For write-heavy *application* data (event ingestion, high-frequency counters), SQLite is the wrong tool and KernelCMS will tell you to put that workload on [`@kernel/db-postgres`](./02-postgres-adapter.md) or a queue adapter.
+The hard limit to internalize: **one writer at a time per database.** For a content workflow — editors saving documents, occasional autosave — this is a non-issue; write contention in a CMS is low and bursty, and WAL plus `busy_timeout` smooths it. For write-heavy _application_ data (event ingestion, high-frequency counters), SQLite is the wrong tool and KernelCMS will tell you to put that workload on [`@kernel/db-postgres`](./02-postgres-adapter.md) or a queue adapter.
 
 `json` fields deserve a specific note. Postgres gives you `jsonb` with indexable containment queries; SQLite stores JSON as `TEXT`. The shared query language still works — `where` on a JSON path compiles to `json_extract()` — but it can't use a GIN-style index, so deep JSON filtering on large collections is slower. If you query inside JSON heavily, model those fields relationally or move to Postgres.
 
@@ -188,12 +188,12 @@ db: sqliteAdapter({
                     └────────────────────────┘
 ```
 
-The trade-off at the edge is that you give up the embedded replica — there is no durable local disk in an ephemeral isolate — so every read is an HTTP hop to the nearest Turso region rather than a microsecond local read. For read-mostly delivery (the public REST/GraphQL API serving published content) this is fine, especially behind the KernelCMS Cloud CDN. For the admin panel, which is read-and-write heavy, run it on a long-lived Node or Bun process with an embedded replica and keep only the *delivery* API at the edge. This split — admin on a stateful node, delivery at the edge, one libSQL primary behind both — is the recommended topology and something neither Strapi nor Payload offers out of the box.
+The trade-off at the edge is that you give up the embedded replica — there is no durable local disk in an ephemeral isolate — so every read is an HTTP hop to the nearest Turso region rather than a microsecond local read. For read-mostly delivery (the public REST/GraphQL API serving published content) this is fine, especially behind the KernelCMS Cloud CDN. For the admin panel, which is read-and-write heavy, run it on a long-lived Node or Bun process with an embedded replica and keep only the _delivery_ API at the edge. This split — admin on a stateful node, delivery at the edge, one libSQL primary behind both — is the recommended topology and something neither Strapi nor Payload offers out of the box.
 
 Connection handling at the edge must be per-request: create the libSQL client inside the request scope, never as a module-level singleton that outlives an isolate. The adapter does this automatically when `protocol: 'http'` is set, so you don't hold connections across invocations.
 
 ## Open questions
 
-- **Embedded replica sync triggers.** Should the adapter expose a write-hook that calls `sync()` immediately after mutating operations on *other* replicas, or is interval-based sync plus `readYourWrites` sufficient? Leaning toward interval + manual `sync()` in queue workers, but cross-replica read-after-write consistency for a multi-node admin is unresolved.
+- **Embedded replica sync triggers.** Should the adapter expose a write-hook that calls `sync()` immediately after mutating operations on _other_ replicas, or is interval-based sync plus `readYourWrites` sufficient? Leaning toward interval + manual `sync()` in queue workers, but cross-replica read-after-write consistency for a multi-node admin is unresolved.
 - **Per-tenant DB provisioning.** Whether `kernel` should orchestrate Turso database creation/branching directly via the platform API, or treat database provisioning as out-of-band infrastructure that `resolveDatabase` merely consumes.
 - **FTS5 availability detection.** How aggressively to probe for the `FTS5` extension at startup and whether to auto-fall-back to a search adapter versus failing loudly when a collection declares full-text search but the engine lacks it.

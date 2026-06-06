@@ -18,20 +18,20 @@ KernelCMS is built on TanStack from the ground up — not as a UI veneer over a 
    └─────────────────┴──────────────────┘        └────────────────────┘
 ```
 
-| Library          | Where it runs        | Owns                                                    |
-| ---------------- | -------------------- | ------------------------------------------------------- |
-| TanStack Start   | server + admin       | SSR, server functions, the route tree for both surfaces |
-| TanStack Router  | admin                | Type-safe routing and search-param state                |
-| TanStack Query   | admin + `@kernel/client` | All data fetching, caching, invalidation            |
-| TanStack Table   | admin                | Collection list views                                   |
-| TanStack Form    | admin                | Document edit forms and field binding                   |
-| TanStack Store   | admin                | Lightweight reactive UI state                           |
-| TanStack Virtual | admin                | Virtualized lists and long documents                    |
-| TanStack DB      | admin + frontends    | Optional reactive client-side collections               |
+| Library          | Where it runs            | Owns                                                    |
+| ---------------- | ------------------------ | ------------------------------------------------------- |
+| TanStack Start   | server + admin           | SSR, server functions, the route tree for both surfaces |
+| TanStack Router  | admin                    | Type-safe routing and search-param state                |
+| TanStack Query   | admin + `@kernel/client` | All data fetching, caching, invalidation                |
+| TanStack Table   | admin                    | Collection list views                                   |
+| TanStack Form    | admin                    | Document edit forms and field binding                   |
+| TanStack Store   | admin                    | Lightweight reactive UI state                           |
+| TanStack Virtual | admin                    | Virtualized lists and long documents                    |
+| TanStack DB      | admin + frontends        | Optional reactive client-side collections               |
 
 ## TanStack Start: SSR and server functions
 
-Start is the host. The same Start application serves the rendered admin panel *and* exposes the API, so there is exactly one process model to deploy, one router, and one way to write a backend operation. See Self-Host Deployment for the Node/Bun/edge runtime matrix.
+Start is the host. The same Start application serves the rendered admin panel _and_ exposes the API, so there is exactly one process model to deploy, one router, and one way to write a backend operation. See Self-Host Deployment for the Node/Bun/edge runtime matrix.
 
 Server functions are the mechanism. Every operation in the Local API — `create`, `find`, `findByID`, `update`, `delete` — is a plain async function that runs in-process with full type inference. Start's `createServerFn` is what exposes that same operation over the wire as typed RPC, so the client calls it as if it were local. This is the core type-safety claim: there is no hand-written OpenAPI client, no codegen step between server and admin, and no `any` at the boundary.
 
@@ -49,7 +49,7 @@ export const find = createServerFn({ method: 'POST' })
   })
 ```
 
-REST and GraphQL are generated from the same content config and call the same operation core; they are alternate transports, not parallel implementations. Compare Payload, where the Local API and REST handlers share logic but the client must still be generated separately, and Strapi, where the REST/GraphQL layers wrap a service layer you cannot call with end-to-end types from a React app. In KernelCMS the admin imports the operation's *types* directly from `@kernel/core`, and TanStack Start guarantees the runtime payload matches.
+REST and GraphQL are generated from the same content config and call the same operation core; they are alternate transports, not parallel implementations. Compare Payload, where the Local API and REST handlers share logic but the client must still be generated separately, and Strapi, where the REST/GraphQL layers wrap a service layer you cannot call with end-to-end types from a React app. In KernelCMS the admin imports the operation's _types_ directly from `@kernel/core`, and TanStack Start guarantees the runtime payload matches.
 
 SSR matters for the admin because the first paint of a document edit view should arrive with data, not a spinner. Start streams the route's loader output, and Query rehydrates it on the client (see below). Sanity's Studio is a pure SPA that boots empty and fetches; we render the list and document shells server-side.
 
@@ -64,8 +64,7 @@ The decisive feature is **search-param state as a typed schema**. Collection lis
 export const Route = createFileRoute('/collections/$collection/')({
   validateSearch: (s): ListSearch => listSearchSchema.parse(s),
   loaderDeps: ({ search }) => ({ where: search.where, sort: search.sort, page: search.page }),
-  loader: ({ deps, params }) =>
-    client.collections[params.collection].find({ ...deps, depth: 0 }),
+  loader: ({ deps, params }) => client.collections[params.collection].find({ ...deps, depth: 0 }),
 })
 ```
 
@@ -96,7 +95,7 @@ These two libraries carry the two screens an editor lives in: the list and the d
 
 ### Table — collection list views
 
-Every collection list is a TanStack Table instance. Sorting, column filtering, column sizing, and visibility are headless and driven by config. Crucially, Table's row model is paired with Virtual (below) so a collection with 200k documents renders only the visible rows. The sort and filter state is *not* component-local — it is lifted into Router search params, so Table state, the URL, and the server query stay in lockstep.
+Every collection list is a TanStack Table instance. Sorting, column filtering, column sizing, and visibility are headless and driven by config. Crucially, Table's row model is paired with Virtual (below) so a collection with 200k documents renders only the visible rows. The sort and filter state is _not_ component-local — it is lifted into Router search params, so Table state, the URL, and the server query stay in lockstep.
 
 ```ts
 // columns derive from the collection's field config in kernel.config.ts

@@ -50,19 +50,19 @@ export default defineConfig({
 
 The top-level keys form a small, stable surface. Everything else nests under collections and globals.
 
-| Key | Type | Purpose |
-| --- | --- | --- |
-| `serverURL` | `string` | Absolute origin for callbacks, CORS, preview, and CDN signing. |
-| `secret` | `string` | Server-side signing key for sessions, tokens, and preview URLs. |
-| `db` | `Adapter` | Database adapter — `@kernel/db-postgres` (default), `-sqlite`, `-mysql`, `-mongodb`. |
-| `collections` | `Collection[]` | Repeatable content types. See [Collections](../02-data-modeling/01-collections.md). |
-| `globals` | `Global[]` | Singletons such as settings and navigation. |
-| `storage` | `StorageAdapter` | Upload backend from `@kernel/storage`. |
-| `auth`, `email`, `search`, `cache`, `queue` | adapters | Swappable infrastructure; each defaults to a sane local implementation. |
-| `admin` | `AdminConfig` | Admin panel behavior, theming, and component overrides. |
-| `localization` | `LocalizationConfig` | Locales, default, and RTL set for field-level i18n. |
-| `plugins` | `Plugin[]` | `@kernel/plugin-sdk` plugins that mutate config before resolution. |
-| `typescript` | `{ outputFile }` | Where generated types are written. |
+| Key                                         | Type                 | Purpose                                                                              |
+| ------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------ |
+| `serverURL`                                 | `string`             | Absolute origin for callbacks, CORS, preview, and CDN signing.                       |
+| `secret`                                    | `string`             | Server-side signing key for sessions, tokens, and preview URLs.                      |
+| `db`                                        | `Adapter`            | Database adapter — `@kernel/db-postgres` (default), `-sqlite`, `-mysql`, `-mongodb`. |
+| `collections`                               | `Collection[]`       | Repeatable content types. See [Collections](../02-data-modeling/01-collections.md).  |
+| `globals`                                   | `Global[]`           | Singletons such as settings and navigation.                                          |
+| `storage`                                   | `StorageAdapter`     | Upload backend from `@kernel/storage`.                                               |
+| `auth`, `email`, `search`, `cache`, `queue` | adapters             | Swappable infrastructure; each defaults to a sane local implementation.              |
+| `admin`                                     | `AdminConfig`        | Admin panel behavior, theming, and component overrides.                              |
+| `localization`                              | `LocalizationConfig` | Locales, default, and RTL set for field-level i18n.                                  |
+| `plugins`                                   | `Plugin[]`           | `@kernel/plugin-sdk` plugins that mutate config before resolution.                   |
+| `typescript`                                | `{ outputFile }`     | Where generated types are written.                                                   |
 
 Payload bundles this kind of config too, but couples it tightly to Express and its own Mongo/Drizzle pairing. Sanity splits configuration between `sanity.config.ts` and a separate GROQ-driven schema runtime. Strapi spreads it across a `config/` directory of plugin files, a content-type JSON registry, and a database config — three places that can disagree. KernelCMS keeps one typed object and one resolution pass, so the admin, the API, and the database can never drift from each other.
 
@@ -89,9 +89,7 @@ export const Posts = defineCollection({
     { name: 'author', type: 'relationship', relationTo: 'users' },
     {
       type: 'tabs',
-      tabs: [
-        { label: 'SEO', fields: [{ name: 'metaTitle', type: 'text' }] },
-      ],
+      tabs: [{ label: 'SEO', fields: [{ name: 'metaTitle', type: 'text' }] }],
     },
   ],
 })
@@ -101,7 +99,7 @@ export const Posts = defineCollection({
 
 ## Typed config with `satisfies`
 
-The hard constraint is that the config must be *both* exactly the `KernelConfig` shape *and* preserve the literal types of your field names, slugs, and locales. A plain type annotation (`const config: KernelConfig = …`) widens `slug: 'posts'` to `string` and erases the literal field names, which destroys the inference that powers the typed client and generated types. `satisfies` is the mechanism that gives us both.
+The hard constraint is that the config must be _both_ exactly the `KernelConfig` shape _and_ preserve the literal types of your field names, slugs, and locales. A plain type annotation (`const config: KernelConfig = …`) widens `slug: 'posts'` to `string` and erases the literal field names, which destroys the inference that powers the typed client and generated types. `satisfies` is the mechanism that gives us both.
 
 ```ts
 import { defineConfig, type KernelConfig } from '@kernel/core'
@@ -126,7 +124,7 @@ KernelConfig (literal-preserving)
         └─► @kernel/client         typed RPC: kernel.collections.posts.find()
 ```
 
-This is the line that separates KernelCMS from Payload's `GeneratedTypes` approach. Payload infers types by code-generating an interface file and then *re-importing* it via module augmentation — types and runtime config are stitched together after the fact. KernelCMS derives the type map directly from the `satisfies`-checked object, so the editor shows `posts` as a known key before any codegen runs. Codegen (`kernel generate:types`) only persists those types to disk for non-TS consumers and faster cold builds; it is never the source of truth. Sanity, by contrast, types content through GROQ query result inference rather than the schema object, so a field rename does not surface as a config-level type error the way it does here.
+This is the line that separates KernelCMS from Payload's `GeneratedTypes` approach. Payload infers types by code-generating an interface file and then _re-importing_ it via module augmentation — types and runtime config are stitched together after the fact. KernelCMS derives the type map directly from the `satisfies`-checked object, so the editor shows `posts` as a known key before any codegen runs. Codegen (`kernel generate:types`) only persists those types to disk for non-TS consumers and faster cold builds; it is never the source of truth. Sanity, by contrast, types content through GROQ query result inference rather than the schema object, so a field rename does not surface as a config-level type error the way it does here.
 
 ## Env and secrets handling
 
@@ -184,15 +182,15 @@ load → apply plugins → merge defaults → validate → freeze → derive
 
 **Defaults** are merged structurally, not with a shallow spread. The defaults are opinionated and documented:
 
-| Area | Default |
-| --- | --- |
-| `db` | none — required; the only adapter with no default. |
-| `auth` | `@kernel/auth` local strategy with session cookies (`Secure`, `HttpOnly`, `SameSite=Lax`). |
-| `storage` | local filesystem under `./uploads`. |
-| `email`, `search`, `cache`, `queue` | in-memory/no-op dev implementations; must be set for production. |
-| `admin.theme` | `'system'`. |
-| `versions.autosave.interval` | `800` ms when drafts are enabled. |
-| field `access` | inherits collection `access`; collection inherits a deny-by-default for writes. |
+| Area                                | Default                                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------ |
+| `db`                                | none — required; the only adapter with no default.                                         |
+| `auth`                              | `@kernel/auth` local strategy with session cookies (`Secure`, `HttpOnly`, `SameSite=Lax`). |
+| `storage`                           | local filesystem under `./uploads`.                                                        |
+| `email`, `search`, `cache`, `queue` | in-memory/no-op dev implementations; must be set for production.                           |
+| `admin.theme`                       | `'system'`.                                                                                |
+| `versions.autosave.interval`        | `800` ms when drafts are enabled.                                                          |
+| field `access`                      | inherits collection `access`; collection inherits a deny-by-default for writes.            |
 
 **Validation** runs structural and semantic checks that the type system cannot express at compile time: duplicate collection slugs, relationship `relationTo` targets that point at unknown collections, `defaultLocale` not present in `locales`, field names colliding with reserved columns (`id`, `createdAt`), and `useAsTitle` referencing a non-existent field. Errors are collected and reported together, each with the JSON path into the config:
 

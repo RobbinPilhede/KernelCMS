@@ -1,6 +1,6 @@
 # Runtime & Server Model
 
-KernelCMS runs as a single operation core wrapped by a thin, runtime-specific host. The same code that powers the Local API in-process powers REST, GraphQL, and typed RPC over the wire — there is no second implementation. This document specifies the server-function model that core exposes, the host adapters that bind it to Node, Bun, and edge runtimes, how request handlers are composed from middleware, and what we do about cold starts. The unifying idea: the host adapter is the *only* runtime-aware code in the stack, and everything above it is a pure function of `(operation, input, context)`.
+KernelCMS runs as a single operation core wrapped by a thin, runtime-specific host. The same code that powers the Local API in-process powers REST, GraphQL, and typed RPC over the wire — there is no second implementation. This document specifies the server-function model that core exposes, the host adapters that bind it to Node, Bun, and edge runtimes, how request handlers are composed from middleware, and what we do about cold starts. The unifying idea: the host adapter is the _only_ runtime-aware code in the stack, and everything above it is a pure function of `(operation, input, context)`.
 
 ## The server-function model
 
@@ -9,24 +9,24 @@ Every capability in KernelCMS — `find`, `findByID`, `create`, `update`, `delet
 ```ts
 // @kernel/server
 export interface ServerFunction<TInput, TOutput> {
-  operation: OperationName            // 'find' | 'create' | ...
-  collection?: string                 // undefined for global/custom ops
+  operation: OperationName // 'find' | 'create' | ...
+  collection?: string // undefined for global/custom ops
   handler: (ctx: RequestContext, input: TInput) => Promise<TOutput>
 }
 
 export interface RequestContext {
-  config: ResolvedConfig              // from kernel.config.ts
-  db: AdapterClient                   // @kernel/db contract
-  user: AuthUser | null               // resolved by @kernel/auth
+  config: ResolvedConfig // from kernel.config.ts
+  db: AdapterClient // @kernel/db contract
+  user: AuthUser | null // resolved by @kernel/auth
   locale: string
   fallbackLocale: string | null
   transaction: TxHandle | null
-  req: KernelRequest                  // runtime-neutral request
+  req: KernelRequest // runtime-neutral request
   runtime: 'node' | 'bun' | 'edge'
 }
 ```
 
-The Local API and the RPC surface call the *identical* `handler`. The difference is purely how `RequestContext` is assembled and how the result is serialized.
+The Local API and the RPC surface call the _identical_ `handler`. The difference is purely how `RequestContext` is assembled and how the result is serialized.
 
 ```ts
 // In-process: full type inference, no serialization, no HTTP
@@ -63,7 +63,7 @@ export interface HostAdapter {
   capabilities: {
     streaming: boolean
     fileSystem: boolean
-    longRunning: boolean        // background tasks after response
+    longRunning: boolean // background tasks after response
     nativeCrypto: boolean
   }
 }
@@ -79,7 +79,7 @@ import { edge } from '@kernel/server/adapters'
 
 export default defineConfig({
   serverURL: 'https://cms.example.com',
-  runtime: edge(),                 // node() | bun() | edge()
+  runtime: edge(), // node() | bun() | edge()
   db: postgres({ url: process.env.DATABASE_URL }),
   collections: [Posts, Media, Users],
 })
@@ -87,15 +87,15 @@ export default defineConfig({
 
 The three adapters differ along axes that matter for both correctness and performance:
 
-| Concern | `node()` | `bun()` | `edge()` |
-| --- | --- | --- | --- |
-| Request primitive | `IncomingMessage` | Fetch `Request` | Fetch `Request` |
-| Response streaming | Yes (`Readable`) | Yes (web streams) | Yes (web streams) |
-| Filesystem storage | Yes | Yes | No — must use object storage |
-| Long-running work after response | Yes | Yes | `waitUntil()` only |
-| Native crypto | `node:crypto` | Web Crypto | Web Crypto |
-| Driver constraint | Any pg driver | Any pg driver | HTTP/WebSocket driver only |
-| Typical cold start | Warm (long-lived) | Warm (long-lived) | 5–50 ms per isolate |
+| Concern                          | `node()`          | `bun()`           | `edge()`                     |
+| -------------------------------- | ----------------- | ----------------- | ---------------------------- |
+| Request primitive                | `IncomingMessage` | Fetch `Request`   | Fetch `Request`              |
+| Response streaming               | Yes (`Readable`)  | Yes (web streams) | Yes (web streams)            |
+| Filesystem storage               | Yes               | Yes               | No — must use object storage |
+| Long-running work after response | Yes               | Yes               | `waitUntil()` only           |
+| Native crypto                    | `node:crypto`     | Web Crypto        | Web Crypto                   |
+| Driver constraint                | Any pg driver     | Any pg driver     | HTTP/WebSocket driver only   |
+| Typical cold start               | Warm (long-lived) | Warm (long-lived) | 5–50 ms per isolate          |
 
 ```
                  ┌──────────────────────────────┐
@@ -124,10 +124,7 @@ A request handler is a composition of middleware around the operation. Middlewar
 
 ```ts
 // @kernel/server
-export type Middleware = (
-  ctx: RequestContext,
-  next: () => Promise<KernelResponse>,
-) => Promise<KernelResponse>
+export type Middleware = (ctx: RequestContext, next: () => Promise<KernelResponse>) => Promise<KernelResponse>
 ```
 
 The default pipeline, in order:
@@ -135,7 +132,7 @@ The default pipeline, in order:
 1. **`requestContext`** — builds `RequestContext`, resolves locale and transaction handle.
 2. **`authenticate`** — `@kernel/auth` resolves `ctx.user` from cookie/JWT/API key, or `null`.
 3. **`rateLimit`** — per-route limits; stricter on auth operations. Returns `429` on breach.
-4. **`accessControl`** — evaluates operation-level access *before* touching the database.
+4. **`accessControl`** — evaluates operation-level access _before_ touching the database.
 5. **`validate`** — parses and validates the `Query` and document payload.
 6. **`operation`** — the server function handler runs, populating relationships to `depth`.
 7. **`fieldAccess`** — strips fields the user can't read on the way out.
@@ -159,7 +156,7 @@ export default defineConfig({
 })
 ```
 
-Hooks (`beforeChange`, `afterRead`, `beforeValidate`, and the rest) live *inside* the `operation` step rather than as outer middleware, because they need the resolved document and the open transaction. Middleware wraps the request; hooks wrap the document mutation. Keeping them distinct avoids the Strapi trap where lifecycle hooks and route middleware blur together and ordering becomes folklore.
+Hooks (`beforeChange`, `afterRead`, `beforeValidate`, and the rest) live _inside_ the `operation` step rather than as outer middleware, because they need the resolved document and the open transaction. Middleware wraps the request; hooks wrap the document mutation. Keeping them distinct avoids the Strapi trap where lifecycle hooks and route middleware blur together and ordering becomes folklore.
 
 ### Errors
 
@@ -188,7 +185,7 @@ serialize + respond ......... ~3 ms
                               ~28 ms to first byte
 ```
 
-For long-lived Node and Bun hosts, cold start is a non-issue after the first request — the process stays warm and the artifact stays resident. The win there is the same artifact model paying off as low steady-state memory: no config re-evaluation, no schema rebuild on reload. This is a sharp contrast with Strapi, which rebuilds significant server state on boot and is impractical to run in a per-request serverless model. Sanity sidesteps the question by being hosted-only; KernelCMS gives you the hosted option (KernelCMS Cloud) *and* a runtime lean enough to self-host on edge.
+For long-lived Node and Bun hosts, cold start is a non-issue after the first request — the process stays warm and the artifact stays resident. The win there is the same artifact model paying off as low steady-state memory: no config re-evaluation, no schema rebuild on reload. This is a sharp contrast with Strapi, which rebuilds significant server state on boot and is impractical to run in a per-request serverless model. Sanity sidesteps the question by being hosted-only; KernelCMS gives you the hosted option (KernelCMS Cloud) _and_ a runtime lean enough to self-host on edge.
 
 ## Open questions
 

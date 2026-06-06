@@ -58,24 +58,26 @@ Payload exposes a Local API that only runs in-process on the server. Sanity's cl
 
 The client exposes the full operation set per collection and per global, plus auth helpers. These are plain async functions — no React required — so they work in route loaders, server functions, scripts, and tests.
 
-| Helper | Surface | Returns |
-| --- | --- | --- |
-| `find(args)` | collection | `PaginatedDocs<T>` |
-| `findByID(args)` | collection | `T` |
-| `count(args)` | collection | `{ totalDocs: number }` |
-| `create(args)` | collection | `T` |
-| `update(args)` / `updateByID` | collection | `T` |
-| `delete(args)` / `deleteByID` | collection | `T` |
-| `findGlobal(args)` | global | `T` |
-| `updateGlobal(args)` | global | `T` |
-| `auth.login` / `logout` / `me` / `refresh` | auth | session info |
+| Helper                                     | Surface    | Returns                 |
+| ------------------------------------------ | ---------- | ----------------------- |
+| `find(args)`                               | collection | `PaginatedDocs<T>`      |
+| `findByID(args)`                           | collection | `T`                     |
+| `count(args)`                              | collection | `{ totalDocs: number }` |
+| `create(args)`                             | collection | `T`                     |
+| `update(args)` / `updateByID`              | collection | `T`                     |
+| `delete(args)` / `deleteByID`              | collection | `T`                     |
+| `findGlobal(args)`                         | global     | `T`                     |
+| `updateGlobal(args)`                       | global     | `T`                     |
+| `auth.login` / `logout` / `me` / `refresh` | auth       | session info            |
 
 Read helpers accept the shared query language; write helpers accept typed `data` plus `depth`, `locale`, `draft`, and `overrideAccess` (server-only). Access control, validation, and hooks run server-side on every call regardless of transport, so a mutation issued from the browser is gated identically to one issued from a server function.
 
 ```ts
 // Draft-aware read in an SSR loader
 const preview = await kernel.collections.pages.findByID({
-  id, draft: true, locale: 'de',
+  id,
+  draft: true,
+  locale: 'de',
 })
 
 // Typed mutation — `data` is checked against the Page field config
@@ -105,7 +107,13 @@ function PostList() {
   if (error) return <ErrorState error={error} />
   if (!data?.docs.length) return <Empty />
 
-  return <ul>{data.docs.map((p) => <PostRow key={p.id} post={p} />)}</ul>
+  return (
+    <ul>
+      {data.docs.map((p) => (
+        <PostRow key={p.id} post={p} />
+      ))}
+    </ul>
+  )
 }
 ```
 
@@ -147,12 +155,12 @@ The client maps every operation to a deterministic query key so caching, dedupli
 
 Arguments are normalized (stable key ordering, default-filled) before hashing, so two semantically identical queries share a cache entry. After a mutation, the client invalidates by precise rules rather than nuking the cache:
 
-| Mutation | Invalidates |
-| --- | --- |
-| `create` | all `find`/`count` lists for that collection |
-| `update` / `updateByID` | that doc's `findByID` key + all `find`/`count` lists for the collection |
-| `delete` | that doc's `findByID` key + lists; removes the doc from cached list pages |
-| `updateGlobal` | that global's key |
+| Mutation                | Invalidates                                                               |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `create`                | all `find`/`count` lists for that collection                              |
+| `update` / `updateByID` | that doc's `findByID` key + all `find`/`count` lists for the collection   |
+| `delete`                | that doc's `findByID` key + lists; removes the doc from cached list pages |
+| `updateGlobal`          | that global's key                                                         |
 
 Mutation hooks can also write the server response straight into the `findByID` cache to skip a refetch, and you can opt into optimistic updates with rollback:
 

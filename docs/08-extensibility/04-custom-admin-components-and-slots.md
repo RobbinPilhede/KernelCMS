@@ -34,20 +34,17 @@ export default defineConfig({
 A slot value is either a single component, an array (rendered in order), or a lazy import. References never run at config-eval time — the registry stores thunks and the admin code-splits them per route via `React.lazy`, so a plugin that overrides ten document views adds nothing to the initial admin bundle.
 
 ```ts
-type SlotEntry =
-  | AdminComponent
-  | AdminComponent[]
-  | { component: AdminComponent; lazy?: boolean; order?: number }
+type SlotEntry = AdminComponent | AdminComponent[] | { component: AdminComponent; lazy?: boolean; order?: number }
 ```
 
 ## Component slots and overrides
 
 Slots come in three flavors, and the distinction is deliberate:
 
-| Kind | Behavior | Example slot |
-|------|----------|--------------|
-| **Override** | Replaces the default entirely | `nav.logo`, `views.dashboard` |
-| **Wrapper** | Receives `children`, the default render | `edit.document`, `app.root` |
+| Kind          | Behavior                                 | Example slot                                   |
+| ------------- | ---------------------------------------- | ---------------------------------------------- |
+| **Override**  | Replaces the default entirely            | `nav.logo`, `views.dashboard`                  |
+| **Wrapper**   | Receives `children`, the default render  | `edit.document`, `app.root`                    |
 | **Insertion** | Appends to a region without replacing it | `actions.afterUserMenu`, `edit.sidebar.before` |
 
 Insertion slots are named with a `before`/`after` suffix and accept arrays so multiple plugins coexist without clobbering each other — the failure mode Strapi injection zones hit when two plugins target the same zone. Override and wrapper slots are single-valued; the last writer wins, and the resolution order is **project config > plugins (registration order) > defaults**, so a project can always reclaim a slot a plugin grabbed.
@@ -132,7 +129,7 @@ import { useKernelQuery } from '@kernel/client'
 import { useView, Page, Card } from '@kernel/ui'
 
 export default function Analytics() {
-  const { search } = useView('/analytics')   // typed search params
+  const { search } = useView('/analytics') // typed search params
   const { data, isPending } = useKernelQuery((api) =>
     api.collection('posts').count({ where: { status: { equals: 'published' } } }),
   )
@@ -186,7 +183,9 @@ import type { AdminProvider } from '@kernel/ui'
 import { posthog } from 'posthog-js'
 
 export const PostHogProvider: AdminProvider = ({ children }) => {
-  useEffect(() => { posthog.init(import.meta.env.VITE_PH_KEY) }, [])
+  useEffect(() => {
+    posthog.init(import.meta.env.VITE_PH_KEY)
+  }, [])
   return <>{children}</>
 }
 ```

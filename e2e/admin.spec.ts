@@ -15,13 +15,23 @@ async function ensureSignedIn(page: Page) {
   // The setup screen offers "Create account"; the (logo-only) login screen offers
   // "Sign in". Detect by the submit button rather than a heading, since the login
   // screen is intentionally heading-less.
-  if (await page.getByRole('button', { name: 'Create account' }).isVisible().catch(() => false)) {
+  if (
+    await page
+      .getByRole('button', { name: 'Create account' })
+      .isVisible()
+      .catch(() => false)
+  ) {
     await page.getByRole('textbox', { name: 'Email' }).fill('admin@e2e.test')
     const pwds = page.locator('input[type="password"]')
     await pwds.nth(0).fill('supersecret123')
     await pwds.nth(1).fill('supersecret123')
     await page.getByRole('button', { name: 'Create account' }).click()
-  } else if (await page.getByRole('button', { name: 'Sign in' }).isVisible().catch(() => false)) {
+  } else if (
+    await page
+      .getByRole('button', { name: 'Sign in' })
+      .isVisible()
+      .catch(() => false)
+  ) {
     await page.getByRole('textbox', { name: 'Email' }).fill('admin@e2e.test')
     await page.locator('input[type="password"]').fill('supersecret123')
     await page.getByRole('button', { name: 'Sign in' }).click()
@@ -64,7 +74,10 @@ test('command palette navigates to a collection', async ({ page }) => {
   await expect(dialog).toBeVisible()
 
   await dialog.getByRole('combobox').fill('Articles')
-  await page.getByRole('option', { name: /Articles/ }).first().click()
+  await page
+    .getByRole('option', { name: /Articles/ })
+    .first()
+    .click()
 
   // It navigated to the Articles list.
   await expect(page.getByRole('heading', { name: 'Articles', exact: true })).toBeVisible()

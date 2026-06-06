@@ -34,11 +34,11 @@ export default defineConfig({
 
 From that single definition you get:
 
-| Surface  | Transport                                  | Best for                                          | Type story                          |
-| -------- | ------------------------------------------ | ------------------------------------------------- | ----------------------------------- |
-| REST     | HTTP + JSON, predictable URLs              | Webhooks, third-party integrations, cURL, no-code | OpenAPI 3.1 schema, generated types |
-| GraphQL  | HTTP POST `/graphql`, single endpoint      | Aggregating clients, partial selection, mobile    | Generated SDL + codegen             |
-| RPC/Local| TanStack Start server fns (wire) or direct | Your own TS app, the admin panel, SSR, scripts    | End-to-end inference, zero codegen  |
+| Surface   | Transport                                  | Best for                                          | Type story                          |
+| --------- | ------------------------------------------ | ------------------------------------------------- | ----------------------------------- |
+| REST      | HTTP + JSON, predictable URLs              | Webhooks, third-party integrations, cURL, no-code | OpenAPI 3.1 schema, generated types |
+| GraphQL   | HTTP POST `/graphql`, single endpoint      | Aggregating clients, partial selection, mobile    | Generated SDL + codegen             |
+| RPC/Local | TanStack Start server fns (wire) or direct | Your own TS app, the admin panel, SSR, scripts    | End-to-end inference, zero codegen  |
 
 ```
                 kernel.config.ts (collections, globals, fields)
@@ -71,11 +71,11 @@ GET    /api/globals/site-settings
 PATCH  /api/globals/site-settings
 ```
 
-The query language — `where`, `sort`, pagination (`limit`/`page`), and `depth` — is the *same* language used by GraphQL and RPC, just URL-encoded. `depth` controls relationship population: `depth=0` returns related documents as IDs, `depth=2` populates two levels deep. This is the one knob most REST CMSs get wrong: Strapi requires the verbose `populate` syntax per-request and Sanity has no relationship traversal without GROQ joins, whereas in KernelCMS `depth` is uniform across every surface.
+The query language — `where`, `sort`, pagination (`limit`/`page`), and `depth` — is the _same_ language used by GraphQL and RPC, just URL-encoded. `depth` controls relationship population: `depth=0` returns related documents as IDs, `depth=2` populates two levels deep. This is the one knob most REST CMSs get wrong: Strapi requires the verbose `populate` syntax per-request and Sanity has no relationship traversal without GROQ joins, whereas in KernelCMS `depth` is uniform across every surface.
 
-REST is the right call when the consumer is *not* a TypeScript program: an incoming webhook, a Zapier-style automation, a Go service, or a curl one-liner in a runbook. Because the schema is OpenAPI, you can hand consumers a generated client in any language. Authentication is via the same session cookie or API key bearer token used everywhere else — see [Authentication & Sessions](../06-auth-security/00-authentication.md).
+REST is the right call when the consumer is _not_ a TypeScript program: an incoming webhook, a Zapier-style automation, a Go service, or a curl one-liner in a runbook. Because the schema is OpenAPI, you can hand consumers a generated client in any language. Authentication is via the same session cookie or API key bearer token used everywhere else — see [Authentication & Sessions](../06-auth-security/00-authentication.md).
 
-What REST is *not* good at: avoiding over-fetching. A list endpoint returns every field on every document at the requested `depth`. If your client only needs `title` and `slug`, reach for GraphQL or a `select` clause (see Open questions).
+What REST is _not_ good at: avoiding over-fetching. A list endpoint returns every field on every document at the requested `depth`. If your client only needs `title` and `slug`, reach for GraphQL or a `select` clause (see Open questions).
 
 ## GraphQL
 
@@ -83,16 +83,14 @@ The GraphQL surface (`@kernel/graphql`) generates a typed schema from your confi
 
 ```graphql
 query PublishedPosts {
-  Posts(
-    where: { status: { equals: published } }
-    sort: "-createdAt"
-    limit: 20
-  ) {
+  Posts(where: { status: { equals: published } }, sort: "-createdAt", limit: 20) {
     docs {
       id
       title
       slug
-      author { name }     # relationship populated inline
+      author {
+        name
+      } # relationship populated inline
     }
     totalDocs
     hasNextPage
@@ -102,7 +100,7 @@ query PublishedPosts {
 
 GraphQL wins when the client decides the shape of the response. Mobile apps on metered connections, dashboards that stitch several collections into one screen, and federated gateways all benefit from selecting exactly the fields they need in one round trip. This is Sanity's home turf with GROQ — and GROQ is genuinely powerful for projections — but GROQ is a bespoke query language your team must learn and tool around. KernelCMS gives you standard GraphQL, which means every existing client (Apollo, urql, `graphql-request`), every codegen tool, and every developer who already knows the language works on day one.
 
-The generated SDL is stable and introspectable, so `graphql-codegen` produces typed operations for your frontend. Field-level access control is enforced *inside* the resolvers, not bolted on at the gateway: a field the current user cannot read is stripped from the response (and from introspection where configured), identically to how REST and RPC behave.
+The generated SDL is stable and introspectable, so `graphql-codegen` produces typed operations for your frontend. Field-level access control is enforced _inside_ the resolvers, not bolted on at the gateway: a field the current user cannot read is stripped from the response (and from introspection where configured), identically to how REST and RPC behave.
 
 ## Typed RPC & the Local API
 
@@ -126,7 +124,7 @@ const created = await kernel.create({
 })
 ```
 
-The same operations are exposed *over the wire* as typed RPC through TanStack Start server functions. The admin panel and any `@kernel/client` consumer call these with end-to-end inference — the client type is derived from the server config, so a field rename in `kernel.config.ts` surfaces as a compile error in your React component, not a runtime 500.
+The same operations are exposed _over the wire_ as typed RPC through TanStack Start server functions. The admin panel and any `@kernel/client` consumer call these with end-to-end inference — the client type is derived from the server config, so a field rename in `kernel.config.ts` surfaces as a compile error in your React component, not a runtime 500.
 
 ```ts
 // In a TanStack Start route or admin component
@@ -140,7 +138,7 @@ const { data } = useQuery({
 // `data.docs[0].title` is typed; no codegen step ran.
 ```
 
-This is the decisive difference from Payload, Sanity, and Strapi. Payload has a Local API, but its over-the-wire story is REST/GraphQL with separately generated types. Sanity and Strapi have no in-process typed core at all — every call is HTTP. In KernelCMS, RPC and Local are the *same* code path, so SSR (TanStack Start server functions), background jobs, migration scripts, and the admin UI all share one typed entry point. TanStack Query handles caching and invalidation on the client; see Query Language & Pagination and [The Local API](./03-typed-rpc-and-local-api.md).
+This is the decisive difference from Payload, Sanity, and Strapi. Payload has a Local API, but its over-the-wire story is REST/GraphQL with separately generated types. Sanity and Strapi have no in-process typed core at all — every call is HTTP. In KernelCMS, RPC and Local are the _same_ code path, so SSR (TanStack Start server functions), background jobs, migration scripts, and the admin UI all share one typed entry point. TanStack Query handles caching and invalidation on the client; see Query Language & Pagination and [The Local API](./03-typed-rpc-and-local-api.md).
 
 ## The shared operation core
 
@@ -171,14 +169,14 @@ Same input  →  Same core  →  Same access, validation, hooks  →  Same resul
 
 ## Choosing an API surface
 
-| If you are…                                       | Use      | Why                                              |
-| ------------------------------------------------- | -------- | ------------------------------------------------ |
-| Building the admin panel or your own TS app       | RPC/Local| End-to-end types, no codegen, TanStack Query     |
-| Running SSR / server functions in TanStack Start  | Local    | In-process, zero network hop                     |
-| Writing a migration or seed script                | Local    | Direct, typed, runs hooks                        |
-| Consuming from a non-TS service or webhook        | REST     | Stable URLs, OpenAPI client in any language      |
-| Building a mobile app or aggregating dashboard    | GraphQL  | Field selection, one round trip                  |
-| Integrating a no-code/automation tool             | REST     | Predictable, documented, JSON                    |
+| If you are…                                      | Use       | Why                                          |
+| ------------------------------------------------ | --------- | -------------------------------------------- |
+| Building the admin panel or your own TS app      | RPC/Local | End-to-end types, no codegen, TanStack Query |
+| Running SSR / server functions in TanStack Start | Local     | In-process, zero network hop                 |
+| Writing a migration or seed script               | Local     | Direct, typed, runs hooks                    |
+| Consuming from a non-TS service or webhook       | REST      | Stable URLs, OpenAPI client in any language  |
+| Building a mobile app or aggregating dashboard   | GraphQL   | Field selection, one round trip              |
+| Integrating a no-code/automation tool            | REST      | Predictable, documented, JSON                |
 
 The honest default: if it is your own TypeScript, use RPC/Local; if it is someone else's system, use REST; if the client needs to shape the payload, use GraphQL. You are never locked in — the surfaces coexist on the same deployment and the same data.
 

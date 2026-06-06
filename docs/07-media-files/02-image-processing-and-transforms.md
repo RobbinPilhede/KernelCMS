@@ -45,13 +45,13 @@ The `upload` field documented in the upload field reference owns the transform s
 
 `fit` controls how the source aspect ratio is reconciled with the requested box. KernelCMS exposes the libvips strategies directly rather than inventing its own vocabulary:
 
-| `fit`      | Behavior                                                        | Use case                        |
-| ---------- | -------------------------------------------------------------- | ------------------------------- |
-| `cover`    | Fill the box, crop overflow (honors `focalPoint`/`position`)   | Thumbnails, social cards        |
-| `contain`  | Fit inside the box, pad to exact dimensions                    | Logos on fixed canvases         |
-| `inside`   | Scale down to fit, never upscale, no padding                   | Responsive `srcset` widths      |
-| `outside`  | Scale so the box is fully covered, no crop                     | Background images               |
-| `fill`     | Distort to exact dimensions                                    | Rarely — sprite atlases         |
+| `fit`     | Behavior                                                     | Use case                   |
+| --------- | ------------------------------------------------------------ | -------------------------- |
+| `cover`   | Fill the box, crop overflow (honors `focalPoint`/`position`) | Thumbnails, social cards   |
+| `contain` | Fit inside the box, pad to exact dimensions                  | Logos on fixed canvases    |
+| `inside`  | Scale down to fit, never upscale, no padding                 | Responsive `srcset` widths |
+| `outside` | Scale so the box is fully covered, no crop                   | Background images          |
+| `fill`    | Distort to exact dimensions                                  | Rarely — sprite atlases    |
 
 Quality resolves through a three-level cascade: per-size `quality` → per-format default in `kernel.config.ts` → built-in defaults (`avif: 50`, `webp: 75`, `jpeg: 80`). AVIF numbers are not comparable to JPEG numbers — AVIF 50 is visually competitive with JPEG 80 at roughly half the bytes — so KernelCMS keeps the defaults format-aware instead of applying one global slider the way some Strapi setups do.
 
@@ -82,7 +82,7 @@ The interface is intentionally narrow:
 
 ```ts
 interface ImageProcessor {
-  probe(input: Uint8Array): Promise<ImageMeta>            // dims, format, orientation
+  probe(input: Uint8Array): Promise<ImageMeta> // dims, format, orientation
   transform(input: Uint8Array, recipe: TransformRecipe): Promise<TransformResult>
 }
 ```
@@ -103,10 +103,10 @@ The render path is the same regardless of engine:
 
 `sharp` is the right default: libvips is streaming, multi-threaded, and an order of magnitude faster than the WASM path on real hardware. But `sharp` is a native addon — it breaks on some serverless cold starts, Cloudflare Workers, and arm/musl mismatches. Rather than make image processing the reason you can't deploy to the edge (a real constraint for Payload, which hard-depends on `sharp`), KernelCMS keeps the WASM engine as a guaranteed-portable fallback. The tradeoff is explicit and measurable: budget roughly 3–8× the per-image latency on WASM and prefer pregeneration there.
 
-| Engine        | Relative speed | AVIF/WebP enc | Runtimes                       |
-| ------------- | -------------- | ------------- | ------------------------------ |
-| `sharpEngine` | 1× (baseline)  | Yes           | Node, Bun (native libvips)     |
-| `wasmEngine`  | 3–8× slower    | Yes           | Edge, Workers, any WASM host   |
+| Engine        | Relative speed | AVIF/WebP enc | Runtimes                     |
+| ------------- | -------------- | ------------- | ---------------------------- |
+| `sharpEngine` | 1× (baseline)  | Yes           | Node, Bun (native libvips)   |
+| `wasmEngine`  | 3–8× slower    | Yes           | Edge, Workers, any WASM host |
 
 ## On-the-fly versus pregenerated
 

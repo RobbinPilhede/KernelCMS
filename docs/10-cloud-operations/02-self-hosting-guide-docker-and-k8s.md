@@ -51,7 +51,7 @@ services:
   kernel:
     build: .
     restart: unless-stopped
-    ports: ["3000:3000"]
+    ports: ['3000:3000']
     environment:
       KERNEL_DATABASE_URL: postgres://kernel:${DB_PASSWORD}@db:5432/kernel
       KERNEL_REDIS_URL: redis://cache:6379
@@ -71,9 +71,9 @@ services:
       POSTGRES_USER: kernel
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: kernel
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    volumes: ['pgdata:/var/lib/postgresql/data']
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kernel"]
+      test: ['CMD-SHELL', 'pg_isready -U kernel']
       interval: 10s
       timeout: 3s
       retries: 5
@@ -81,7 +81,7 @@ services:
   cache:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ['redis-server', '--maxmemory', '256mb', '--maxmemory-policy', 'allkeys-lru']
 
 volumes:
   pgdata:
@@ -97,7 +97,7 @@ volumes:
                                     └────────────┘
 ```
 
-Note that uploads go to S3, not a host volume. You *can* mount a volume and use the local filesystem storage adapter for a hobby deploy, but for anything you care about, keep the container stateless and let object storage hold media. This is the same posture Payload pushes you toward with its S3 plugin; the difference is that in KernelCMS storage is a core adapter, not a bolt-on. Run migrations as a one-shot before starting traffic:
+Note that uploads go to S3, not a host volume. You _can_ mount a volume and use the local filesystem storage adapter for a hobby deploy, but for anything you care about, keep the container stateless and let object storage hold media. This is the same posture Payload pushes you toward with its S3 plugin; the difference is that in KernelCMS storage is a core adapter, not a bolt-on. Run migrations as a one-shot before starting traffic:
 
 ```bash
 docker compose run --rm kernel pnpm kernel migrate
@@ -112,7 +112,7 @@ For multi-replica, autoscaled deployments, use the `kernel` Helm chart (`oci://g
 # values.yaml
 image:
   repository: ghcr.io/kernelcms/kernel
-  tag: "1.8.2"          # pin exactly
+  tag: '1.8.2' # pin exactly
 
 replicaCount: 3
 
@@ -125,11 +125,11 @@ env:
     valueFrom: { secretKeyRef: { name: kernel-secrets, key: app-secret } }
 
 migrations:
-  enabled: true          # runs `kernel migrate` as a pre-upgrade Job + Helm hook
+  enabled: true # runs `kernel migrate` as a pre-upgrade Job + Helm hook
 
 probes:
-  liveness:  { path: /_kernel/health, initialDelaySeconds: 20 }
-  readiness: { path: /_kernel/ready,  initialDelaySeconds: 10 }
+  liveness: { path: /_kernel/health, initialDelaySeconds: 20 }
+  readiness: { path: /_kernel/ready, initialDelaySeconds: 10 }
 
 autoscaling:
   enabled: true
@@ -157,13 +157,13 @@ podDisruptionBudget:
 
 The chart ships a pre-upgrade `Job` that runs `kernel migrate` as a Helm `pre-upgrade` hook with `hook-weight` ordering, so schema changes apply before the new pods roll. The `PodDisruptionBudget` and a `RollingUpdate` strategy with `maxUnavailable: 0` give you zero-downtime rollouts. Don't co-locate Postgres in-cluster for production unless you have a CloudNativePG or similar operator; a managed Postgres (RDS, Cloud SQL, Neon) is the safer default, and KernelCMS doesn't care which — the connection string is all the `@kernel/db-postgres` adapter needs.
 
-| Concern        | Compose (single host)        | Kubernetes (Helm)                       |
-|----------------|------------------------------|-----------------------------------------|
-| Scaling        | vertical only                | HPA, 3–N replicas                       |
-| Migrations     | manual `run --rm`            | pre-upgrade Job (Helm hook)             |
-| TLS            | reverse proxy (Caddy/Traefik)| Ingress + cert-manager                  |
-| Rollout        | restart in place             | rolling, `maxUnavailable: 0`            |
-| Best for       | staging, small prod          | high-traffic, multi-region prod         |
+| Concern    | Compose (single host)         | Kubernetes (Helm)               |
+| ---------- | ----------------------------- | ------------------------------- |
+| Scaling    | vertical only                 | HPA, 3–N replicas               |
+| Migrations | manual `run --rm`             | pre-upgrade Job (Helm hook)     |
+| TLS        | reverse proxy (Caddy/Traefik) | Ingress + cert-manager          |
+| Rollout    | restart in place              | rolling, `maxUnavailable: 0`    |
+| Best for   | staging, small prod           | high-traffic, multi-region prod |
 
 ## Config & Secrets
 
@@ -180,7 +180,7 @@ import { Media } from './collections/Media'
 import { SiteSettings } from './globals/SiteSettings'
 
 export default defineConfig({
-  secret: process.env.KERNEL_SECRET!,     // signs sessions, tokens, preview JWTs
+  secret: process.env.KERNEL_SECRET!, // signs sessions, tokens, preview JWTs
   collections: [Pages, Media],
   globals: [SiteSettings],
 
@@ -192,7 +192,7 @@ export default defineConfig({
   storage: s3Storage({
     bucket: process.env.KERNEL_S3_BUCKET!,
     region: process.env.KERNEL_S3_REGION!,
-    credentials: 'env',                   // reads KERNEL_S3_ACCESS_KEY_ID / _SECRET_ACCESS_KEY
+    credentials: 'env', // reads KERNEL_S3_ACCESS_KEY_ID / _SECRET_ACCESS_KEY
   }),
 
   cache: redisCache({ url: process.env.KERNEL_REDIS_URL! }),
@@ -209,13 +209,13 @@ Rules of the road:
 - **CORS and trusted origins are explicit.** No wildcard-with-credentials. Sanity makes you manage CORS origins in a hosted dashboard; here it's in version-controlled config, reviewed in PRs.
 - **Validate at boot.** `defineConfig` validates the adapter wiring and fails fast — a missing `KERNEL_DATABASE_URL` crashes the readiness probe rather than serving 500s. See Configuration Reference for the full surface and [Access Control](../06-auth-security/01-authorization-and-access-control.md) for how the same `secret` underpins authz.
 
-| Variable                     | Required | Purpose                                  |
-|------------------------------|----------|------------------------------------------|
-| `KERNEL_SECRET`              | yes      | signs sessions, tokens, preview JWTs     |
-| `KERNEL_DATABASE_URL`        | yes      | `@kernel/db-postgres` connection         |
-| `KERNEL_S3_*`                | prod     | object storage for uploads               |
-| `KERNEL_REDIS_URL`           | prod     | cache + queue adapters                   |
-| `KERNEL_CORS_ORIGINS`        | prod     | comma-separated allowlist                |
+| Variable              | Required | Purpose                              |
+| --------------------- | -------- | ------------------------------------ |
+| `KERNEL_SECRET`       | yes      | signs sessions, tokens, preview JWTs |
+| `KERNEL_DATABASE_URL` | yes      | `@kernel/db-postgres` connection     |
+| `KERNEL_S3_*`         | prod     | object storage for uploads           |
+| `KERNEL_REDIS_URL`    | prod     | cache + queue adapters               |
+| `KERNEL_CORS_ORIGINS` | prod     | comma-separated allowlist            |
 
 ## Upgrades
 
@@ -235,7 +235,7 @@ Migrations are generated from schema diffs (the same Drizzle-backed flow as Payl
 
 For zero-downtime majors, design migrations to be **backward-compatible across one version** (expand/contract): add columns and new fields first, deploy code that writes both, backfill, then remove the old shape in a later release. This lets old and new pods coexist during the rollout window. The deeper playbook lives in Database Migrations.
 
-Rollback: because the migrate Job runs before the new pods, a failed migration aborts the Helm upgrade with the old version still live. If a *deployed* version misbehaves after a successful migration, roll the image back only if the migration was additive (expand/contract guarantees this); otherwise apply a forward fix. Keep automated backups (the [Backups](./06-backups-and-disaster-recovery.md) doc covers cadence and restore drills) so a destructive migration is recoverable.
+Rollback: because the migrate Job runs before the new pods, a failed migration aborts the Helm upgrade with the old version still live. If a _deployed_ version misbehaves after a successful migration, roll the image back only if the migration was additive (expand/contract guarantees this); otherwise apply a forward fix. Keep automated backups (the [Backups](./06-backups-and-disaster-recovery.md) doc covers cadence and restore drills) so a destructive migration is recoverable.
 
 ## Open questions
 

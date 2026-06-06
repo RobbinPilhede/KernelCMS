@@ -1,11 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import {
-  RouterProvider,
-  createHashHistory,
-  createRootRoute,
-  createRoute,
-  createRouter,
-} from '@tanstack/react-router'
+import { RouterProvider, createHashHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { MotionConfig } from 'framer-motion'
 import { fetchSchema } from './api'
 import { SchemaProvider } from './schema'
@@ -38,7 +32,11 @@ function Boot() {
   // The CMS schema is static for the session — never refetch it. A mid-session
   // refetch would hand down a new `schema` object identity, which cascades into
   // remounting the router subtree (and wiping unsaved edits).
-  const { data: schema, isLoading, error } = useQuery({
+  const {
+    data: schema,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['schema'],
     queryFn: fetchSchema,
     staleTime: Infinity,

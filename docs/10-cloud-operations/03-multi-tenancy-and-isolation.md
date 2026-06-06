@@ -8,11 +8,11 @@ Most CMSes punt on this. Sanity is multi-tenant only because it is fully hosted 
 
 A tenant is identified by a stable `tenantId`. How that ID maps to physical storage is the isolation model. KernelCMS ships three, selected per deployment (and, on Cloud, per plan tier):
 
-| Model | Boundary | Blast radius | Cost / tenant | Best for |
-|---|---|---|---|---|
-| **Row** | `tenant_id` column + RLS | Logical only | Lowest | Free/low tiers, high tenant count |
-| **Schema** | Postgres schema per tenant | Schema-scoped | Medium | Mid-tier, regulated-but-shared |
-| **Database** | Separate database/connection | Physical | Highest | Enterprise, data-residency, BYO-DB |
+| Model        | Boundary                     | Blast radius  | Cost / tenant | Best for                           |
+| ------------ | ---------------------------- | ------------- | ------------- | ---------------------------------- |
+| **Row**      | `tenant_id` column + RLS     | Logical only  | Lowest        | Free/low tiers, high tenant count  |
+| **Schema**   | Postgres schema per tenant   | Schema-scoped | Medium        | Mid-tier, regulated-but-shared     |
+| **Database** | Separate database/connection | Physical      | Highest       | Enterprise, data-residency, BYO-DB |
 
 The model is configured on the tenancy adapter. The rest of the system — collections, fields, the query language — is identical regardless of which one you pick.
 
@@ -26,8 +26,8 @@ export default defineConfig({
   db: postgres({ url: env.DATABASE_URL }),
   tenancy: tenancy({
     enabled: true,
-    isolation: 'schema',            // 'row' | 'schema' | 'database'
-    resolve: 'subdomain',          // how a request maps to a tenantId
+    isolation: 'schema', // 'row' | 'schema' | 'database'
+    resolve: 'subdomain', // how a request maps to a tenantId
     // For 'database', a resolver returns a connection per tenant:
     connectionFor: async (tenantId) => env[`DB_URL_${tenantId.toUpperCase()}`],
   }),
@@ -36,7 +36,7 @@ export default defineConfig({
 
 ### Row isolation
 
-Every tenant-scoped table carries a non-null `tenant_id`. KernelCMS appends a `tenant_id = $current` predicate to every generated query, but the column is *not* the security boundary — the database is. The Drizzle schema diff that produces a tenant-aware table also emits Postgres Row-Level Security so a leaked or buggy query cannot cross tenants:
+Every tenant-scoped table carries a non-null `tenant_id`. KernelCMS appends a `tenant_id = $current` predicate to every generated query, but the column is _not_ the security boundary — the database is. The Drizzle schema diff that produces a tenant-aware table also emits Postgres Row-Level Security so a leaked or buggy query cannot cross tenants:
 
 ```sql
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
@@ -72,13 +72,13 @@ Isolation only holds if the right `tenantId` is pinned for the entire request an
 
 Resolution strategies are configurable and composable:
 
-| Strategy | Source | Typical use |
-|---|---|---|
-| `subdomain` | `acme.app.com` | SaaS dashboards |
-| `header` | `X-Kernel-Tenant` | API gateways, RPC |
-| `path` | `/t/acme/...` | single-domain admin |
-| `domain` | full custom domain map | white-label sites |
-| `jwt` | claim in the session token | authenticated APIs |
+| Strategy    | Source                     | Typical use         |
+| ----------- | -------------------------- | ------------------- |
+| `subdomain` | `acme.app.com`             | SaaS dashboards     |
+| `header`    | `X-Kernel-Tenant`          | API gateways, RPC   |
+| `path`      | `/t/acme/...`              | single-domain admin |
+| `domain`    | full custom domain map     | white-label sites   |
+| `jwt`       | claim in the session token | authenticated APIs  |
 
 ```ts
 // Conceptual shape of the resolved context (read-only, server-side only)
@@ -154,10 +154,10 @@ tenancy({
   configFor: async (tenantId): Promise<TenantConfig> => {
     const t = await loadTenant(tenantId) // from the control-plane store
     return {
-      locales: t.locales,            // affects field localization
-      features: t.features,          // gate optional collections/plugins
-      theme: t.theme,                // @kernel/ui design tokens, dark mode
-      limits: t.plan.limits,         // feeds noisy-neighbor controls
+      locales: t.locales, // affects field localization
+      features: t.features, // gate optional collections/plugins
+      theme: t.theme, // @kernel/ui design tokens, dark mode
+      limits: t.plan.limits, // feeds noisy-neighbor controls
     }
   },
 })

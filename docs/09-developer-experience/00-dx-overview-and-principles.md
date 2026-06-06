@@ -46,12 +46,12 @@ export default defineConfig({
 
 On `kernel dev`, the schema diff is generated and applied automatically in development, the admin renders the `posts` list (TanStack Table) and edit form (TanStack Form), and REST, GraphQL, and RPC surfaces come up together. Creating and publishing a document through the admin or the Local API both count as first content.
 
-| Step | Budget | Why it holds |
-| --- | --- | --- |
-| Scaffold + install | < 60s | pnpm workspace cache, no native db driver |
-| First `kernel dev` boot | < 5s | SQLite, lazy adapter init |
-| Define a field → see it in admin | < 2s | HMR on config, no codegen step blocking the UI |
-| First published doc over REST | < 5 min total | auto-migrate in dev, generated routes |
+| Step                             | Budget        | Why it holds                                   |
+| -------------------------------- | ------------- | ---------------------------------------------- |
+| Scaffold + install               | < 60s         | pnpm workspace cache, no native db driver      |
+| First `kernel dev` boot          | < 5s          | SQLite, lazy adapter init                      |
+| Define a field → see it in admin | < 2s          | HMR on config, no codegen step blocking the UI |
+| First published doc over REST    | < 5 min total | auto-migrate in dev, generated routes          |
 
 The TTFC budget is enforced in CI as a smoke test, not aspirational copy. See Getting Started and [Adapters: Database](../01-architecture/adr/0002-drizzle-and-pluggable-db.md) for the swap from SQLite to Postgres when the project graduates.
 
@@ -133,7 +133,7 @@ export default defineConfig({
       path: '/posts/trending',
       handler: async ({ kernel, db }) => {
         // db is the raw Drizzle instance — full SQL escape hatch
-        const rows = await db.execute(/* sql */`select * from posts ...`)
+        const rows = await db.execute(/* sql */ `select * from posts ...`)
         return Response.json(rows)
       },
     },
@@ -165,12 +165,12 @@ Every thrown error extends a typed base (`KernelError`) — never a raw `throw n
 
 Contrast the baseline: Strapi and Payload surface schema mistakes as stack traces or terse validation strings that don't point at the config line. We validate the entire config at boot with Zod-backed schemas and report **all** problems at once, sorted by file position, rather than failing on the first one — so a developer fixes a batch, not one error per restart.
 
-| Error class | When | Carries |
-| --- | --- | --- |
-| `ConfigError` | boot-time config validation | config path, line, suggested fix |
-| `ValidationError` | document write fails field rules | per-field messages, field paths |
-| `AccessError` | access control denies an operation | operation, collection, doc id |
-| `AdapterError` | database/storage layer fails | adapter name, wrapped cause |
+| Error class       | When                               | Carries                          |
+| ----------------- | ---------------------------------- | -------------------------------- |
+| `ConfigError`     | boot-time config validation        | config path, line, suggested fix |
+| `ValidationError` | document write fails field rules   | per-field messages, field paths  |
+| `AccessError`     | access control denies an operation | operation, collection, doc id    |
+| `AdapterError`    | database/storage layer fails       | adapter name, wrapped cause      |
 
 Async, cross-field, and access-control failures all flow through the same typed shape, which means the admin can render a `ValidationError` inline on the exact TanStack Form field that produced it without bespoke mapping. More in [Error Reference](../01-architecture/09-error-model-and-result-types.md) and Validation.
 

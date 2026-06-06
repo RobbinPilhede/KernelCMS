@@ -59,7 +59,12 @@ export function CommandPalette({ schema }: { schema: AdminSchema }) {
       }
     }
     for (const g of schema.globals) {
-      cmds.push({ id: `glob:${g.slug}`, label: g.label, group: 'Globals', run: () => navigate({ to: '/globals/$slug', params: { slug: g.slug } }) })
+      cmds.push({
+        id: `glob:${g.slug}`,
+        label: g.label,
+        group: 'Globals',
+        run: () => navigate({ to: '/globals/$slug', params: { slug: g.slug } }),
+      })
     }
     return cmds
   }, [schema, navigate])
@@ -81,7 +86,6 @@ export function CommandPalette({ schema }: { schema: AdminSchema }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   useEffect(() => {

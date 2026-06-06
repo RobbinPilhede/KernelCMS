@@ -7,9 +7,39 @@ const APPLY = process.argv.includes('--apply')
 const files = globSync('docs/**/*.md', { cwd: root }).map((f) => resolve(root, f))
 
 const STOP = new Set([
-  'and','the','of','to','for','a','an','with','overview','guide','docs','doc','md',
-  'intro','introduction','index','readme','getting','started','reference','ref','vs',
-  'in','on','its','is','how','your','our','using','use','part','core',
+  'and',
+  'the',
+  'of',
+  'to',
+  'for',
+  'a',
+  'an',
+  'with',
+  'overview',
+  'guide',
+  'docs',
+  'doc',
+  'md',
+  'intro',
+  'introduction',
+  'index',
+  'readme',
+  'getting',
+  'started',
+  'reference',
+  'ref',
+  'vs',
+  'in',
+  'on',
+  'its',
+  'is',
+  'how',
+  'your',
+  'our',
+  'using',
+  'use',
+  'part',
+  'core',
 ])
 
 function tokens(str) {
@@ -29,7 +59,10 @@ function h1Title(text) {
 // Build canonical index of real docs.
 const real = files.map((path) => {
   const text = readFileSync(path, 'utf8')
-  const rel = path.replace(root + '\\', '').replace(root + '/', '').replace(/\\/g, '/')
+  const rel = path
+    .replace(root + '\\', '')
+    .replace(root + '/', '')
+    .replace(/\\/g, '/')
   const segs = rel.split('/')
   const base = segs[segs.length - 1]
   const folder = segs.slice(1, -1).join(' ') // drop leading "docs"
@@ -49,10 +82,7 @@ for (const d of real) {
 function bestMatch(targetRel, sourcePath) {
   // tokens from the invented path's basename + its folder
   const segs = targetRel.split('/')
-  const cand = new Set([
-    ...tokens(segs[segs.length - 1]),
-    ...tokens(segs.slice(0, -1).join(' ')),
-  ])
+  const cand = new Set([...tokens(segs[segs.length - 1]), ...tokens(segs.slice(0, -1).join(' '))])
   if (cand.size === 0) return null
 
   let best = null
@@ -68,8 +98,13 @@ function bestMatch(targetRel, sourcePath) {
         score += spread <= 2 ? 2 : 1
       }
     }
-    if (score > bestScore) { second = bestScore; bestScore = score; best = d }
-    else if (score > second) { second = score }
+    if (score > bestScore) {
+      second = bestScore
+      bestScore = score
+      best = d
+    } else if (score > second) {
+      second = score
+    }
   }
   // Accept if confident: strong score, and a clear lead over the runner-up.
   if (best && bestScore >= 3 && bestScore > second) return best
@@ -84,7 +119,9 @@ function relLink(fromPath, toPath) {
 }
 
 const linkRe = /\[([^\]]+)\]\((\.[^)]+?\.md)(#[^)]*)?\)/g
-let kept = 0, remapped = 0, delinked = 0
+let kept = 0,
+  remapped = 0,
+  delinked = 0
 const remapSamples = []
 
 for (const d of real) {
@@ -92,12 +129,16 @@ for (const d of real) {
   let changed = false
   text = text.replace(linkRe, (full, label, target, frag) => {
     const abs = resolve(dirname(d.path), target)
-    if (existsSync(abs)) { kept++; return full } // already valid
+    if (existsSync(abs)) {
+      kept++
+      return full
+    } // already valid
     const match = bestMatch(target, d.path)
     if (match) {
       remapped++
       changed = true
-      if (remapSamples.length < 20) remapSamples.push(`${d.rel.split('/').pop()}: ${target}  ->  ${relLink(d.path, match.path)}`)
+      if (remapSamples.length < 20)
+        remapSamples.push(`${d.rel.split('/').pop()}: ${target}  ->  ${relLink(d.path, match.path)}`)
       return `[${label}](${relLink(d.path, match.path)}${frag || ''})`
     }
     delinked++

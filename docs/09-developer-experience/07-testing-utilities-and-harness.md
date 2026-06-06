@@ -39,16 +39,16 @@ const kernel = await createTestKernel({
 
 What the in-memory adapter guarantees, and where it deliberately diverges:
 
-| Behavior | In-memory adapter | Notes |
-|---|---|---|
-| `where` / `sort` / pagination / `depth` | Full parity | Same query compiler as SQL adapters |
-| Unique + required constraints | Enforced | Throws `ValidationError`, like production |
-| Relationships + `depth` joins | Full parity | Resolved in-process, no N+1 cost |
-| Localized fields | Full parity | Per-locale storage and fallback |
-| Drafts, publish, version history | Full parity | Autosave versions retained in memory |
-| Transactions | Emulated | Synchronous; rollback supported, no isolation levels |
-| Migrations | Skipped | Schema built directly from config, no diff |
-| Raw SQL escape hatch | Unsupported | Throws — tests using `db.raw()` must target a real adapter |
+| Behavior                                | In-memory adapter | Notes                                                      |
+| --------------------------------------- | ----------------- | ---------------------------------------------------------- |
+| `where` / `sort` / pagination / `depth` | Full parity       | Same query compiler as SQL adapters                        |
+| Unique + required constraints           | Enforced          | Throws `ValidationError`, like production                  |
+| Relationships + `depth` joins           | Full parity       | Resolved in-process, no N+1 cost                           |
+| Localized fields                        | Full parity       | Per-locale storage and fallback                            |
+| Drafts, publish, version history        | Full parity       | Autosave versions retained in memory                       |
+| Transactions                            | Emulated          | Synchronous; rollback supported, no isolation levels       |
+| Migrations                              | Skipped           | Schema built directly from config, no diff                 |
+| Raw SQL escape hatch                    | Unsupported       | Throws — tests using `db.raw()` must target a real adapter |
 
 Two adapters cover real cases the SQL path cannot: `@kernel/db-postgres` against a throwaway Postgres for migration and raw-SQL tests, and `@kernel/db-mongodb/memory` when you specifically test document-oriented behavior. The harness keeps the swap to one line:
 
@@ -103,7 +103,7 @@ This lets one suite assert that all four surfaces return consistent results from
 
 ## Auth helpers
 
-Most CMS bugs hide in authorization. KernelCMS evaluates access at the operation, document, and field level, so the harness makes it trivial to run any operation *as* a given user without minting real sessions or tokens.
+Most CMS bugs hide in authorization. KernelCMS evaluates access at the operation, document, and field level, so the harness makes it trivial to run any operation _as_ a given user without minting real sessions or tokens.
 
 ```ts
 import { asUser, asRole, asAnonymous } from '@kernel/core/testing'
@@ -117,9 +117,7 @@ const adminClient = client.with(asRole('admin'))
 // the unauthenticated public surface
 const publicClient = client.with(asAnonymous())
 
-await expect(
-  publicClient.delete('posts', { id: created.id }),
-).rejects.toThrow(ForbiddenError)
+await expect(publicClient.delete('posts', { id: created.id })).rejects.toThrow(ForbiddenError)
 ```
 
 `asUser` attaches a real user document so document- and field-level rules that read `req.user` behave correctly. `asRole` is a shortcut for the common case where only the role matters. Both produce a fully populated `req` (user, locale, transaction) identical to what a real request builds — there is no parallel "test mode" branch in the access logic.
@@ -130,9 +128,9 @@ A focused helper, `expectAccess`, turns the operation/role matrix into a table-d
 import { expectAccess } from '@kernel/core/testing'
 
 await expectAccess(kernel, 'posts', {
-  anonymous: { read: true,  create: false, update: false, delete: false },
-  editor:    { read: true,  create: true,  update: 'own', delete: false },
-  admin:     { read: true,  create: true,  update: true,  delete: true },
+  anonymous: { read: true, create: false, update: false, delete: false },
+  editor: { read: true, create: true, update: 'own', delete: false },
+  admin: { read: true, create: true, update: true, delete: true },
 })
 ```
 
@@ -154,7 +152,7 @@ beforeEach(async () => {
 })
 ```
 
-Snapshots also serve content assertions. Capture a snapshot after a workflow and diff it against a committed fixture to catch unintended schema or data drift — distinct from UI snapshot testing, this is *data* snapshotting tied to your typed schema.
+Snapshots also serve content assertions. Capture a snapshot after a workflow and diff it against a committed fixture to catch unintended schema or data drift — distinct from UI snapshot testing, this is _data_ snapshotting tied to your typed schema.
 
 ```ts
 expect(await kernel.snapshot('posts')).toMatchKernelSnapshot('posts-after-publish')
@@ -164,12 +162,12 @@ expect(await kernel.snapshot('posts')).toMatchKernelSnapshot('posts-after-publis
 
 `kernel.reset()` clears all data and returns the instance to its post-`createTestKernel` state, optionally re-running the seed. Use `reset` for hard isolation (no shared state at all) and `restore` when re-seeding is expensive.
 
-| Strategy | Use when | Cost |
-|---|---|---|
-| `restore(baseline)` | Tests share a seeded fixture | Lowest — structural copy |
-| `reset({ seed: true })` | Tests need the original seed, fresh | Medium — replays seed |
-| `reset()` | Test builds its own state from empty | Lowest — clears only |
-| New `createTestKernel` per test | Total isolation, separate config | Highest — full boot |
+| Strategy                        | Use when                             | Cost                     |
+| ------------------------------- | ------------------------------------ | ------------------------ |
+| `restore(baseline)`             | Tests share a seeded fixture         | Lowest — structural copy |
+| `reset({ seed: true })`         | Tests need the original seed, fresh  | Medium — replays seed    |
+| `reset()`                       | Test builds its own state from empty | Lowest — clears only     |
+| New `createTestKernel` per test | Total isolation, separate config     | Highest — full boot      |
 
 For real-database tiers, the harness wraps each test in a transaction and rolls back on teardown — no truncation, no cross-test bleed. Against the in-memory adapter, `reset` is effectively free because there is no disk.
 

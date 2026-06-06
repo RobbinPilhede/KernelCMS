@@ -4,17 +4,17 @@ KernelCMS treats your `kernel.config.ts` as the single source of truth and deriv
 
 ## Generated types output
 
-There are two categories of output. The first is *inferred-at-source*: types that exist the moment you import from `@kernel/client` or call `kernel.collections.posts`, with nothing written to disk. The second is *materialized*: artifacts the `kernel codegen` command writes for consumers that live outside the TypeScript graph (other services, GraphQL clients, non-TS languages).
+There are two categories of output. The first is _inferred-at-source_: types that exist the moment you import from `@kernel/client` or call `kernel.collections.posts`, with nothing written to disk. The second is _materialized_: artifacts the `kernel codegen` command writes for consumers that live outside the TypeScript graph (other services, GraphQL clients, non-TS languages).
 
 The materialized outputs:
 
-| Artifact | Command | Path (default) | Consumed by |
-| --- | --- | --- | --- |
-| Collection & global types | `kernel codegen types` | `.kernel/types.ts` | App code, plugins, tests |
-| GraphQL SDL | `kernel codegen graphql` | `.kernel/schema.graphql` | GraphQL Codegen, Apollo, urql |
-| OpenAPI 3.1 spec | `kernel codegen rest` | `.kernel/openapi.json` | REST clients, Postman, SDKs |
-| Drizzle schema | `kernel codegen db` | `.kernel/db/schema.ts` | Migrations (`@kernel/db`) |
-| Zod validators | `kernel codegen zod` | `.kernel/validators.ts` | Edge functions, form libs |
+| Artifact                  | Command                  | Path (default)           | Consumed by                   |
+| ------------------------- | ------------------------ | ------------------------ | ----------------------------- |
+| Collection & global types | `kernel codegen types`   | `.kernel/types.ts`       | App code, plugins, tests      |
+| GraphQL SDL               | `kernel codegen graphql` | `.kernel/schema.graphql` | GraphQL Codegen, Apollo, urql |
+| OpenAPI 3.1 spec          | `kernel codegen rest`    | `.kernel/openapi.json`   | REST clients, Postman, SDKs   |
+| Drizzle schema            | `kernel codegen db`      | `.kernel/db/schema.ts`   | Migrations (`@kernel/db`)     |
+| Zod validators            | `kernel codegen zod`     | `.kernel/validators.ts`  | Edge functions, form libs     |
 
 The `.kernel/` directory is build output. Commit it or `.gitignore` it — both are valid (see [Keeping types in sync](#keeping-types-in-sync)). The canonical `types.ts` is a flat module of named exports, one per collection and global, plus the supporting query types:
 
@@ -25,7 +25,7 @@ export interface Post {
   title: string
   slug: string
   status: 'draft' | 'published'
-  author: string | User          // relationship, resolved by `depth`
+  author: string | User // relationship, resolved by `depth`
   hero?: string | Media
   body: RichTextNode[]
   publishedAt?: string
@@ -33,8 +33,12 @@ export interface Post {
   updatedAt: string
 }
 
-export interface User { /* … */ }
-export interface SiteSettings { /* a global */ }
+export interface User {
+  /* … */
+}
+export interface SiteSettings {
+  /* a global */
+}
 
 export interface CollectionMap {
   posts: Post
@@ -84,7 +88,7 @@ const post = await kernel.collections.posts.findById('abc', { depth: 1 })
 //    ^? { id: string; title: string; author: User; … }
 ```
 
-Inference covers everything that *runs inside the TypeScript program*: the Local API, the typed RPC client over TanStack Start server functions, [TanStack Query](../05-admin/...) hooks, [TanStack Form](../05-admin/...) field binding, and `where`/`sort`/`select` query inputs. Here is the boundary, drawn as a diagram:
+Inference covers everything that _runs inside the TypeScript program_: the Local API, the typed RPC client over TanStack Start server functions, [TanStack Query](../05-admin/...) hooks, [TanStack Form](../05-admin/...) field binding, and `where`/`sort`/`select` query inputs. Here is the boundary, drawn as a diagram:
 
 ```
         kernel.config.ts  (source of truth)
@@ -129,10 +133,10 @@ Wire this into CI before the type check. It is the equivalent of `prettier --che
 
 **The commit-vs-ignore decision.** Two supported strategies:
 
-| Strategy | `.kernel/` is | Pro | Con |
-| --- | --- | --- | --- |
-| **Committed** | tracked | PRs show schema diffs; consumers in other repos pin a version | larger diffs; must run `--check` in CI |
-| **Generated** | gitignored | clean history | every `pnpm install`/build must regenerate first |
+| Strategy      | `.kernel/` is | Pro                                                           | Con                                              |
+| ------------- | ------------- | ------------------------------------------------------------- | ------------------------------------------------ |
+| **Committed** | tracked       | PRs show schema diffs; consumers in other repos pin a version | larger diffs; must run `--check` in CI           |
+| **Generated** | gitignored    | clean history                                                 | every `pnpm install`/build must regenerate first |
 
 We recommend **committed** for the GraphQL SDL and OpenAPI spec (downstream consumers need a stable, reviewable contract) and **gitignored** for `types.ts` and the Drizzle schema (internal, regenerated on `postinstall`). A `postinstall` hook keeps the gitignored set fresh:
 
@@ -141,16 +145,16 @@ We recommend **committed** for the GraphQL SDL and OpenAPI spec (downstream cons
 {
   "scripts": {
     "postinstall": "kernel codegen types db",
-    "check:types": "kernel codegen --check && tsc --noEmit"
-  }
+    "check:types": "kernel codegen --check && tsc --noEmit",
+  },
 }
 ```
 
-**Migrations are the one hard sync point.** Changing a field type changes both the generated TS *and* the database schema. KernelCMS generates the Drizzle schema and then a migration from the schema diff — the type and the migration come from the same source, so they can't disagree. See [Migrations](../04-persistence/...) for the diff-and-apply flow. This is a categorical improvement over Strapi, where the content-type schema, the generated types, and the database are three separate sources that can fall out of step.
+**Migrations are the one hard sync point.** Changing a field type changes both the generated TS _and_ the database schema. KernelCMS generates the Drizzle schema and then a migration from the schema diff — the type and the migration come from the same source, so they can't disagree. See [Migrations](../04-persistence/...) for the diff-and-apply flow. This is a categorical improvement over Strapi, where the content-type schema, the generated types, and the database are three separate sources that can fall out of step.
 
 ## Consuming generated types
 
-**In your frontend / external app**, use `@kernel/client`. It is typed by importing your config's *type* (not its runtime value, so no server code is bundled):
+**In your frontend / external app**, use `@kernel/client`. It is typed by importing your config's _type_ (not its runtime value, so no server code is bundled):
 
 ```ts
 import { createClient } from '@kernel/client'
@@ -159,7 +163,7 @@ import type config from '../cms/kernel.config'
 const cms = createClient<typeof config>({ url: process.env.CMS_URL! })
 
 const { docs } = await cms.collections.posts.find({
-  where: { status: { equals: 'published' } },  // ← `status` autocompletes; bad values error
+  where: { status: { equals: 'published' } }, // ← `status` autocompletes; bad values error
   sort: '-publishedAt',
   depth: 1,
   limit: 10,
@@ -171,7 +175,7 @@ For a separate repo with no source access, point the same client at the generate
 
 ```ts
 import { createClient } from '@kernel/client'
-import type { CollectionMap } from '@acme/cms-types'   // published from .kernel/types.ts
+import type { CollectionMap } from '@acme/cms-types' // published from .kernel/types.ts
 
 const cms = createClient<{ collections: CollectionMap }>({ url })
 ```

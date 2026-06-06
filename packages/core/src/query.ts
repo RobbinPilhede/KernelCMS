@@ -66,7 +66,12 @@ function matchesCondition(value: unknown, cond: WhereCondition): boolean {
         break
       case 'like':
       case 'contains':
-        if (!String(value ?? '').toLowerCase().includes(String(operand).toLowerCase())) return false
+        if (
+          !String(value ?? '')
+            .toLowerCase()
+            .includes(String(operand).toLowerCase())
+        )
+          return false
         break
       case 'exists': {
         const exists = value !== null && value !== undefined

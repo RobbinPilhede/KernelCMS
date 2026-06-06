@@ -45,13 +45,13 @@ const post = await kernel.create({ collection: 'posts', data: { title: 'Hello' }
 
 ## Entry points
 
-| Import | What you get |
-| --- | --- |
-| `kernelcms` | Config, fields, the Local API (`initKernel`), auth, access, codegen, error types |
+| Import               | What you get                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| `kernelcms`          | Config, fields, the Local API (`initKernel`), auth, access, codegen, error types     |
 | `kernelcms/postgres` | `postgresAdapter` — the default PostgreSQL adapter (pooled, concurrent transactions) |
-| `kernelcms/sqlite` | `sqliteAdapter` — an optional `node:sqlite` adapter, handy for local dev and tests |
-| `kernelcms/server` | `createRequestHandler`, `serve` — the REST handler + Node http adapter |
-| `kernelcms/client` | `createClient` — a tiny typed fetch client (browser/edge/Node) |
+| `kernelcms/sqlite`   | `sqliteAdapter` — an optional `node:sqlite` adapter, handy for local dev and tests   |
+| `kernelcms/server`   | `createRequestHandler`, `serve` — the REST handler + Node http adapter               |
+| `kernelcms/client`   | `createClient` — a tiny typed fetch client (browser/edge/Node)                       |
 
 ## CLI
 

@@ -1,6 +1,6 @@
 # Sessions, JWT & API Keys
 
-KernelCMS supports three credential types, each tuned to a distinct caller. Session cookies authenticate humans in the admin panel. JWTs authenticate short-lived programmatic requests where a stateless bearer token is convenient. API keys authenticate long-lived machine integrations — build pipelines, server-to-server fetches, webhooks. All three resolve to the same `Identity` object that [Access Control](./01-authorization-and-access-control.md) evaluates at the operation, document, and field level, so the rest of the system never branches on *how* a request authenticated. This document specifies how each credential is minted, transported, validated, rotated, and revoked.
+KernelCMS supports three credential types, each tuned to a distinct caller. Session cookies authenticate humans in the admin panel. JWTs authenticate short-lived programmatic requests where a stateless bearer token is convenient. API keys authenticate long-lived machine integrations — build pipelines, server-to-server fetches, webhooks. All three resolve to the same `Identity` object that [Access Control](./01-authorization-and-access-control.md) evaluates at the operation, document, and field level, so the rest of the system never branches on _how_ a request authenticated. This document specifies how each credential is minted, transported, validated, rotated, and revoked.
 
 ## The shared identity contract
 
@@ -9,16 +9,16 @@ Every credential, regardless of type, is exchanged for an `Identity` before any 
 ```ts
 // @kernel/auth
 export interface Identity {
-  type: "session" | "jwt" | "api-key";
-  user: { id: string; collection: string } | null; // null for anonymous + pure API-key callers
-  scopes: ReadonlyArray<Scope>;     // empty for full-user identities (governed by access control instead)
-  tokenId: string | null;           // jti / session id / key id — used for revocation
-  expiresAt: Date | null;
-  raw: unknown;                     // adapter-specific payload, never trusted by core
+  type: 'session' | 'jwt' | 'api-key'
+  user: { id: string; collection: string } | null // null for anonymous + pure API-key callers
+  scopes: ReadonlyArray<Scope> // empty for full-user identities (governed by access control instead)
+  tokenId: string | null // jti / session id / key id — used for revocation
+  expiresAt: Date | null
+  raw: unknown // adapter-specific payload, never trusted by core
 }
 ```
 
-The split matters: a logged-in editor carries `scopes: []` and is governed entirely by access-control functions, while an API key carries explicit `scopes` *and* may resolve to a service user. KernelCMS does not let a token's claims silently expand a user's permissions — scopes can only narrow, never widen, what the underlying user could already do.
+The split matters: a logged-in editor carries `scopes: []` and is governed entirely by access-control functions, while an API key carries explicit `scopes` _and_ may resolve to a service user. KernelCMS does not let a token's claims silently expand a user's permissions — scopes can only narrow, never widen, what the underlying user could already do.
 
 ## Session cookies
 
@@ -31,30 +31,30 @@ The admin panel is a TanStack Start app, so authentication state lives in an `ht
 export default defineConfig({
   auth: {
     session: {
-      cookieName: "kernel-session",
-      ttl: "7d",              // absolute lifetime
-      rolling: true,          // sliding expiry on activity
-      rollingWindow: "30m",   // only re-issue if <30m of TTL was consumed
+      cookieName: 'kernel-session',
+      ttl: '7d', // absolute lifetime
+      rolling: true, // sliding expiry on activity
+      rollingWindow: '30m', // only re-issue if <30m of TTL was consumed
       cookie: {
-        secure: true,         // forced true in production regardless of this value
-        httpOnly: true,       // always on — not configurable
-        sameSite: "lax",      // "lax" default; "strict" if no cross-site OAuth callback
-        path: "/",
-        domain: undefined,    // host-only by default; set for subdomain sharing
+        secure: true, // forced true in production regardless of this value
+        httpOnly: true, // always on — not configurable
+        sameSite: 'lax', // "lax" default; "strict" if no cross-site OAuth callback
+        path: '/',
+        domain: undefined, // host-only by default; set for subdomain sharing
       },
     },
   },
-});
+})
 ```
 
 Hard rules enforced by `@kernel/auth` regardless of config:
 
-| Attribute    | Value                  | Why it cannot be weakened                                      |
-|--------------|------------------------|---------------------------------------------------------------|
-| `HttpOnly`   | always `true`          | Defeats token theft via XSS                                    |
-| `Secure`     | `true` in production   | No session cookies over plaintext HTTP, ever                  |
-| `SameSite`   | `Lax` minimum          | Blocks the bulk of CSRF; `None` is rejected unless `Secure`   |
-| `__Host-` prefix | applied when `path:"/"` and no `domain` | Browser-enforced binding to origin |
+| Attribute        | Value                                   | Why it cannot be weakened                                   |
+| ---------------- | --------------------------------------- | ----------------------------------------------------------- |
+| `HttpOnly`       | always `true`                           | Defeats token theft via XSS                                 |
+| `Secure`         | `true` in production                    | No session cookies over plaintext HTTP, ever                |
+| `SameSite`       | `Lax` minimum                           | Blocks the bulk of CSRF; `None` is rejected unless `Secure` |
+| `__Host-` prefix | applied when `path:"/"` and no `domain` | Browser-enforced binding to origin                          |
 
 `SameSite=Lax` covers state-changing requests because mutations go through TanStack Start server functions (POST), which Lax does not auto-send cross-site. For defense in depth we still issue a double-submit CSRF token on the admin origin; see [Access Control](./01-authorization-and-access-control.md). Sanity sidesteps CSRF by using bearer tokens against a separate API origin; our admin and API can share an origin, so cookie hardening plus CSRF tokens is the correct trade.
 
@@ -94,23 +94,23 @@ auth: {
 
 Validation in `@kernel/auth` is strict and non-negotiable:
 
-- **Algorithm is pinned** to the configured `alg`. The `alg` header from the token is *ignored for selection* — we look up the key by `kid` and verify with the configured algorithm. This kills the `alg: none` and RS/HS confusion attacks that have repeatedly bitten naive JWT setups.
+- **Algorithm is pinned** to the configured `alg`. The `alg` header from the token is _ignored for selection_ — we look up the key by `kid` and verify with the configured algorithm. This kills the `alg: none` and RS/HS confusion attacks that have repeatedly bitten naive JWT setups.
 - `exp`, `nbf`, `iss`, `aud` are all checked. A token missing any required claim is rejected.
 - `jti` is mandatory so individual tokens can be denylisted (see Revocation).
 - Clock skew tolerance is fixed at 60s.
 
 ```ts
 // @kernel/auth — conceptual verify path
-const header = decodeProtectedHeader(token);
-const key = keyring.get(header.kid);          // unknown kid -> reject
-if (!key) throw new InvalidTokenError("unknown kid");
+const header = decodeProtectedHeader(token)
+const key = keyring.get(header.kid) // unknown kid -> reject
+if (!key) throw new InvalidTokenError('unknown kid')
 const { payload } = await jwtVerify(token, key, {
-  algorithms: [config.jwt.alg],               // pinned, not header-derived
+  algorithms: [config.jwt.alg], // pinned, not header-derived
   issuer: config.jwt.issuer,
   audience: config.jwt.audience,
   clockTolerance: 60,
-});
-if (await denylist.has(payload.jti)) throw new RevokedTokenError();
+})
+if (await denylist.has(payload.jti)) throw new RevokedTokenError()
 ```
 
 ### Why short TTLs plus a denylist
@@ -135,18 +135,18 @@ kbk_live_8f2c....e91a
 
 ```ts
 // @kernel/auth — creation
-const secret = `kbk_${env}_${base62(randomBytes(32))}`;
+const secret = `kbk_${env}_${base62(randomBytes(32))}`
 await db.insert(apiKeys).values({
   id,
   name,
-  hash: await argon2id(secret),   // never store the raw key
+  hash: await argon2id(secret), // never store the raw key
   scopes,
-  collections,                    // optional resource narrowing
+  collections, // optional resource narrowing
   lastFourChars: secret.slice(-4),
-  expiresAt,                      // optional; null = non-expiring
+  expiresAt, // optional; null = non-expiring
   createdBy: actor.id,
-});
-return { id, secret };            // caller's only chance to copy it
+})
+return { id, secret } // caller's only chance to copy it
 ```
 
 We hash with argon2id, not a fast hash, even though the entropy is high — it costs nothing on the rare creation path and makes a stolen database table useless. Payload's API keys are encrypted (reversible) so they can be displayed in the admin; KernelCMS deliberately uses one-way hashing and shows the key once, because a CMS admin panel should never be able to surface a live credential.
@@ -175,7 +175,7 @@ The transport is a bearer header, distinguished from JWTs by prefix:
 Authorization: Bearer kbk_live_8f2c....e91a
 ```
 
-Resolution: hash the presented secret, look up the row, and build an `Identity` whose `scopes` are the *intersection* of the key's scopes and what the key's `createdBy` user is allowed to do today. If the creating user lost a permission, every key they minted loses it too — keys never outlive their grantor's authority. This is stricter than Strapi's API tokens, which carry a standalone permission set decoupled from any user.
+Resolution: hash the presented secret, look up the row, and build an `Identity` whose `scopes` are the _intersection_ of the key's scopes and what the key's `createdBy` user is allowed to do today. If the creating user lost a permission, every key they minted loses it too — keys never outlive their grantor's authority. This is stricter than Strapi's API tokens, which carry a standalone permission set decoupled from any user.
 
 ## Rotation and revocation
 
@@ -192,8 +192,8 @@ Signing keys rotate on a schedule via overlapping `kid`s. The `activeKid` signs 
 
 ```ts
 // kernel rotate-keys --grace 15m
-keyring.promote("2026-06");        // new active kid
-keyring.retire("2026-04", { after: "16m" }); // drop once max TTL elapsed
+keyring.promote('2026-06') // new active kid
+keyring.retire('2026-04', { after: '16m' }) // drop once max TTL elapsed
 ```
 
 ### API-key rotation
@@ -202,17 +202,17 @@ Keys are rotated by issuing a replacement and deprecating the old one with a gra
 
 ```ts
 // @kernel/client / kernel CLI
-const next = await kernel.apiKeys.rotate(keyId, { grace: "24h" });
+const next = await kernel.apiKeys.rotate(keyId, { grace: '24h' })
 // old key: revokeAt = now + 24h; new key active immediately
 ```
 
 ### Revocation
 
-| Credential | Revoke mechanism                              | Latency      |
-|------------|-----------------------------------------------|--------------|
-| Session    | delete session-store row                      | next request |
+| Credential | Revoke mechanism                                     | Latency                          |
+| ---------- | ---------------------------------------------------- | -------------------------------- |
+| Session    | delete session-store row                             | next request                     |
 | JWT        | add `jti` to denylist (TTL = token's remaining life) | next request, denylist cache TTL |
-| API key    | flip `revokedAt` on the row                   | next request |
+| API key    | flip `revokedAt` on the row                          | next request                     |
 
 The JWT denylist is the one place we accept eventual consistency: entries self-expire at the token's `exp`, so the denylist never grows unbounded, and the only window of exposure equals the cache propagation delay (single-digit seconds across nodes). For sessions and API keys, revocation is strongly consistent because both already hit a store on every request.
 

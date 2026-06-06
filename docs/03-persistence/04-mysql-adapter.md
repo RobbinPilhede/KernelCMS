@@ -31,22 +31,22 @@ export default defineConfig({
 
 Every KernelCMS field type maps to a concrete MySQL column type. The adapter never uses `TEXT` where a sized `VARCHAR` is correct, because indexing rules (below) depend on it.
 
-| Field type | MySQL column | Notes |
-|---|---|---|
-| `text` | `VARCHAR(255)` default, `TEXT` when `maxLength > 255` | Crossing 255 silently moves the column to `TEXT`, which changes indexability. The adapter warns. |
-| `textarea` | `TEXT` | `MEDIUMTEXT`/`LONGTEXT` selectable via `field.db.columnType`. |
-| `number` | `DOUBLE`, or `BIGINT`/`INT` when `field.db.integer` | `decimal` mode emits `DECIMAL(p,s)` for money. |
-| `boolean` | `TINYINT(1)` | MySQL has no native boolean; `1`/`0` round-trip to JS `true`/`false`. |
-| `date` | `DATETIME(3)` | `TIMESTAMP` is avoided — its 2038 ceiling and implicit `ON UPDATE` are footguns. Millisecond precision is on by default. |
-| `email` | `VARCHAR(255)` | Indexed with a normalized lowercase generated column when `unique`. |
-| `json` | `JSON` (MySQL) / `LONGTEXT + json_valid` (MariaDB) | See [JSON columns](#json-columns). |
-| `code` | `LONGTEXT` | No length cap; not indexed. |
-| `point` | `POINT` with SRID 4326 | `ST_*` functions; spatial index requires `NOT NULL`. |
-| `select` / `radio` | `VARCHAR(255)` | We do **not** emit `ENUM`; see below. |
-| `relationship` | `BIGINT` FK column, or join table for `hasMany`/polymorphic | Matches the Postgres relational layout. |
-| `upload` | `BIGINT` FK to the media collection | Same as `relationship`. |
-| `richText` | `JSON` | The block tree is stored as JSON; see [JSON columns](#json-columns). |
-| `array` / `blocks` | child table with `_order` + `_parent_id` | Identical strategy to Postgres for stable ordering. |
+| Field type         | MySQL column                                                | Notes                                                                                                                    |
+| ------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `text`             | `VARCHAR(255)` default, `TEXT` when `maxLength > 255`       | Crossing 255 silently moves the column to `TEXT`, which changes indexability. The adapter warns.                         |
+| `textarea`         | `TEXT`                                                      | `MEDIUMTEXT`/`LONGTEXT` selectable via `field.db.columnType`.                                                            |
+| `number`           | `DOUBLE`, or `BIGINT`/`INT` when `field.db.integer`         | `decimal` mode emits `DECIMAL(p,s)` for money.                                                                           |
+| `boolean`          | `TINYINT(1)`                                                | MySQL has no native boolean; `1`/`0` round-trip to JS `true`/`false`.                                                    |
+| `date`             | `DATETIME(3)`                                               | `TIMESTAMP` is avoided — its 2038 ceiling and implicit `ON UPDATE` are footguns. Millisecond precision is on by default. |
+| `email`            | `VARCHAR(255)`                                              | Indexed with a normalized lowercase generated column when `unique`.                                                      |
+| `json`             | `JSON` (MySQL) / `LONGTEXT + json_valid` (MariaDB)          | See [JSON columns](#json-columns).                                                                                       |
+| `code`             | `LONGTEXT`                                                  | No length cap; not indexed.                                                                                              |
+| `point`            | `POINT` with SRID 4326                                      | `ST_*` functions; spatial index requires `NOT NULL`.                                                                     |
+| `select` / `radio` | `VARCHAR(255)`                                              | We do **not** emit `ENUM`; see below.                                                                                    |
+| `relationship`     | `BIGINT` FK column, or join table for `hasMany`/polymorphic | Matches the Postgres relational layout.                                                                                  |
+| `upload`           | `BIGINT` FK to the media collection                         | Same as `relationship`.                                                                                                  |
+| `richText`         | `JSON`                                                      | The block tree is stored as JSON; see [JSON columns](#json-columns).                                                     |
+| `array` / `blocks` | child table with `_order` + `_parent_id`                    | Identical strategy to Postgres for stable ordering.                                                                      |
 
 ### Why no ENUM for `select`
 
@@ -127,17 +127,17 @@ Sanity indexes everything in its hosted GROQ engine and you never think about th
 
 These are the differences that change how you model content, not micro-optimizations. The adapter normalizes what it can and refuses migrations that would silently break.
 
-| Capability | Postgres | MySQL / MariaDB | KernelCMS handling |
-|---|---|---|---|
-| `JSONB` in-place ops | Yes | MySQL 8 partial; MariaDB full rewrite | Adapter avoids hot-write JSON on MariaDB; documented. |
-| Array column type | Native `_type[]` | None | `hasMany` and arrays always use child tables — no behavioral gap. |
-| Partial / expression indexes | Yes | Generated column only | `indexedPaths` API generates the column for you. |
-| `ENUM` for selects | Native, cheap to alter | Expensive to alter | We use `VARCHAR` + `CHECK` everywhere. |
-| Index key length | ~2704 bytes effective | **3072 bytes** (InnoDB, utf8mb4) | Long `text` keys auto-prefixed; see below. |
-| `RETURNING` on write | Yes | No | Adapter does insert-then-select in one transaction. |
-| Transactional DDL | Yes | No (implicit commit per DDL) | Migrations run statement-by-statement with a recovery checkpoint. |
-| Deferred FK constraints | Yes | No | Insert order is topologically sorted by the writer. |
-| Case-sensitive text | Per-column | Collation-driven (`utf8mb4_0900_ai_ci`) | `unique` text uses a `_bin`-collated generated column to avoid surprise collisions. |
+| Capability                   | Postgres               | MySQL / MariaDB                         | KernelCMS handling                                                                  |
+| ---------------------------- | ---------------------- | --------------------------------------- | ----------------------------------------------------------------------------------- |
+| `JSONB` in-place ops         | Yes                    | MySQL 8 partial; MariaDB full rewrite   | Adapter avoids hot-write JSON on MariaDB; documented.                               |
+| Array column type            | Native `_type[]`       | None                                    | `hasMany` and arrays always use child tables — no behavioral gap.                   |
+| Partial / expression indexes | Yes                    | Generated column only                   | `indexedPaths` API generates the column for you.                                    |
+| `ENUM` for selects           | Native, cheap to alter | Expensive to alter                      | We use `VARCHAR` + `CHECK` everywhere.                                              |
+| Index key length             | ~2704 bytes effective  | **3072 bytes** (InnoDB, utf8mb4)        | Long `text` keys auto-prefixed; see below.                                          |
+| `RETURNING` on write         | Yes                    | No                                      | Adapter does insert-then-select in one transaction.                                 |
+| Transactional DDL            | Yes                    | No (implicit commit per DDL)            | Migrations run statement-by-statement with a recovery checkpoint.                   |
+| Deferred FK constraints      | Yes                    | No                                      | Insert order is topologically sorted by the writer.                                 |
+| Case-sensitive text          | Per-column             | Collation-driven (`utf8mb4_0900_ai_ci`) | `unique` text uses a `_bin`-collated generated column to avoid surprise collisions. |
 
 The two that bite hardest:
 

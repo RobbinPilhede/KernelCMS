@@ -22,6 +22,7 @@ with a real visual library**, **live-preview-by-default**, and **obsessively
 crafted** so nothing feels templated.
 
 **Five differentiation pillars.**
+
 1. **Adapter-everything** — DB, storage, auth, email, search, cache, queue are all
    swappable contracts. The core depends on interfaces, never a driver.
 2. **Visual page building done right** — a section library with **auto-captured
@@ -34,6 +35,7 @@ crafted** so nothing feels templated.
    no placeholder energy anywhere.
 
 **Engineering standards (non-negotiable, applies to every doc).**
+
 - Zero `any`; `unknown` + guards. Named exports. Error classes extend a typed base.
 - Every public operation has tests (capability + regression). 80% line / 70% branch.
 - Security gate on every feature touching auth, input, APIs, or storage.
@@ -41,6 +43,7 @@ crafted** so nothing feels templated.
 - Accessibility, loading, empty, and error states are part of "done," not extras.
 
 **Roadmap phases** (milestones map onto the tracks):
+
 - **M0 Foundation** (done/in-progress): engine, SQLite+Postgres adapters, REST + Local API, auth, CLI, React/TanStack admin, blocks, live preview MVP.
 - **M1 Page Builder**: section library + auto-screenshots, drag canvas, click-to-edit, templates.
 - **M2 Editorial**: drafts/versions/autosave, scheduled publish, localization, media library.
@@ -49,23 +52,23 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track A — Foundation & Positioning  (docs 1–8)
+## Track A — Foundation & Positioning (docs 1–8)
 
 1. **Vision & Mission** — the one-paragraph promise, the wedge (page-builder-first
    headless), the 3-year arc, and explicit non-goals (not a website builder, not
    a no-code-only tool, not a SaaS-lock-in).
-2. **Personas & Jobs-to-be-Done** — the *developer* (owns schema/deploy), the
-   *editor* (composes pages, never sees code), the *designer* (owns tokens/sections),
-   the *agency* (multi-client). Each with their critical path and failure modes.
+2. **Personas & Jobs-to-be-Done** — the _developer_ (owns schema/deploy), the
+   _editor_ (composes pages, never sees code), the _designer_ (owns tokens/sections),
+   the _agency_ (multi-client). Each with their critical path and failure modes.
 3. **Payload Gap Analysis** — catalog of concrete friction people hit: Next-only
    admin, RSC learning curve to customize, live-preview wiring, block UX without
    visual previews, migration DX, large-list admin perf, theming requires ejecting,
    plugin breadth, cloud pricing anxiety. Each gap → our answer + proof.
 4. **Differentiation Matrix** — feature-by-feature vs Payload, Strapi, Sanity,
    Directus, with honest "where they're still better" so we stay grounded.
-5. **Design Tenets** — the rules every contributor follows: *config is the source
-   of truth*, *the frontend is the renderer*, *adapters over assumptions*,
-   *progressive disclosure*, *fast by default*, *never a dead end*.
+5. **Design Tenets** — the rules every contributor follows: _config is the source
+   of truth_, _the frontend is the renderer_, _adapters over assumptions_,
+   _progressive disclosure_, _fast by default_, _never a dead end_.
    ✦ No-AI-feel: a written "taste guide" (spacing rhythm, copy voice, motion curves).
 6. **Naming, Brand & Voice** — product naming (`kernelcms`, `@kernelcms/*`),
    microcopy voice (concise, human, a little warm), error-message tone.
@@ -76,7 +79,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track B — Core Architecture  (docs 9–19)
+## Track B — Core Architecture (docs 9–19)
 
 9. **System Architecture Overview** — the request lifecycle diagram: config →
    sanitize → compile schema → operation pipeline → adapter → serialize → populate,
@@ -101,11 +104,11 @@ crafted** so nothing feels templated.
 18. **Edge & Serverless Compatibility** — what runs on the edge (web-standard
     Request→Response handler), what needs Node, how to split.
 19. **Monorepo & Package Topology** — `@kernel/db|core|db-sqlite|db-postgres|server
-    |client|cli|admin-app`, the published `kernelcms` rollup, build/embed pipeline.
+|client|cli|admin-app`, the published `kernelcms` rollup, build/embed pipeline.
 
 ---
 
-## Track C — Content Modeling  (docs 20–31)
+## Track C — Content Modeling (docs 20–31)
 
 20. **Collections** — slug rules, labels, timestamps, admin options, access, hooks,
     auth flag; the mental model and worked examples.
@@ -126,18 +129,18 @@ crafted** so nothing feels templated.
     and conditional validation.
 28. **Validation & Constraints** — built-in rules, custom `validate`, nested paths,
     friendly error surfacing in the admin (banner + inline + tab focus).
-    ✦ No-AI-feel: errors say *which section/field* in human terms, never a raw path.
+    ✦ No-AI-feel: errors say _which section/field_ in human terms, never a raw path.
 29. **Localization & i18n (content)** — per-field localized values, locale fallback,
     locale switcher, copy-from-locale, and per-locale live preview.
 30. **Versioning, Drafts & Autosave** — draft vs published, version history with
     diff + restore, autosave with conflict handling, scheduled publish/unpublish.
-    ▲ Better than Payload: visual diff of *rendered sections*, not just JSON.
+    ▲ Better than Payload: visual diff of _rendered sections_, not just JSON.
 31. **Data Migrations & Schema Evolution** — generated migrations, safe column adds,
     backfills, dry-run, and a migration DX that doesn't require hand-writing SQL.
 
 ---
 
-## Track D — Admin UX  (docs 32–46)
+## Track D — Admin UX (docs 32–46)
 
 32. **Design System & Tokens** — color/spacing/type/radii/motion tokens as CSS
     custom properties; light/dark; density modes; the single source of visual truth.
@@ -175,7 +178,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track E — Visual Page & Section Builder  (docs 47–58)
+## Track E — Visual Page & Section Builder (docs 47–58)
 
 47. **Page Builder Overview** — compose pages from sections; the editor is fields-
     left / live-canvas-right; the section is the real component.
@@ -208,7 +211,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track F — Live Preview & Visual Editing  (docs 59–66)
+## Track F — Live Preview & Visual Editing (docs 59–66)
 
 59. **Live Preview Architecture** — iframe at `admin.livePreview.url`; the admin
     `postMessage`s live data; the frontend subscribes/merges/re-renders.
@@ -228,7 +231,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track G — Auth, Access & Security  (docs 67–76)
+## Track G — Auth, Access & Security (docs 67–76)
 
 67. **Authentication** — scrypt hashing, HMAC tokens, login/me, token expiry,
     refresh strategy, httpOnly-cookie mode option.
@@ -253,7 +256,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track H — APIs & Integration  (docs 77–84)
+## Track H — APIs & Integration (docs 77–84)
 
 77. **API Philosophy** — same operations everywhere: Local API (in-process, typed),
     REST (auto-generated), and the typed client all share one core.
@@ -275,7 +278,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track I — Developer Experience & Extensibility  (docs 85–93)
+## Track I — Developer Experience & Extensibility (docs 85–93)
 
 85. **CLI** — `migrate`, `seed`, `dev`, `generate:types`, `snapshot` (screenshots),
     helpful output, no interactive traps.
@@ -297,7 +300,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track J — Media & Files  (docs 94–99)
+## Track J — Media & Files (docs 94–99)
 
 94. **Upload & File Handling** — validation (type/size), virus-scan hook, dedupe,
     metadata extraction.
@@ -314,7 +317,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track K — Performance & Scale  (docs 100–104)
+## Track K — Performance & Scale (docs 100–104)
 
 100. **Performance Budgets** — per-surface targets (admin TTI, list render at 10k
      rows, save latency, preview update <100ms) and how each is enforced/measured.
@@ -329,7 +332,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track L — Deployment & Operations  (docs 105–109)
+## Track L — Deployment & Operations (docs 105–109)
 
 105. **Self-Hosting & Docker** — single-image deploy, env config, healthchecks,
      standalone build.
@@ -344,7 +347,7 @@ crafted** so nothing feels templated.
 
 ---
 
-## Track M — Quality, Process & Craft  (docs 110–114)
+## Track M — Quality, Process & Craft (docs 110–114)
 
 110. **Engineering Standards** — the codified rules (types, errors, tests, security
      gate) and how PRs are reviewed against them.
@@ -362,6 +365,7 @@ crafted** so nothing feels templated.
 ---
 
 ## How to use this plan
+
 - Each numbered item becomes a full doc at `docs/<track-folder>/<nn>-<slug>.md`
   following the existing docs structure, with: problem, design, API, examples,
   acceptance criteria, and tests.
@@ -372,6 +376,7 @@ crafted** so nothing feels templated.
   the current milestone.
 
 ## Honest current state (M0)
+
 Built and working today: engine (core + Postgres/SQLite adapters), REST + Local
 API, auth + first-run setup + field-level access + login rate limiting, the
 React/TanStack admin (list/edit/globals), the `blocks` field with a searchable

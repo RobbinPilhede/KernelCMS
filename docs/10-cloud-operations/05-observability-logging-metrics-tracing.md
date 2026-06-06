@@ -30,17 +30,17 @@ export default defineConfig({
 
 Every log line carries a canonical envelope so queries are uniform across services:
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `time` | ISO-8601 | Event timestamp |
-| `level` | string | `trace`–`fatal` |
-| `traceId` / `spanId` | hex | Correlates the line to its OpenTelemetry span |
-| `requestId` | string | Per-request UUID, also returned in the `x-kernel-request-id` response header |
-| `collection` / `global` | string | Content type under operation, when applicable |
-| `operation` | enum | `find`, `findByID`, `create`, `update`, `delete`, `count` |
-| `userId` / `role` | string | Authenticated principal (never the credential) |
-| `tenantId` | string | Set on KernelCMS Cloud and multi-tenant self-host |
-| `durationMs` | number | Operation latency |
+| Field                   | Type     | Meaning                                                                      |
+| ----------------------- | -------- | ---------------------------------------------------------------------------- |
+| `time`                  | ISO-8601 | Event timestamp                                                              |
+| `level`                 | string   | `trace`–`fatal`                                                              |
+| `traceId` / `spanId`    | hex      | Correlates the line to its OpenTelemetry span                                |
+| `requestId`             | string   | Per-request UUID, also returned in the `x-kernel-request-id` response header |
+| `collection` / `global` | string   | Content type under operation, when applicable                                |
+| `operation`             | enum     | `find`, `findByID`, `create`, `update`, `delete`, `count`                    |
+| `userId` / `role`       | string   | Authenticated principal (never the credential)                               |
+| `tenantId`              | string   | Set on KernelCMS Cloud and multi-tenant self-host                            |
+| `durationMs`            | number   | Operation latency                                                            |
 
 Use child loggers to bind context once. Inside a hook or access function, `ctx.logger` is already bound to the request, operation, and collection:
 
@@ -79,7 +79,7 @@ import { prometheusMetrics } from '@kernel/server/metrics'
 export default defineConfig({
   observability: {
     metrics: prometheusMetrics({
-      port: 9464,                  // scrape target, bind to the internal interface only
+      port: 9464, // scrape target, bind to the internal interface only
       path: '/metrics',
       defaultLabels: { service: 'kernel-api', env: process.env.DEPLOY_ENV ?? 'dev' },
       // histogram buckets tuned for CMS read/write latencies (ms)
@@ -93,11 +93,11 @@ export default defineConfig({
 
 Emitted per API surface and labeled by `surface` (`rest|graphql|rpc`), `collection`, `operation`, and `status`.
 
-| Metric | Type | Labels | Purpose |
-| --- | --- | --- | --- |
-| `kernel_requests_total` | counter | surface, collection, operation, status | Rate, and error ratio via `status="error"` |
-| `kernel_request_duration_ms` | histogram | surface, collection, operation | Latency p50/p95/p99 |
-| `kernel_request_inflight` | gauge | surface | Concurrency / backpressure signal |
+| Metric                       | Type      | Labels                                 | Purpose                                    |
+| ---------------------------- | --------- | -------------------------------------- | ------------------------------------------ |
+| `kernel_requests_total`      | counter   | surface, collection, operation, status | Rate, and error ratio via `status="error"` |
+| `kernel_request_duration_ms` | histogram | surface, collection, operation         | Latency p50/p95/p99                        |
+| `kernel_request_inflight`    | gauge     | surface                                | Concurrency / backpressure signal          |
 
 `status` is bucketed to `ok | client_error | server_error` so a `4xx` from a validation failure does not page you the way a `5xx` adapter fault should. The error ratio you alert on is `server_error / total`.
 
@@ -105,14 +105,14 @@ Emitted per API surface and labeled by `surface` (`rest|graphql|rpc`), `collecti
 
 Every adapter implements `metrics(): AdapterMetrics`, which the server scrapes and re-exports with an `adapter` label. This is the part Payload and Strapi simply do not have — a uniform resource view across whichever database, cache, and storage you chose.
 
-| Metric | Type | Adapter | Signal |
-| --- | --- | --- | --- |
-| `kernel_db_pool_in_use` / `_size` | gauge | `@kernel/db-*` | Utilization & saturation of the connection pool |
-| `kernel_db_query_duration_ms` | histogram | `@kernel/db-*` | Slow-query detection |
-| `kernel_cache_hits_total` / `_misses_total` | counter | cache adapter | Hit ratio |
-| `kernel_queue_depth` | gauge | queue adapter | Saturation; backlog of jobs |
-| `kernel_storage_op_duration_ms` | histogram | `@kernel/storage` | Upload/serve latency |
-| `kernel_storage_errors_total` | counter | `@kernel/storage` | Resource errors |
+| Metric                                      | Type      | Adapter           | Signal                                          |
+| ------------------------------------------- | --------- | ----------------- | ----------------------------------------------- |
+| `kernel_db_pool_in_use` / `_size`           | gauge     | `@kernel/db-*`    | Utilization & saturation of the connection pool |
+| `kernel_db_query_duration_ms`               | histogram | `@kernel/db-*`    | Slow-query detection                            |
+| `kernel_cache_hits_total` / `_misses_total` | counter   | cache adapter     | Hit ratio                                       |
+| `kernel_queue_depth`                        | gauge     | queue adapter     | Saturation; backlog of jobs                     |
+| `kernel_storage_op_duration_ms`             | histogram | `@kernel/storage` | Upload/serve latency                            |
+| `kernel_storage_errors_total`               | counter   | `@kernel/storage` | Resource errors                                 |
 
 ```text
 RED (API layer)                    USE (adapters)
@@ -170,14 +170,14 @@ Ship the defaults, then customize. KernelCMS publishes a Grafana dashboard JSON 
 
 ### Dashboard rows
 
-| Row | Panels | Source |
-| --- | --- | --- |
-| Request health | rate, error ratio, p95/p99 latency per surface | RED |
-| Slowest operations | top-N by `collection`/`operation` | RED histogram |
-| Database | pool utilization, query p99, slow-query count | USE / db adapter |
-| Cache & queue | hit ratio, queue depth trend | USE |
-| Storage | op latency, error rate | USE / storage |
-| Traces | exemplar links from latency panels into Tempo | tracing |
+| Row                | Panels                                         | Source           |
+| ------------------ | ---------------------------------------------- | ---------------- |
+| Request health     | rate, error ratio, p95/p99 latency per surface | RED              |
+| Slowest operations | top-N by `collection`/`operation`              | RED histogram    |
+| Database           | pool utilization, query p99, slow-query count  | USE / db adapter |
+| Cache & queue      | hit ratio, queue depth trend                   | USE              |
+| Storage            | op latency, error rate                         | USE / storage    |
+| Traces             | exemplar links from latency panels into Tempo  | tracing          |
 
 ### Alert rules
 
@@ -195,7 +195,7 @@ groups:
         for: 5m
         labels: { severity: page }
         annotations:
-          summary: ">2% server errors on {{ $labels.surface }}"
+          summary: '>2% server errors on {{ $labels.surface }}'
 
       - alert: KernelLatencyP99
         expr: |
@@ -211,7 +211,7 @@ groups:
         for: 10m
         labels: { severity: ticket }
         annotations:
-          summary: "Postgres pool >90% utilized — raise pool size or shed load"
+          summary: 'Postgres pool >90% utilized — raise pool size or shed load'
 
       - alert: KernelQueueBacklog
         expr: kernel_queue_depth > 5000

@@ -46,7 +46,14 @@ export type { OAuthProvider, OAuthProfile } from './oauth'
 export { describeConfig } from './describe'
 export type { AdminSchema, AdminCollection, AdminGlobal, AdminField, AdminBlock, AdminFieldOption } from './describe'
 
-export { definePlugin, applyPlugins, orderPlugins, PluginConflictError, PluginCycleError, PluginSetupError } from './plugins'
+export {
+  definePlugin,
+  applyPlugins,
+  orderPlugins,
+  PluginConflictError,
+  PluginCycleError,
+  PluginSetupError,
+} from './plugins'
 export type { KernelPlugin, PluginContext, PluginExtensions } from './plugins'
 
 export { diffSchema, summarizePlan, EMPTY_SCHEMA } from './migrations'

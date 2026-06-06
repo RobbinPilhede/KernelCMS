@@ -1,6 +1,6 @@
 # Content Schema & Type Generation
 
-In KernelCMS, `kernel.config.ts` is the only thing you author. Everything downstream — the runtime validation schema, the database tables and migrations, the REST/GraphQL surface, and the TypeScript types you import in your editor — is *derived* from that config, never hand-maintained alongside it. This document specifies the compilation pipeline: how a collection definition becomes an internal schema (the IR), how that IR is projected onto Postgres/SQLite/MySQL/MongoDB tables via the Adapter contract, how it generates `.d.ts` output, and why we treat the config as one indivisible source of truth rather than three loosely-coupled ones.
+In KernelCMS, `kernel.config.ts` is the only thing you author. Everything downstream — the runtime validation schema, the database tables and migrations, the REST/GraphQL surface, and the TypeScript types you import in your editor — is _derived_ from that config, never hand-maintained alongside it. This document specifies the compilation pipeline: how a collection definition becomes an internal schema (the IR), how that IR is projected onto Postgres/SQLite/MySQL/MongoDB tables via the Adapter contract, how it generates `.d.ts` output, and why we treat the config as one indivisible source of truth rather than three loosely-coupled ones.
 
 ## The compilation pipeline
 
@@ -70,7 +70,7 @@ The resulting IR node is roughly:
 
 ```ts
 interface SchemaField {
-  path: string                 // 'seo.metaTitle'
+  path: string // 'seo.metaTitle'
   type: FieldType
   storage: 'column' | 'relation' | 'jsonb' | 'virtual'
   required: boolean
@@ -85,7 +85,7 @@ interface CollectionSchema {
   slug: string
   fields: SchemaField[]
   versions: VersionConfig
-  hash: string                 // stable digest of the normalized shape
+  hash: string // stable digest of the normalized shape
 }
 ```
 
@@ -95,19 +95,19 @@ That `hash` is the linchpin of the dev-time feedback loop: when it changes, Kern
 
 The IR is database-agnostic. Turning it into physical tables is the job of the active adapter, which implements the single `Adapter` contract regardless of engine. For SQL targets, `@kernel/db` builds a Drizzle schema from the IR; for MongoDB, `@kernel/db-mongodb` builds collection shapes and indexes. The mapping from field type to storage is fixed and predictable:
 
-| Field type | Postgres | SQLite | MySQL | MongoDB |
-| --- | --- | --- | --- | --- |
-| `text`, `email`, `slug` | `text` / `varchar` | `text` | `varchar(255)` | `string` |
-| `number` | `numeric` | `real` | `decimal` | `number` |
-| `boolean` | `boolean` | `integer` (0/1) | `tinyint(1)` | `bool` |
-| `date` | `timestamptz` | `text` (ISO) | `datetime` | `date` |
-| `json`, `code`, `richText` | `jsonb` | `text` (JSON) | `json` | embedded doc |
-| `point` | `geometry`/`point` | two `real` cols | `point` | GeoJSON |
-| `select`, `radio` | `text` + check | `text` | `enum` | `string` |
-| `relationship` (one) | FK column | FK column | FK column | `ObjectId` ref |
-| `relationship` (many) | junction table | junction table | junction table | array of refs |
-| `array`, `blocks` | child table | child table | child table | embedded array |
-| `upload` | FK to media | FK to media | FK to media | `ObjectId` ref |
+| Field type                 | Postgres           | SQLite          | MySQL          | MongoDB        |
+| -------------------------- | ------------------ | --------------- | -------------- | -------------- |
+| `text`, `email`, `slug`    | `text` / `varchar` | `text`          | `varchar(255)` | `string`       |
+| `number`                   | `numeric`          | `real`          | `decimal`      | `number`       |
+| `boolean`                  | `boolean`          | `integer` (0/1) | `tinyint(1)`   | `bool`         |
+| `date`                     | `timestamptz`      | `text` (ISO)    | `datetime`     | `date`         |
+| `json`, `code`, `richText` | `jsonb`            | `text` (JSON)   | `json`         | embedded doc   |
+| `point`                    | `geometry`/`point` | two `real` cols | `point`        | GeoJSON        |
+| `select`, `radio`          | `text` + check     | `text`          | `enum`         | `string`       |
+| `relationship` (one)       | FK column          | FK column       | FK column      | `ObjectId` ref |
+| `relationship` (many)      | junction table     | junction table  | junction table | array of refs  |
+| `array`, `blocks`          | child table        | child table     | child table    | embedded array |
+| `upload`                   | FK to media        | FK to media     | FK to media    | `ObjectId` ref |
 
 A few design decisions worth stating explicitly:
 
@@ -135,10 +135,10 @@ Type generation reads the same IR and emits a `.d.ts` barrel into `@kernel/clien
 // .kernel/types.ts  (generated — do not edit)
 export interface Post {
   id: string
-  title: string                          // required ⇒ non-optional
+  title: string // required ⇒ non-optional
   slug: string
-  status: 'draft' | 'published'          // select ⇒ union, not string
-  author: string | User                  // depth-dependent; resolved when populated
+  status: 'draft' | 'published' // select ⇒ union, not string
+  author: string | User // depth-dependent; resolved when populated
   tags: (string | Tag)[]
   hero?: string | Media
   body?: RichTextNode[]
@@ -156,7 +156,7 @@ export interface KernelCollections {
 }
 ```
 
-The generator encodes the rules that make the types *true*, not merely plausible:
+The generator encodes the rules that make the types _true_, not merely plausible:
 
 - `required: true` produces a non-optional property; everything else is optional, matching what the validation layer actually enforces.
 - `select`/`radio` options become string-literal unions, so a typo against an option is a compile error.

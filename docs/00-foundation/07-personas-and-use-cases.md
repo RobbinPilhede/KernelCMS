@@ -85,7 +85,7 @@ Field-level localization is first-class, so a Danish editor edits the `da` local
 { name: 'title', type: 'text', localized: true, required: true }
 ```
 
-Sanity's editorial UX is the bar here, and its real-time multiplayer editing is genuinely excellent. KernelCMS matches Sanity's polish on previews and command-palette speed while keeping the content in *your* database; TanStack DB powers optional live/offline reactive collections for the cases where editors need real-time co-presence. Strapi's editor is functional but plainer, and its draft/publish and i18n have historically been bolt-ons rather than core. Payload's admin is strong and the closest in spirit, but it is not virtualized to the same degree and not built on a shared TanStack data layer. WCAG 2.2 AA, full RTL, and dark mode are non-negotiable defaults, not settings an editor has to discover. See Admin Panel and [Localization](../02-data-modeling/09-localization-and-i18n.md).
+Sanity's editorial UX is the bar here, and its real-time multiplayer editing is genuinely excellent. KernelCMS matches Sanity's polish on previews and command-palette speed while keeping the content in _your_ database; TanStack DB powers optional live/offline reactive collections for the cases where editors need real-time co-presence. Strapi's editor is functional but plainer, and its draft/publish and i18n have historically been bolt-ons rather than core. Payload's admin is strong and the closest in spirit, but it is not virtualized to the same degree and not built on a shared TanStack data layer. WCAG 2.2 AA, full RTL, and dark mode are non-negotiable defaults, not settings an editor has to discover. See Admin Panel and [Localization](../02-data-modeling/09-localization-and-i18n.md).
 
 ## Agencies & Enterprise
 
@@ -99,12 +99,12 @@ An agency builds the same shape of site for many clients and wants to template t
 pnpm create kernel@latest acme-site --preset agency/marketing
 ```
 
-| Concern              | Agency need                          | KernelCMS answer                                  |
-| -------------------- | ------------------------------------ | ------------------------------------------------- |
-| Branding             | Per-client admin look                | White-label theming + design tokens               |
-| Repeatable builds    | One stack, many clients              | `create-kernel` presets, config-as-code in Git    |
-| Database freedom     | Client mandates Postgres / Mongo     | Swap `@kernel/db-postgres` ↔ `@kernel/db-mongodb` |
-| Handoff              | Client takes over hosting            | Self-host ↔ Cloud portability, no lock-in         |
+| Concern           | Agency need                      | KernelCMS answer                                  |
+| ----------------- | -------------------------------- | ------------------------------------------------- |
+| Branding          | Per-client admin look            | White-label theming + design tokens               |
+| Repeatable builds | One stack, many clients          | `create-kernel` presets, config-as-code in Git    |
+| Database freedom  | Client mandates Postgres / Mongo | Swap `@kernel/db-postgres` ↔ `@kernel/db-mongodb` |
+| Handoff           | Client takes over hosting        | Self-host ↔ Cloud portability, no lock-in         |
 
 ### The enterprise job
 
@@ -132,8 +132,10 @@ Speed and cost. They want SQLite locally and on the edge with `@kernel/db-sqlite
 ```ts
 import { sqlite } from '@kernel/db-sqlite'
 export default defineConfig({
-  db: sqlite({ url: 'file:./dev.db' }),     // libSQL/Turso later, same adapter
-  collections: [/* ... */],
+  db: sqlite({ url: 'file:./dev.db' }), // libSQL/Turso later, same adapter
+  collections: [
+    /* ... */
+  ],
 })
 ```
 
@@ -147,14 +149,14 @@ The startup advantage over the field is the **no-rewrite scale path**. Sanity is
 
 The personas map onto a handful of jobs that recur across every evaluation.
 
-| Use case                       | Lead persona      | KernelCMS surfaces used                            |
-| ------------------------------ | ----------------- | -------------------------------------------------- |
-| Marketing site / blog          | Developer + Editor| Collections, `richText`, live preview, REST/GraphQL|
-| Multi-locale corporate site    | Editor + Enterprise| Field localization, drafts, version history, RTL  |
-| Headless commerce content      | Developer         | Relationships, `blocks`, typed Local API, depth    |
-| App backend (mobile/web)       | Startup           | Typed RPC via server functions, `@kernel/client`   |
-| Multi-tenant SaaS content      | Agency + Enterprise| Document/field access control, Cloud multi-tenancy|
-| Documentation / knowledge base | Developer + Editor| `blocks`, search adapter, command-palette nav      |
+| Use case                       | Lead persona        | KernelCMS surfaces used                             |
+| ------------------------------ | ------------------- | --------------------------------------------------- |
+| Marketing site / blog          | Developer + Editor  | Collections, `richText`, live preview, REST/GraphQL |
+| Multi-locale corporate site    | Editor + Enterprise | Field localization, drafts, version history, RTL    |
+| Headless commerce content      | Developer           | Relationships, `blocks`, typed Local API, depth     |
+| App backend (mobile/web)       | Startup             | Typed RPC via server functions, `@kernel/client`    |
+| Multi-tenant SaaS content      | Agency + Enterprise | Document/field access control, Cloud multi-tenancy  |
+| Documentation / knowledge base | Developer + Editor  | `blocks`, search adapter, command-palette nav       |
 
 The connective tissue is the shared query language and the Local API. A marketing team's editor publishes a draft; the frontend reads it with one typed call; the same operation core that served the editor serves the request, so access control and validation can't be bypassed by hitting a different surface.
 

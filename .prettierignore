@@ -1,0 +1,9 @@
+**/dist/**
+**/node_modules/**
+pnpm-lock.yaml
+coverage/
+test-results/
+playwright-report/
+packages/server/src/admin-assets.generated.ts
+packages/create-kernel/template/
+*.svg

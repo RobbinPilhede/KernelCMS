@@ -1,6 +1,6 @@
 # The Adapter Pattern
 
-The adapter pattern is the single extensibility primitive that makes KernelCMS's "choose everything" promise real. Every infrastructure concern that a CMS normally hard-wires — the database, file storage, transactional email, authentication, search, cache, and the job queue — is expressed in KernelCMS as a narrow, versioned contract. A concrete implementation of that contract is an adapter. The core ships zero opinions about *which* implementation you use; it only knows the contract. This document specifies the contract shape, how adapters are registered and resolved at boot, the first-party adapters we ship, the rules for community adapters, and the philosophy that ties it together.
+The adapter pattern is the single extensibility primitive that makes KernelCMS's "choose everything" promise real. Every infrastructure concern that a CMS normally hard-wires — the database, file storage, transactional email, authentication, search, cache, and the job queue — is expressed in KernelCMS as a narrow, versioned contract. A concrete implementation of that contract is an adapter. The core ships zero opinions about _which_ implementation you use; it only knows the contract. This document specifies the contract shape, how adapters are registered and resolved at boot, the first-party adapters we ship, the rules for community adapters, and the philosophy that ties it together.
 
 ## Why adapters, not plugins-of-everything
 
@@ -32,21 +32,20 @@ An adapter contract is a TypeScript `interface` plus a factory signature. The co
 // @kernel/core/adapter
 export interface Adapter {
   /** Stable identifier, e.g. "db", "storage". Set by the contract, not the impl. */
-  readonly kind: AdapterKind;
+  readonly kind: AdapterKind
   /** Implementation name for logs and the admin "About" panel, e.g. "postgres". */
-  readonly name: string;
+  readonly name: string
   /** Contract version this adapter implements. Checked at resolution. */
-  readonly contractVersion: `${number}.${number}`;
+  readonly contractVersion: `${number}.${number}`
   /** Called once during boot, after config is frozen. */
-  init(ctx: AdapterContext): Promise<void>;
+  init(ctx: AdapterContext): Promise<void>
   /** Liveness probe for /health and the admin status page. */
-  health(): Promise<HealthStatus>;
+  health(): Promise<HealthStatus>
   /** Graceful shutdown: drain pools, flush buffers, close sockets. */
-  destroy(): Promise<void>;
+  destroy(): Promise<void>
 }
 
-export type AdapterKind =
-  | "db" | "storage" | "auth" | "email" | "search" | "cache" | "queue";
+export type AdapterKind = 'db' | 'storage' | 'auth' | 'email' | 'search' | 'cache' | 'queue'
 ```
 
 A concrete contract narrows `kind` and adds the operations the core depends on. The database contract is the largest, because it carries the entire persistence surface:
@@ -54,19 +53,19 @@ A concrete contract narrows `kind` and adds the operations the core depends on. 
 ```ts
 // @kernel/db
 export interface DatabaseAdapter extends Adapter {
-  readonly kind: "db";
+  readonly kind: 'db'
   /** Translate a parsed query (where/sort/pagination/depth) into a result set. */
-  find<T>(args: FindArgs): Promise<PaginatedResult<T>>;
-  findByID<T>(args: FindByIDArgs): Promise<T | null>;
-  create<T>(args: CreateArgs): Promise<T>;
-  update<T>(args: UpdateArgs): Promise<T>;
-  delete<T>(args: DeleteArgs): Promise<T>;
+  find<T>(args: FindArgs): Promise<PaginatedResult<T>>
+  findByID<T>(args: FindByIDArgs): Promise<T | null>
+  create<T>(args: CreateArgs): Promise<T>
+  update<T>(args: UpdateArgs): Promise<T>
+  delete<T>(args: DeleteArgs): Promise<T>
   /** Run fn inside a transaction; nested calls join the ambient tx. */
-  transaction<R>(fn: (tx: TransactionScope) => Promise<R>): Promise<R>;
+  transaction<R>(fn: (tx: TransactionScope) => Promise<R>): Promise<R>
   /** Diff config schema against the live schema; emit a migration plan. */
-  buildMigration(schema: KernelSchema): Promise<MigrationPlan>;
+  buildMigration(schema: KernelSchema): Promise<MigrationPlan>
   /** Capabilities the core branches on (see below). */
-  readonly capabilities: DatabaseCapabilities;
+  readonly capabilities: DatabaseCapabilities
 }
 ```
 
@@ -76,23 +75,23 @@ Not every backend can do everything. Postgres has native JSON containment operat
 
 ```ts
 export interface DatabaseCapabilities {
-  transactions: boolean;
-  joins: "native" | "application";   // SQL joins vs. depth-resolution in core
-  jsonQuery: boolean;                 // can it filter inside JSON columns?
-  fullTextSearch: boolean;           // used by the Postgres FTS search adapter
-  returning: boolean;                // RETURNING clause support
+  transactions: boolean
+  joins: 'native' | 'application' // SQL joins vs. depth-resolution in core
+  jsonQuery: boolean // can it filter inside JSON columns?
+  fullTextSearch: boolean // used by the Postgres FTS search adapter
+  returning: boolean // RETURNING clause support
 }
 ```
 
-| Contract | Package | Core methods | Notable capability flags |
-|---|---|---|---|
-| `DatabaseAdapter` | `@kernel/db` | find / create / update / delete / transaction / buildMigration | transactions, joins, jsonQuery |
-| `StorageAdapter` | `@kernel/storage` | put / get / delete / getSignedURL / stat | signedUploads, rangeRequests |
-| `AuthAdapter` | `@kernel/auth` | verify / issueSession / revoke / strategies | mfa, oauthProviders |
-| `EmailAdapter` | `@kernel/email` | send / sendBatch | templates, scheduling |
-| `SearchAdapter` | `@kernel/search` | index / query / removeFromIndex | facets, typoTolerance |
-| `CacheAdapter` | `@kernel/cache` | get / set / delete / wrap | ttl, tagInvalidation |
-| `QueueAdapter` | `@kernel/queue` | enqueue / process / schedule | delayedJobs, retries |
+| Contract          | Package           | Core methods                                                   | Notable capability flags       |
+| ----------------- | ----------------- | -------------------------------------------------------------- | ------------------------------ |
+| `DatabaseAdapter` | `@kernel/db`      | find / create / update / delete / transaction / buildMigration | transactions, joins, jsonQuery |
+| `StorageAdapter`  | `@kernel/storage` | put / get / delete / getSignedURL / stat                       | signedUploads, rangeRequests   |
+| `AuthAdapter`     | `@kernel/auth`    | verify / issueSession / revoke / strategies                    | mfa, oauthProviders            |
+| `EmailAdapter`    | `@kernel/email`   | send / sendBatch                                               | templates, scheduling          |
+| `SearchAdapter`   | `@kernel/search`  | index / query / removeFromIndex                                | facets, typoTolerance          |
+| `CacheAdapter`    | `@kernel/cache`   | get / set / delete / wrap                                      | ttl, tagInvalidation           |
+| `QueueAdapter`    | `@kernel/queue`   | enqueue / process / schedule                                   | delayedJobs, retries           |
 
 ### Versioning the contract
 
@@ -100,29 +99,29 @@ export interface DatabaseCapabilities {
 
 ## The adapter registry and resolution
 
-Adapters are not imported by the core. They are *provided* in `kernel.config.ts` and resolved by a registry at boot. The config takes adapter *factories* — not instances — so the registry controls construction order, injects the shared `AdapterContext` (logger, config, secrets, the resolved sibling adapters), and owns the lifecycle.
+Adapters are not imported by the core. They are _provided_ in `kernel.config.ts` and resolved by a registry at boot. The config takes adapter _factories_ — not instances — so the registry controls construction order, injects the shared `AdapterContext` (logger, config, secrets, the resolved sibling adapters), and owns the lifecycle.
 
 ```ts
 // kernel.config.ts
-import { defineConfig } from "@kernel/core";
-import { postgres } from "@kernel/db-postgres";
-import { s3 } from "@kernel/storage";
-import { betterAuth } from "@kernel/auth";
-import { resend } from "@kernel/email";
-import { redis } from "@kernel/cache";
+import { defineConfig } from '@kernel/core'
+import { postgres } from '@kernel/db-postgres'
+import { s3 } from '@kernel/storage'
+import { betterAuth } from '@kernel/auth'
+import { resend } from '@kernel/email'
+import { redis } from '@kernel/cache'
 
 export default defineConfig({
   adapters: {
     db: postgres({ url: process.env.DATABASE_URL! }),
-    storage: s3({ bucket: "media", region: "eu-west-1" }),
-    auth: betterAuth({ providers: ["github", "credentials"] }),
+    storage: s3({ bucket: 'media', region: 'eu-west-1' }),
+    auth: betterAuth({ providers: ['github', 'credentials'] }),
     email: resend({ apiKey: process.env.RESEND_KEY! }),
     cache: redis({ url: process.env.REDIS_URL! }),
     // search and queue omitted -> sensible defaults selected
   },
   collections: [Posts, Media, Users],
   globals: [SiteSettings],
-});
+})
 ```
 
 Resolution proceeds in a deterministic order so dependencies are always available when an adapter's `init` runs:
@@ -149,12 +148,12 @@ The registry is exposed to the core and to plugins as a typed accessor. There is
 ```ts
 // inside an operation in @kernel/core
 const result = await ctx.adapters.db.find<Post>({
-  collection: "posts",
-  where: { status: { equals: "published" } },
-  sort: ["-publishedAt"],
+  collection: 'posts',
+  where: { status: { equals: 'published' } },
+  sort: ['-publishedAt'],
   limit: 20,
   depth: 1,
-});
+})
 ```
 
 ### Defaults and zero-config
@@ -165,16 +164,16 @@ If you omit an adapter, the registry selects a default appropriate to the runtim
 
 These are maintained in the monorepo, versioned in lockstep with `@kernel/core`, and covered by the shared adapter conformance suite (see Testing Adapters).
 
-| Concern | Package(s) | Implementations |
-|---|---|---|
-| Database (SQL) | `@kernel/db-postgres`, `@kernel/db-sqlite`, `@kernel/db-mysql` | Drizzle on Postgres (default), SQLite/libSQL, MySQL |
-| Database (document) | `@kernel/db-mongodb` | MongoDB native driver |
-| Storage | `@kernel/storage` | Local disk, S3, Cloudflare R2, Google Cloud Storage |
-| Auth | `@kernel/auth` | Credentials, OIDC, OAuth (GitHub/Google), API keys |
-| Email | `@kernel/email` | Resend, AWS SES, SMTP, console (dev) |
-| Search | `@kernel/search` | Postgres FTS, Typesense, Meilisearch |
-| Cache | `@kernel/cache` | Memory, Redis |
-| Queue | `@kernel/queue` | Memory, Redis/BullMQ, SQS |
+| Concern             | Package(s)                                                     | Implementations                                     |
+| ------------------- | -------------------------------------------------------------- | --------------------------------------------------- |
+| Database (SQL)      | `@kernel/db-postgres`, `@kernel/db-sqlite`, `@kernel/db-mysql` | Drizzle on Postgres (default), SQLite/libSQL, MySQL |
+| Database (document) | `@kernel/db-mongodb`                                           | MongoDB native driver                               |
+| Storage             | `@kernel/storage`                                              | Local disk, S3, Cloudflare R2, Google Cloud Storage |
+| Auth                | `@kernel/auth`                                                 | Credentials, OIDC, OAuth (GitHub/Google), API keys  |
+| Email               | `@kernel/email`                                                | Resend, AWS SES, SMTP, console (dev)                |
+| Search              | `@kernel/search`                                               | Postgres FTS, Typesense, Meilisearch                |
+| Cache               | `@kernel/cache`                                                | Memory, Redis                                       |
+| Queue               | `@kernel/queue`                                                | Memory, Redis/BullMQ, SQS                           |
 
 The three SQL database adapters share a Drizzle-based core (schema generation, migration diffing) and differ only where the dialects diverge — `RETURNING`, JSON operators, upsert syntax. The MongoDB adapter implements the same `DatabaseAdapter` contract but sets `joins: "application"`, which tells `@kernel/core` to resolve relationship `depth` in-process rather than emitting SQL joins. The content config does not change; only the adapter does.
 
@@ -188,15 +187,15 @@ The contract is public and stable, so anyone can publish an adapter to npm. Ther
 
 ```ts
 // kernel.config.ts using a community adapter
-import { backblaze } from "kernel-storage-backblaze"; // third-party
+import { backblaze } from 'kernel-storage-backblaze' // third-party
 
 export default defineConfig({
   adapters: {
     db: postgres({ url: process.env.DATABASE_URL! }),
-    storage: backblaze({ keyId: "...", appKey: "..." }),
+    storage: backblaze({ keyId: '...', appKey: '...' }),
   },
   // ...
-});
+})
 ```
 
 We publish `@kernel/adapter-conformance`, a runnable test kit per contract. An adapter that passes it behaves identically to a first-party one from the core's perspective — same query semantics, same transaction guarantees, same error shapes. Adapters that pass and opt in are listed in a community registry, but listing is discovery, not a runtime dependency. The `kernel doctor` command runs the conformance suite against your configured adapters and warns on capability gaps (e.g. a search adapter without `facets` when a collection's admin config requests faceted filtering).

@@ -1,0 +1,24 @@
+# One-command self-host of the KernelCMS example.
+#
+#   KERNEL_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))") docker compose up --build
+#
+# Then open http://localhost:3000/admin
+#
+# The example uses SQLite (persisted in the named volume below). To run against
+# PostgreSQL instead, point your app's config at the Postgres adapter and set
+# KERNEL_DB_URL to a postgres:// URL.
+
+services:
+  kernelcms:
+    build: .
+    ports:
+      - '3000:3000'
+    environment:
+      KERNEL_SECRET: ${KERNEL_SECRET:?set KERNEL_SECRET (see .env.example)}
+      KERNEL_LOG_LEVEL: info
+    volumes:
+      - kernel-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  kernel-data:
