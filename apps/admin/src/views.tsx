@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router'
-import { motion } from 'framer-motion'
-import { itemVariants, listContainer, navSpring, pageVariants } from './motion'
+import { AnimatePresence, motion } from 'framer-motion'
+import { EASE, EASE_OUT, itemVariants, listContainer, navSpring, pageVariants } from './motion'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table'
 import type { ColumnDef } from '@tanstack/react-table'
@@ -22,7 +22,15 @@ import {
   uploadFile,
   verifyEmail,
 } from './api'
-import type { AdminCollection, AdminFieldMeta, Doc, FieldErrorDetail, VersionEntry, WhereClause } from './api'
+import type {
+  AdminCollection,
+  AdminFieldMeta,
+  Doc,
+  FieldErrorDetail,
+  SetupRuntime,
+  VersionEntry,
+  WhereClause,
+} from './api'
 import { useAuth } from './auth'
 import { useCollection, useGlobal, useSchema } from './schema'
 import { FieldInput, stripRowKeys, withRowKeys } from './fields'
@@ -383,15 +391,182 @@ export function Login() {
   )
 }
 
+// ---------------------------------------------------------------------------
+// First-run welcome wizard
+// ---------------------------------------------------------------------------
+
+/** Prepared prompts the operator can paste into their AI coding assistant (Claude,
+ *  Cursor, Copilot, …) inside their project. The point: someone who isn't a backend
+ *  expert can hand one of these to their agent and have the work done for them. */
+interface AiPrompt {
+  id: string
+  title: string
+  blurb: string
+  prompt: string
+}
+
+const AI_PROMPTS: AiPrompt[] = [
+  {
+    id: 'postgres',
+    title: 'Connect a PostgreSQL database',
+    blurb: 'Move from the local file database to a real one for production.',
+    prompt: `I'm using KernelCMS, a TypeScript headless CMS configured in a file called kernel.config.ts.
+Right now it uses the built-in SQLite database and I want to switch to PostgreSQL.
+
+Please walk me through it in plain language and tell me exactly what to paste where:
+1. If I don't already have a Postgres database, recommend a free option (Neon, Supabase,
+   or a local one with Docker) and give me click-by-click steps to create it.
+2. Save the connection string in a .env file as DATABASE_URL, and make sure .env is in
+   .gitignore so the secret is never committed.
+3. In kernel.config.ts, swap the SQLite adapter for the Postgres one:
+       import { postgresAdapter } from 'kernelcms/postgres'
+       // ...
+       db: postgresAdapter({ url: process.env.DATABASE_URL }),
+4. Run "npx kernel migrate" to create the tables, then "npx kernel dev" to start.
+Check each step worked before moving to the next, and explain what each command does.`,
+  },
+  {
+    id: 'secret',
+    title: 'Set a secure production secret',
+    blurb: 'Replace the development secret before you deploy.',
+    prompt: `I'm using KernelCMS. It signs login sessions with a secret, and right now it's using an
+insecure development default. Please:
+1. Generate a strong random secret for me.
+2. Add it to my .env file as KERNEL_SECRET, and make sure .env is gitignored.
+3. Confirm kernel.config.ts reads it, e.g. secret: process.env.KERNEL_SECRET.
+Don't repeat the secret value back in the chat beyond putting it in the .env file.`,
+  },
+  {
+    id: 'storage',
+    title: 'Store uploads in the cloud',
+    blurb: 'Send images and files to S3 or Cloudflare R2 instead of local disk.',
+    prompt: `I'm using KernelCMS and want uploaded files (images, documents) stored in object storage
+instead of on local disk. I'd like to use Cloudflare R2 (or AWS S3). Please:
+1. Give me step-by-step instructions to create a bucket and access keys.
+2. Add the keys to my .env file (and confirm .env is gitignored).
+3. Configure storage in kernel.config.ts using the S3/R2 adapter from "kernelcms/storage",
+   reading the keys from process.env.
+Explain everything simply and tell me exactly what to paste and where.`,
+  },
+]
+
+function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    } catch {
+      setCopied(false)
+    }
+  }
+  return (
+    <button type="button" className={`wz-copy${copied ? ' copied' : ''}`} onClick={copy} aria-live="polite">
+      {copied ? 'Copied ✓' : label}
+    </button>
+  )
+}
+
+function PromptCard({ p }: { p: AiPrompt }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <motion.div className={`wz-prompt${open ? ' open' : ''}`} variants={itemVariants}>
+      <button type="button" className="wz-prompt-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="wz-prompt-text">
+          <span className="wz-prompt-title">{p.title}</span>
+          <span className="wz-prompt-blurb">{p.blurb}</span>
+        </span>
+        <span className="wz-chev" aria-hidden>
+          ›
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            className="wz-prompt-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.24, ease: EASE_OUT }}
+          >
+            <div className="wz-prompt-inner">
+              <p className="wz-prompt-hint">Paste this to your AI assistant:</p>
+              <pre className="wz-code">{p.prompt}</pre>
+              <CopyButton text={p.prompt} label="Copy prompt" />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
+interface RuntimeCard {
+  tone: 'ok' | 'info' | 'warn'
+  title: string
+  body: string
+}
+
+function runtimeCards(rt: SetupRuntime | null): RuntimeCard[] {
+  if (!rt) return []
+  const cards: RuntimeCard[] = []
+  if (rt.db === 'sqlite') {
+    cards.push({
+      tone: 'info',
+      title: 'Running on SQLite',
+      body: 'A built-in, zero-setup database saved to a local file. Perfect while you build, and ready to swap for Postgres when you go live.',
+    })
+  } else if (rt.db === 'postgres') {
+    cards.push({
+      tone: 'ok',
+      title: 'Connected to PostgreSQL',
+      body: 'Your content lives in a production-grade database.',
+    })
+  } else {
+    cards.push({ tone: 'ok', title: `Database: ${rt.db}`, body: 'Your database adapter is connected.' })
+  }
+  cards.push(
+    rt.secretSet
+      ? { tone: 'ok', title: 'Signing secret set', body: 'Login sessions are signed with your own secret.' }
+      : {
+          tone: 'warn',
+          title: 'Using a development secret',
+          body: 'Fine for local work. Set a real KERNEL_SECRET before you deploy. There is a copy-paste prompt for that in a moment.',
+        },
+  )
+  cards.push(
+    rt.storage
+      ? { tone: 'ok', title: 'File storage ready', body: 'Uploads are saved to your configured storage.' }
+      : {
+          tone: 'info',
+          title: 'Local file storage',
+          body: 'Uploads save to disk for now. Add S3 or Cloudflare R2 when you deploy.',
+        },
+  )
+  return cards
+}
+
+const TONE_MARK: Record<RuntimeCard['tone'], string> = { ok: '✓', info: '•', warn: '!' }
+
+const stepVariants = {
+  initial: { opacity: 0, y: 16 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.34, ease: EASE } },
+  exit: { opacity: 0, y: -12, transition: { duration: 0.2, ease: EASE_OUT } },
+}
+
 export function Setup() {
-  const { signUp } = useAuth()
+  const { signUp, completeSetup, runtime } = useAuth()
+  const [step, setStep] = useState<0 | 1 | 2>(0)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const submit = async (e: React.FormEvent) => {
+  const cards = runtimeCards(runtime)
+
+  const createAccount = async (e: React.FormEvent) => {
     e.preventDefault()
     if (password !== confirm) {
       setError('Passwords do not match.')
@@ -405,6 +580,7 @@ export function Setup() {
     setError(null)
     try {
       await signUp(email, password)
+      setStep(2)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed.')
     } finally {
@@ -412,46 +588,150 @@ export function Setup() {
     }
   }
 
+  const enterDashboard = async () => {
+    setBusy(true)
+    try {
+      await completeSetup()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className="login">
+    <div className="login wz">
       <LoginBackdrop />
-      <form className="login-card" onSubmit={submit}>
-        <div className="login-head">
-          <Logo />
-          <h1>Create admin account</h1>
-          <p className="muted">Set up the first administrator to get started.</p>
+      <div className="wz-card">
+        <div className="wz-rail" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <span key={i} className={`wz-dot${i === step ? ' active' : ''}${i < step ? ' done' : ''}`} />
+          ))}
         </div>
-        {error && <div className="alert">{error}</div>}
-        <label>
-          Email
-          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <label>
-          Password
-          <input
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Confirm password
-          <input
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            required
-          />
-        </label>
-        <button className="btn primary" type="submit" disabled={busy}>
-          {busy ? 'Creating…' : 'Create account'}
-        </button>
-      </form>
+
+        <AnimatePresence mode="wait">
+          {step === 0 && (
+            <motion.div
+              key="welcome"
+              className="wz-step"
+              variants={stepVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <div className="wz-head">
+                <Logo />
+                <h1>Welcome to KernelCMS</h1>
+                <p className="muted">It's already running. Here's how it's set up right now.</p>
+              </div>
+              <motion.div className="wz-cards" variants={listContainer} initial="initial" animate="animate">
+                {cards.map((c, i) => (
+                  <motion.div key={i} className={`wz-status wz-${c.tone}`} variants={itemVariants}>
+                    <span className="wz-status-mark" aria-hidden>
+                      {TONE_MARK[c.tone]}
+                    </span>
+                    <span className="wz-status-text">
+                      <span className="wz-status-title">{c.title}</span>
+                      <span className="wz-status-body">{c.body}</span>
+                    </span>
+                  </motion.div>
+                ))}
+              </motion.div>
+              <button className="btn primary wz-next" type="button" onClick={() => setStep(1)}>
+                Create your account →
+              </button>
+              <div className="wz-foot">
+                <ThemeToggle />
+              </div>
+            </motion.div>
+          )}
+
+          {step === 1 && (
+            <motion.div
+              key="account"
+              className="wz-step"
+              variants={stepVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <div className="wz-head">
+                <Logo />
+                <h1>Create your account</h1>
+                <p className="muted">This first account is the owner. You can add teammates later.</p>
+              </div>
+              <form className="wz-form" onSubmit={createAccount}>
+                {error && <div className="alert">{error}</div>}
+                <label>
+                  Email
+                  <input
+                    className="input"
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    className="input"
+                    type="password"
+                    autoComplete="new-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Confirm password
+                  <input
+                    className="input"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                    required
+                  />
+                </label>
+                <button className="btn primary" type="submit" disabled={busy}>
+                  {busy ? 'Creating…' : 'Create account'}
+                </button>
+                <button type="button" className="link-btn" onClick={() => setStep(0)} disabled={busy}>
+                  ← Back
+                </button>
+              </form>
+            </motion.div>
+          )}
+
+          {step === 2 && (
+            <motion.div
+              key="next"
+              className="wz-step"
+              variants={stepVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <div className="wz-head">
+                <Logo />
+                <h1>You're all set</h1>
+                <p className="muted">
+                  A few optional next steps. Not sure how? Copy a prompt and paste it to your AI assistant (Claude,
+                  Cursor, Copilot, anything) inside your project, and it'll do the work for you.
+                </p>
+              </div>
+              <motion.div className="wz-prompts" variants={listContainer} initial="initial" animate="animate">
+                {AI_PROMPTS.map((p) => (
+                  <PromptCard key={p.id} p={p} />
+                ))}
+              </motion.div>
+              <button className="btn primary wz-next" type="button" onClick={enterDashboard} disabled={busy}>
+                {busy ? 'Opening…' : 'Enter your dashboard →'}
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   )
 }
@@ -950,7 +1230,7 @@ export function Dashboard() {
       <motion.header className="dash-hero" variants={itemVariants} initial="initial" animate="animate">
         <p className="dash-eyebrow">{timeGreeting()}</p>
         <h1 className="dash-title">Welcome back{name && <>, {name}</>}</h1>
-        <p className="dash-sub">Here's everything in your workspace — pick a collection to start editing.</p>
+        <p className="dash-sub">Here's everything in your workspace. Pick a collection to start editing.</p>
       </motion.header>
 
       <motion.div className="dash-grid" variants={listContainer} initial="initial" animate="animate">
@@ -1069,7 +1349,7 @@ function MediaLibrary({ slug, collection }: { slug: string; collection: AdminCol
       {isLoading ? (
         <div className="muted">Loading…</div>
       ) : docs.length === 0 ? (
-        <div className="muted">No media yet — drop a file above to get started.</div>
+        <div className="muted">No media yet. Drop a file above to get started.</div>
       ) : (
         <motion.div className="media-grid" variants={listContainer} initial="initial" animate="animate">
           {docs.map((d) => {
@@ -1759,11 +2039,11 @@ export function EditView() {
       {saveError && <div className="alert">{saveError}</div>}
       {errors.length > 0 && (
         <div className="alert">
-          <strong>Couldn’t save — please fix:</strong>
+          <strong>Couldn’t save. Please fix:</strong>
           <ul className="err-list">
             {errors.map((e, i) => (
               <li key={i}>
-                <span className="err-path">{friendlyPath(e.path)}</span> — {e.message}
+                <span className="err-path">{friendlyPath(e.path)}</span>: {e.message}
               </li>
             ))}
           </ul>

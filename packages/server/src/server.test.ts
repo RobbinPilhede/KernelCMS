@@ -112,8 +112,14 @@ describe('built-in admin', () => {
     const before = (await (await handler(new Request('http://localhost/api/_admin/status'))).json()) as {
       needsSetup: boolean
       authCollection: string | null
+      runtime?: { db: string; secretSet: boolean; storage: boolean; node: string; version: string }
     }
-    expect(before).toEqual({ needsSetup: true, authCollection: 'users' })
+    expect(before.needsSetup).toBe(true)
+    expect(before.authCollection).toBe('users')
+    // First-run window surfaces non-sensitive runtime facts for the welcome screen.
+    expect(before.runtime?.db).toBe('sqlite')
+    expect(typeof before.runtime?.secretSet).toBe('boolean')
+    expect(before.runtime?.version).toBeTypeOf('string')
 
     const setup = await handler(
       new Request('http://localhost/api/_admin/setup', {
@@ -129,8 +135,11 @@ describe('built-in admin', () => {
 
     const after = (await (await handler(new Request('http://localhost/api/_admin/status'))).json()) as {
       needsSetup: boolean
+      runtime?: unknown
     }
     expect(after.needsSetup).toBe(false)
+    // Runtime facts must NOT leak once setup is complete (only first-run exposes them).
+    expect(after.runtime).toBeUndefined()
   })
 
   it('refuses a second setup once an admin exists (takeover guard)', async () => {

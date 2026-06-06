@@ -189,9 +189,22 @@ const localeQS = (sep: '?' | '&'): string => (activeLocale ? `${sep}locale=${enc
 
 export const fetchSchema = (): Promise<AdminSchema> => req('GET', '/_config')
 
+export interface SetupRuntime {
+  db: string
+  secretSet: boolean
+  storage: boolean
+  email: boolean
+  collections: number
+  node: string
+  version: string
+  graphql: boolean
+}
+
 export interface AdminStatus {
   needsSetup: boolean
   authCollection: string | null
+  /** Present only during first-run setup. */
+  runtime?: SetupRuntime
 }
 
 export const adminStatus = (): Promise<AdminStatus> => req('GET', '/_admin/status')

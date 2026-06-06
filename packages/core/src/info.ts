@@ -4,9 +4,46 @@
  * purely from the resolved config. Powers `kernel info` and the `/` API descriptor.
  */
 import type { Kernel } from './types'
+import { DEV_SECRET, JOBS_SLUG } from './config'
 
 /** Published engine version. Bump in lockstep with the `kernelcms` package. */
 export const KERNEL_VERSION = '0.2.1'
+
+/**
+ * Non-sensitive runtime facts for the first-run welcome screen. Deliberately only
+ * booleans / enums / counts — never paths, connection strings, or secret values —
+ * so it is safe to surface to the local operator during first-run setup.
+ */
+export interface SetupRuntime {
+  /** Database adapter in use, e.g. 'sqlite' or 'postgres'. */
+  db: string
+  /** A real signing secret is configured (not the public development default). */
+  secretSet: boolean
+  /** A storage adapter is configured (uploads persist somewhere durable). */
+  storage: boolean
+  /** An email adapter is configured (password reset / verification can send mail). */
+  email: boolean
+  /** Number of content collections the user defined (excludes system collections). */
+  collections: number
+  /** Node.js version the server is running on. */
+  node: string
+  /** KernelCMS engine version. */
+  version: string
+}
+
+export function setupRuntime(kernel: Kernel): SetupRuntime {
+  const cfg = kernel.config
+  const dbName = (cfg.db as { name?: string }).name ?? 'unknown'
+  return {
+    db: dbName,
+    secretSet: cfg.secret !== DEV_SECRET,
+    storage: Boolean(cfg.storage),
+    email: Boolean(cfg.email),
+    collections: cfg.collections.filter((c) => c.slug !== JOBS_SLUG).length,
+    node: typeof process !== 'undefined' && process.version ? process.version : '',
+    version: KERNEL_VERSION,
+  }
+}
 
 export interface CollectionInfo {
   slug: string

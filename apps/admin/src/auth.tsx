@@ -1,15 +1,21 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { adminStatus, getToken, login as apiLogin, logout as apiLogout, me, setupAdmin } from './api'
-import type { AdminSchema, Doc } from './api'
+import type { AdminSchema, Doc, SetupRuntime } from './api'
 
 interface AuthContextValue {
   user: Doc | null
   loading: boolean
   authSlug: string | null
   needsSetup: boolean
+  /** Non-sensitive runtime facts, available during first-run setup. */
+  runtime: SetupRuntime | null
   signIn: (email: string, password: string) => Promise<void>
+  /** Create the first admin account (stores the session) but keep the welcome
+   *  wizard in control so it can show the post-setup steps. */
   signUp: (email: string, password: string) => Promise<void>
+  /** Finish the welcome wizard and enter the dashboard. */
+  completeSetup: () => Promise<void>
   signOut: () => void
 }
 
@@ -26,13 +32,17 @@ export function AuthProvider({ schema, children }: { schema: AdminSchema; childr
   const [user, setUser] = useState<Doc | null>(null)
   const [loading, setLoading] = useState(true)
   const [needsSetup, setNeedsSetup] = useState(false)
+  const [runtime, setRuntime] = useState<SetupRuntime | null>(null)
 
   useEffect(() => {
     let active = true
     void (async () => {
       try {
         const status = await adminStatus()
-        if (active) setNeedsSetup(status.needsSetup)
+        if (active) {
+          setNeedsSetup(status.needsSetup)
+          setRuntime(status.runtime ?? null)
+        }
         if (!status.needsSetup && authSlug && getToken()) {
           const result = await me(authSlug)
           if (active) setUser(result.user)
@@ -56,8 +66,23 @@ export function AuthProvider({ schema, children }: { schema: AdminSchema; childr
   }
 
   const signUp = async (email: string, password: string): Promise<void> => {
-    const result = await setupAdmin(email, password)
-    setUser(result.user)
+    // Creates the admin and stores the session token. We deliberately do NOT set
+    // `user` yet — the welcome wizard stays mounted to show its final step until
+    // the operator chooses to enter the dashboard via `completeSetup`.
+    await setupAdmin(email, password)
+  }
+
+  const completeSetup = async (): Promise<void> => {
+    if (authSlug) {
+      try {
+        const result = await me(authSlug)
+        setUser(result.user)
+      } catch {
+        // Fall back to a reload if the session lookup hiccups.
+        window.location.reload()
+        return
+      }
+    }
     setNeedsSetup(false)
   }
 
@@ -67,7 +92,9 @@ export function AuthProvider({ schema, children }: { schema: AdminSchema; childr
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, authSlug, needsSetup, signIn, signUp, signOut }}>
+    <AuthContext.Provider
+      value={{ user, loading, authSlug, needsSetup, runtime, signIn, signUp, completeSetup, signOut }}
+    >
       {children}
     </AuthContext.Provider>
   )

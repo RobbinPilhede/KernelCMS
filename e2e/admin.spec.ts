@@ -12,20 +12,24 @@ const PNG_BYTES = Buffer.from(
 
 async function ensureSignedIn(page: Page) {
   await page.goto('/admin')
-  // The setup screen offers "Create account"; the (logo-only) login screen offers
-  // "Sign in". Detect by the submit button rather than a heading, since the login
-  // screen is intentionally heading-less.
+  // First run shows the welcome wizard (step 0 → "Create your account →"); a
+  // returning visit shows the logo-only login screen ("Sign in"). Detect by the
+  // step-0 button, falling back to login.
   if (
     await page
-      .getByRole('button', { name: 'Create account' })
+      .getByRole('button', { name: /Create your account/ })
       .isVisible()
       .catch(() => false)
   ) {
+    // Step 0 → account form.
+    await page.getByRole('button', { name: /Create your account/ }).click()
     await page.getByRole('textbox', { name: 'Email' }).fill('admin@e2e.test')
     const pwds = page.locator('input[type="password"]')
     await pwds.nth(0).fill('supersecret123')
     await pwds.nth(1).fill('supersecret123')
     await page.getByRole('button', { name: 'Create account' }).click()
+    // Step 2 → enter the dashboard.
+    await page.getByRole('button', { name: /Enter your dashboard/ }).click()
   } else if (
     await page
       .getByRole('button', { name: 'Sign in' })
@@ -39,8 +43,29 @@ async function ensureSignedIn(page: Page) {
   await expect(page.getByRole('link', { name: 'Pages', exact: true })).toBeVisible()
 }
 
-test('first-run setup creates the admin and lands in the panel', async ({ page }) => {
-  await ensureSignedIn(page)
+test('first-run welcome wizard explains the runtime, creates the admin, and offers AI prompts', async ({ page }) => {
+  await page.goto('/admin')
+  // Step 0 — welcome + honest "how it's running" status.
+  await expect(page.getByRole('heading', { name: /Welcome to KernelCMS/ })).toBeVisible()
+  await expect(page.getByText(/Running on SQLite/)).toBeVisible()
+  await page.getByRole('button', { name: /Create your account/ }).click()
+
+  // Step 1 — create the owner account.
+  await page.getByRole('textbox', { name: 'Email' }).fill('admin@e2e.test')
+  const pwds = page.locator('input[type="password"]')
+  await pwds.nth(0).fill('supersecret123')
+  await pwds.nth(1).fill('supersecret123')
+  await page.getByRole('button', { name: 'Create account' }).click()
+
+  // Step 2 — copy-paste AI prompts (the Postgres one is expandable + copyable).
+  await expect(page.getByRole('heading', { name: /You're all set/ })).toBeVisible()
+  const postgres = page.getByRole('button', { name: /Connect a PostgreSQL database/ })
+  await expect(postgres).toBeVisible()
+  await postgres.click()
+  await expect(page.getByRole('button', { name: 'Copy prompt' }).first()).toBeVisible()
+
+  await page.getByRole('button', { name: /Enter your dashboard/ }).click()
+  await expect(page.getByRole('link', { name: 'Pages', exact: true })).toBeVisible()
   await expect(page.locator('.sidebar .logo-word')).toHaveText('KernelCMS')
 })
 

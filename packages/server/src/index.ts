@@ -15,6 +15,7 @@ import {
   UnauthorizedError,
   describeConfig,
   isKernelError,
+  setupRuntime,
 } from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
 import { ADMIN_HTML } from './admin-assets.generated'
@@ -298,9 +299,19 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   if (segments[0] === '_admin') {
     const slug = authCollectionSlug(kernel)
 
-    // GET /_admin/status -> is first-run setup needed? (public, leaks nothing)
+    // GET /_admin/status -> is first-run setup needed? Returns non-sensitive
+    // runtime facts (db kind, secret-set, storage/email booleans) ONLY during the
+    // first-run window so the welcome screen can explain how the instance is
+    // running. Once an admin exists it returns the minimal status.
     if (segments[1] === 'status' && segments.length === 2 && method === 'GET') {
       const needsSetup = slug ? (await kernel.count({ collection: slug, overrideAccess: true })) === 0 : false
+      if (needsSetup) {
+        return json({
+          needsSetup,
+          authCollection: slug,
+          runtime: { ...setupRuntime(kernel), graphql: Boolean(options.graphql) },
+        })
+      }
       return json({ needsSetup, authCollection: slug })
     }
 
