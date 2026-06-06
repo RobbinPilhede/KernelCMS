@@ -226,8 +226,10 @@ secretKey, webhookSecret })` — Stripe REST via `fetch` (form-encoded), webhook
 - 465adce — Track C C1-C5(core): SearchAdapter + memorySearch + kernel.searchDocs (access-safe) (321 unit).
 - 8e35faf — Track C C5(server): GET /:collection/search REST endpoint (323 unit).
 - 781ff60 — Track E E6: authenticated /\_admin/metrics (adapter health + cache stats) (325 unit).
-- (this) — Track G G2: doctor diagnostics for cache/search/webhook misconfig (330 unit).
-- Tracks done: A (cache, complete), C (search core+REST), E (E1-E4,E6). 330 unit + 12 e2e green; all pushed.
+- cf93f0c — Track G G2: doctor diagnostics for cache/search/webhook misconfig (330 unit).
+- a777398 — Track H H1-H3: PaymentAdapter + testPayment + stripePayment (340 unit).
+- 5bb46be — Track H H4-H8: commerce() module (products/orders/checkout/webhook), full flow + security tests, docs (346 unit).
+- Tracks done: A (cache), C (search core+REST), E (E1-E4,E6), G (G2), **H (payments & orders, complete)**. 346 unit + 12 e2e green; all pushed.
 
 ## Re-evaluation after Track A
 
