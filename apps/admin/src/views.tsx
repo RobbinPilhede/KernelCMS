@@ -22,6 +22,7 @@ import {
   updateGlobal,
   uploadFile,
   verifyEmail,
+  writeSetupEnv,
 } from './api'
 import type {
   AdminCollection,
@@ -569,7 +570,13 @@ export function Setup() {
                   anytime from Connectors in the sidebar. Already migrating a site? It's at the bottom.
                 </p>
               </div>
-              <ConnectorGrid status={connectorStateFromRuntime(runtime)} />
+              <ConnectorGrid
+                status={connectorStateFromRuntime(runtime)}
+                setupMode
+                onApply={async (values) => {
+                  await writeSetupEnv(values)
+                }}
+              />
               <button className="btn primary wz-next" type="button" onClick={() => setStep(2)}>
                 Create your account →
               </button>

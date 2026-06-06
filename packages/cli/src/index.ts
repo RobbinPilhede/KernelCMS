@@ -94,6 +94,15 @@ Options:
 `
 
 export async function run(argv: string[]): Promise<void> {
+  // Load a project .env (e.g. DATABASE_URL written during first-run setup) into
+  // process.env before the config is imported, so an env-driven config picks it
+  // up. No-op when there is no .env.
+  try {
+    process.loadEnvFile()
+  } catch {
+    /* no .env file — fine */
+  }
+
   const { command, flags, positionals } = parseArgs(argv)
 
   switch (command) {

@@ -308,10 +308,51 @@ const STATE_LABEL: Record<CardState, string> = {
   adapter: 'Adapter needed',
 }
 
-function ConnectorCard({ c, status }: { c: ConnectorDef; status: ConnectorState }) {
+function ConnectorCard({
+  c,
+  status,
+  setupMode,
+  onApply,
+}: {
+  c: ConnectorDef
+  status: ConnectorState
+  setupMode?: boolean
+  onApply?: (values: Record<string, string>) => Promise<void>
+}) {
   const [open, setOpen] = useState(false)
+  const [form, setForm] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [saveErr, setSaveErr] = useState<string | null>(null)
   const state = c.state(status)
   const envBlock = c.env?.map((e) => `${e.key}=${e.example}`).join('\n')
+  // During first-run, connectors with env vars can be configured right here:
+  // the values are written to the project .env and applied on the next start.
+  const canApply = Boolean(setupMode && onApply && c.env && c.env.length > 0)
+
+  const apply = async () => {
+    if (!onApply || !c.env) return
+    const values: Record<string, string> = {}
+    for (const e of c.env) {
+      const v = (form[e.key] ?? '').trim()
+      if (v) values[e.key] = v
+    }
+    if (Object.keys(values).length === 0) {
+      setSaveErr('Enter a value first.')
+      return
+    }
+    setSaving(true)
+    setSaveErr(null)
+    try {
+      await onApply(values)
+      setSaved(true)
+    } catch (err) {
+      setSaveErr(err instanceof Error ? err.message : 'Could not save.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <motion.div className={`cx-card cx-${state}${open ? ' open' : ''}`} variants={itemVariants}>
       <button type="button" className="cx-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
@@ -337,6 +378,37 @@ function ConnectorCard({ c, status }: { c: ConnectorDef; status: ConnectorState 
             transition={{ duration: 0.24, ease: EASE_OUT }}
           >
             <div className="cx-body-inner">
+              {canApply && c.env && (
+                <div className="cx-section cx-apply">
+                  <p className="cx-section-title">Connect it now</p>
+                  {c.env.map((e) => (
+                    <label key={e.key} className="cx-field">
+                      <span className="cx-field-key">{e.key}</span>
+                      <input
+                        className="input"
+                        type="text"
+                        spellCheck={false}
+                        placeholder={e.example}
+                        value={form[e.key] ?? ''}
+                        onChange={(ev) => {
+                          setForm((f) => ({ ...f, [e.key]: ev.target.value }))
+                          setSaved(false)
+                        }}
+                      />
+                    </label>
+                  ))}
+                  {saveErr && <div className="alert">{saveErr}</div>}
+                  {saved ? (
+                    <p className="cx-saved">
+                      Saved to .env. Restart `npx kernel dev` to apply, then finish setup here.
+                    </p>
+                  ) : (
+                    <button type="button" className="btn primary cx-save" onClick={apply} disabled={saving}>
+                      {saving ? 'Saving…' : 'Save to .env'}
+                    </button>
+                  )}
+                </div>
+              )}
               {c.localNote && (
                 <div className="cx-section">
                   <p className="cx-section-title">Run locally</p>
@@ -372,8 +444,17 @@ function ConnectorCard({ c, status }: { c: ConnectorDef; status: ConnectorState 
   )
 }
 
-/** The full connector catalog, grouped by category. */
-export function ConnectorGrid({ status }: { status: ConnectorState }) {
+/** The full connector catalog, grouped by category. In `setupMode`, connectors
+ *  with env vars become fillable forms that write to .env via `onApply`. */
+export function ConnectorGrid({
+  status,
+  setupMode,
+  onApply,
+}: {
+  status: ConnectorState
+  setupMode?: boolean
+  onApply?: (values: Record<string, string>) => Promise<void>
+}) {
   return (
     <motion.div className="cx-grid" variants={listContainer} initial="initial" animate="animate">
       {CATEGORY_ORDER.map((cat) => {
@@ -385,7 +466,7 @@ export function ConnectorGrid({ status }: { status: ConnectorState }) {
               {cat === 'Migrate' ? 'Migrate' : cat}
             </motion.p>
             {items.map((c) => (
-              <ConnectorCard key={c.id} c={c} status={status} />
+              <ConnectorCard key={c.id} c={c} status={status} setupMode={setupMode} onApply={onApply} />
             ))}
           </div>
         )

@@ -20,11 +20,18 @@ function toCamel(slug: string): string {
 export function configTemplate(): string {
   return `import { defineConfig } from 'kernelcms'
 import { sqliteAdapter } from 'kernelcms/sqlite'
+import { postgresAdapter } from 'kernelcms/postgres'
+
+// Env-driven database: use PostgreSQL when DATABASE_URL is set (the admin setup
+// can write this to .env for you), otherwise the zero-config local SQLite file.
+const db = process.env.DATABASE_URL
+  ? postgresAdapter({ url: process.env.DATABASE_URL })
+  : sqliteAdapter({ url: 'file:./content.db' })
 
 export default defineConfig({
   // Set KERNEL_SECRET in any non-local environment.
   secret: process.env.KERNEL_SECRET ?? 'dev-only-secret',
-  db: sqliteAdapter({ url: 'file:./content.db' }),
+  db,
   collections: [
     {
       slug: 'users',

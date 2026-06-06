@@ -55,6 +55,8 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
   await expect(postgres).toBeVisible()
   await postgres.click()
   await expect(page.getByRole('button', { name: /Copy config/ }).first()).toBeVisible()
+  // In setup the DB is actually configurable: an inline form writes .env.
+  await expect(page.getByRole('button', { name: 'Save to .env' })).toBeVisible()
   // The static-site migration helper is present in the catalog.
   await expect(page.getByRole('button', { name: /Migrate an existing site/ })).toBeVisible()
   await page.getByRole('button', { name: /Create your account/ }).click()

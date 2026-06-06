@@ -6,6 +6,8 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { AuthUser, Kernel, Row, Where } from '@kernel/core'
 import {
   BadRequestError,
@@ -87,6 +89,46 @@ function adminShell(options: HandlerOptions): string {
     s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const tags = scripts.map((src) => `<script src="${escAttr(src)}" type="module"></script>`).join('')
   return ADMIN_HTML.includes('</body>') ? ADMIN_HTML.replace('</body>', `${tags}</body>`) : ADMIN_HTML + tags
+}
+
+// Env keys the first-run setup is allowed to write — the connector settings only.
+const ALLOWED_ENV_KEYS = new Set([
+  'DATABASE_URL',
+  'KERNEL_SECRET',
+  'S3_BUCKET',
+  'AWS_REGION',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'R2_ENDPOINT',
+  'R2_PUBLIC_BASE_URL',
+  'EMAIL_API_KEY',
+  'EMAIL_FROM',
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'GITHUB_CLIENT_ID',
+  'GITHUB_CLIENT_SECRET',
+])
+
+/** Merge whitelisted, single-line key/values into the project's .env, preserving
+ *  existing lines and comments. Returns the keys actually written. */
+function writeEnvFile(values: Record<string, unknown>): string[] {
+  const path = resolve(process.cwd(), '.env')
+  const lines = existsSync(path) ? readFileSync(path, 'utf8').split('\n') : []
+  const written: string[] = []
+  for (const [key, raw] of Object.entries(values)) {
+    if (!ALLOWED_ENV_KEYS.has(key)) throw new BadRequestError(`Env key "${key}" is not allowed.`)
+    const value = String(raw ?? '')
+    if (value === '') continue
+    if (/[\r\n]/.test(value)) throw new BadRequestError(`Env value for "${key}" must be a single line.`)
+    const line = `${key}=${value}`
+    const idx = lines.findIndex((l) => l.startsWith(`${key}=`))
+    if (idx >= 0) lines[idx] = line
+    else lines.push(line)
+    written.push(key)
+  }
+  // Normalize to a single trailing newline.
+  writeFileSync(path, `${lines.join('\n').replace(/\n+$/, '')}\n`)
+  return written
 }
 
 const OAUTH_STATE_COOKIE = 'kernel_oauth_state'
@@ -351,6 +393,22 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     if (segments[1] === 'connectors' && segments.length === 2 && method === 'GET') {
       if (!user) throw new UnauthorizedError()
       return json({ ...connectorStatus(kernel), graphql: Boolean(options.graphql) })
+    }
+
+    // POST /_admin/env -> persist chosen connector settings to the project .env.
+    // Strictly first-run only (no admin yet = local operator) AND never in
+    // production. Only whitelisted, single-line keys are written. Applies on the
+    // next `kernel` start (the CLI loads .env).
+    if (segments[1] === 'env' && segments.length === 2 && method === 'POST') {
+      const noUsers = slug ? (await kernel.count({ collection: slug, overrideAccess: true })) === 0 : true
+      if (!noUsers) throw new ForbiddenError('Environment can only be configured during first-run setup.')
+      if (process.env.NODE_ENV === 'production') {
+        throw new ForbiddenError('Environment cannot be written in production. Edit your .env directly.')
+      }
+      const body = await readBody(request)
+      const values = (body.values ?? {}) as Record<string, unknown>
+      const written = writeEnvFile(values)
+      return json({ ok: true, written })
     }
 
     // POST /_admin/setup -> create the FIRST admin, only while none exist.

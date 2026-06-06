@@ -3195,3 +3195,37 @@ a {
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 16%, transparent);
 }
+
+/* Inline "Connect it now" form on a connector card (first-run only) */
+.cx-apply {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+}
+.cx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.cx-field + .cx-field {
+  margin-top: 8px;
+}
+.cx-field-key {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.cx-save {
+  align-self: flex-start;
+  margin-top: 10px;
+  padding: 9px 16px;
+}
+.cx-saved {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ok);
+}

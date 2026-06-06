@@ -220,6 +220,10 @@ export interface ConnectorStatus {
 
 export const getConnectors = (): Promise<ConnectorStatus> => req('GET', '/_admin/connectors')
 
+/** Persist connector settings to the project .env (first-run setup only). */
+export const writeSetupEnv = (values: Record<string, string>): Promise<{ ok: boolean; written: string[] }> =>
+  req('POST', '/_admin/env', { values })
+
 export async function setupAdmin(email: string, password: string): Promise<{ token: string; user: Doc }> {
   const result = await req<{ token: string; user: Doc }>('POST', '/_admin/setup', { email, password })
   setToken(result.token)
