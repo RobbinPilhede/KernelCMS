@@ -135,7 +135,7 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 
 - **Auth:** `auth: { forgotPassword: true, twoFactor: true }` adds email password reset and TOTP two-factor.
 - **Uploads + images:** add `storage: localStorage(...)` (or S3 / R2) and `imageSizes` for auto-resized variants.
-- **Postgres:** swap `sqliteAdapter` for `postgresAdapter()` and set `DATABASE_URL`.
+- **Postgres:** swap `sqliteAdapter` for `postgresAdapter()` and set `DATABASE_URL` (or pick it in the first-run Connectors step). Configs scaffolded by `npx kernel init` are already env-driven: set `DATABASE_URL` and they use Postgres, otherwise a local SQLite file.
 - **Hooks, access rules, localization, background jobs, plugins:** all configured the same way.
 
 See [What is in the box](#what-is-in-the-box) for the full list.
@@ -251,8 +251,11 @@ logic lives in one place and stays read-only in the admin:
   column visibility, plus a config-driven editor for every field type.
 - A rich text editor with a slash menu and a floating selection toolbar.
 - Live preview with a built-in renderer, or point it at your own frontend.
-- A guided first-run welcome that shows how the instance is running and offers
-  copy-paste prompts for your AI assistant.
+- A guided first-run welcome with a Connectors step: choose your database,
+  storage, email, or sign-in provider during setup. Pick PostgreSQL, paste a
+  connection string, and KernelCMS writes `DATABASE_URL` to your `.env`; restart
+  to apply it through the env-driven config. A Connectors panel in the sidebar
+  lets you review and add connectors anytime.
 - A command palette, light and dark themes, and smooth page and content animations.
 - Extensible through `window.KernelCMS` registries: custom field components, list-cell
   renderers, and dashboard widgets.
