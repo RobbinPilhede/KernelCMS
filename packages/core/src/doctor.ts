@@ -105,6 +105,49 @@ export function runDoctor(config: SanitizedConfig, options: DoctorOptions = {}):
     add('warn', 'no-auth-collection', 'No auth collection configured — the admin panel has no way to sign in.')
   }
 
+  // Cache wiring.
+  if (config.cache && config.cacheableSlugs.length === 0) {
+    add('warn', 'cache-unused', 'A cache adapter is configured but no collection sets `cache` — it has no effect.')
+  }
+  for (const c of config.collections) {
+    if (c.cache && !config.cache) {
+      add(
+        'warn',
+        'cache-no-adapter',
+        `Collection "${c.slug}" sets \`cache\` but no \`config.cache\` adapter is set.`,
+        c.slug,
+      )
+    }
+    if (c.cache && c.auth) {
+      add('info', 'cache-auth-skipped', `Auth collection "${c.slug}" is never cached (fresh reads required).`, c.slug)
+    }
+  }
+
+  // Search wiring.
+  if (config.search && Object.keys(config.searchableFields).length === 0) {
+    add('warn', 'search-unused', 'A search adapter is configured but no collection sets `search.fields`.')
+  }
+  for (const c of config.collections) {
+    if (c.search && !config.search) {
+      add(
+        'warn',
+        'search-no-adapter',
+        `Collection "${c.slug}" sets \`search\` but no \`config.search\` adapter is set.`,
+        c.slug,
+      )
+    }
+  }
+
+  // Webhook hygiene: plaintext delivery and unsigned payloads are risky.
+  for (const w of config.webhooks ?? []) {
+    if (w.url.startsWith('http://')) {
+      add('warn', 'webhook-insecure', `Webhook to "${w.url}" uses plaintext HTTP; prefer HTTPS.`)
+    }
+    if (!w.secret) {
+      add('info', 'webhook-unsigned', `Webhook to "${w.url}" has no secret; the receiver cannot verify the payload.`)
+    }
+  }
+
   const errors = out.filter((d) => d.level === 'error').length
   const warnings = out.filter((d) => d.level === 'warn').length
   return { diagnostics: out, errors, warnings, ok: errors === 0 }

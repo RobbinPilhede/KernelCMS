@@ -159,4 +159,21 @@ Access control + field strip still run every call. Never cache post-access docs 
 ---
 
 ## Progress log
-- (append one line per shipped phase with commit hash)
+- 8efd21d — Track A A1-A5,A8: CacheAdapter contract + memoryCache + read-through wrapper + wiring + tests (295 unit).
+- e517960 — Track A A6,A7: dbCache (no-infra) + redisCache backends (301 unit).
+- bba2341 — Track A A10: surface cache in info/connectorStatus; exclude auth collections; caching docs (302 unit).
+- Track A status: core COMPLETE (memory/db/redis, wired, tested, documented, access-safe). Deferred: A9 admin connector cards "made real" (folded into a later admin UI pass); redis backends are implemented but only conformance-tested where a server is available.
+
+- a43b9cc — Track E E1-E3: HTTP rate limiting + HSTS/Permissions-Policy headers (310 unit).
+- 0c30890 — Track E E4: signed outbound webhooks on create/update/delete (315 unit).
+- 465adce — Track C C1-C5(core): SearchAdapter + memorySearch + kernel.searchDocs (access-safe) (321 unit).
+- 8e35faf — Track C C5(server): GET /:collection/search REST endpoint (323 unit).
+- 781ff60 — Track E E6: authenticated /_admin/metrics (adapter health + cache stats) (325 unit).
+- (this) — Track G G2: doctor diagnostics for cache/search/webhook misconfig (330 unit).
+- Tracks done: A (cache, complete), C (search core+REST), E (E1-E4,E6). 330 unit + 12 e2e green; all pushed.
+
+## Re-evaluation after Track A
+Next highest-value, fully-verifiable work (no external services needed to test):
+- TRACK E (security & ops): general HTTP rate limiting + security headers/CSP. Real gap (only login is limited today) and aligns with always-on security rules. Server-middleware scoped, testable. → DOING NEXT.
+- TRACK C (search): start with a portable `memorySearch()` (FTS needs adapter-specific raw SQL, so defer sqlite/postgres FTS); contract + memory impl + sync + kernel.search() + REST. Testable.
+- TRACK B (queue): jobs are already DB-backed; a QueueAdapter mainly adds a Redis backend (not locally testable) — lower marginal value, do later.
