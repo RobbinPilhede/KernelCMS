@@ -16,6 +16,7 @@ import {
 } from '@kernel/core'
 import type { Kernel, KernelConfig, KernelSchema } from '@kernel/core'
 import { serve } from '@kernel/server'
+import { moduleTemplate, toSlug } from './templates'
 
 interface Flags {
   [key: string]: string | boolean
@@ -81,6 +82,7 @@ Commands:
   seed               Run the exported seed() function
   jobs:run           Run all due background jobs once (drive from a cron)
   generate:types     Write generated TypeScript types for the content model
+  generate:module    Scaffold a new module (collection + endpoint) — <name> [--out path]
   dev                Migrate, then start the REST API server (development)
   start              Serve for production (no auto-migrate; doctor-gated)
 
@@ -91,9 +93,29 @@ Options:
 `
 
 export async function run(argv: string[]): Promise<void> {
-  const { command, flags } = parseArgs(argv)
+  const { command, flags, positionals } = parseArgs(argv)
 
   switch (command) {
+    case 'generate:module': {
+      const name = positionals[0]
+      if (!name) {
+        console.error('Usage: kernel generate:module <name>')
+        process.exitCode = 1
+        break
+      }
+      const slug = toSlug(name)
+      const out =
+        typeof flags.out === 'string' ? resolve(process.cwd(), flags.out) : resolve(process.cwd(), `${slug}.module.ts`)
+      if (existsSync(out)) {
+        console.error(`Refusing to overwrite existing file: ${out}`)
+        process.exitCode = 1
+        break
+      }
+      writeFileSync(out, moduleTemplate(name))
+      console.log(`✓ Wrote ${out}`)
+      break
+    }
+
     case 'migrate': {
       const { config } = await loadConfig(flags)
       const kernel = await initKernel(config)

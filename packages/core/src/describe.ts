@@ -52,6 +52,8 @@ export interface AdminField {
   maxLength?: number
   richText?: AdminRichTextSchema
   admin?: Omit<FieldAdmin, 'condition'>
+  /** Computed field: not stored, derived on read, shown read-only. */
+  virtual?: boolean
 }
 
 export interface AdminCollection {
@@ -99,6 +101,12 @@ function describeField(field: AnyField): AdminField {
     const { condition, ...rest } = field.admin
     void condition
     out.admin = rest
+  }
+  // Computed fields are server-derived: surface as read-only so the admin never
+  // tries to edit (or persist) them.
+  if (field.virtual) {
+    out.virtual = true
+    out.admin = { ...(out.admin ?? {}), readOnly: true }
   }
   // Expose literal defaults so the admin can initialise new documents. Function
   // defaults are resolved server-side at create time, not here.

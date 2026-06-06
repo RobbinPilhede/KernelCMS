@@ -129,6 +129,14 @@ export interface FieldBase {
   admin?: FieldAdmin
   access?: FieldAccess
   validate?: ValidateFn
+  /** A computed (virtual) field: not stored as a column, not validated as input.
+   *  Its value is derived on every read by `compute`. This is "views as contract"
+   *  at the field level — derive business logic in one place so it can't drift.
+   *  Rendered read-only in the admin. */
+  virtual?: boolean
+  /** Compute the virtual field's value from the resolved document. Required (and
+   *  only used) when `virtual` is true. May be async. */
+  compute?: (args: { doc: Doc; req: RequestContext }) => unknown | Promise<unknown>
 }
 
 export interface TextField extends FieldBase {

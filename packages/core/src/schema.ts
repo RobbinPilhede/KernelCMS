@@ -1,6 +1,6 @@
 import type { KernelSchema, TableSchema } from '@kernel/db'
 import type { SanitizedConfig } from './types'
-import { columnForField, effectiveFields } from './fields'
+import { columnForField, storageFields } from './fields'
 
 export function tableForCollection(slug: string): string {
   return slug
@@ -35,7 +35,7 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
 
   for (const collection of config.collections) {
     const versions = resolveVersions(collection.versions)
-    const columns = effectiveFields(collection.fields).map(columnForField)
+    const columns = storageFields(collection.fields).map(columnForField)
     // Drafts add a system status column to the main row, plus a scheduled-publish time.
     if (versions.drafts) {
       columns.push({ name: '_status', type: 'text', required: false, unique: false, indexed: true, localized: false })
@@ -78,7 +78,7 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
     tables.push({
       table: tableForGlobal(global.slug),
       slug: global.slug,
-      columns: effectiveFields(global.fields).map(columnForField),
+      columns: storageFields(global.fields).map(columnForField),
       timestamps: true,
       singleton: true,
     })

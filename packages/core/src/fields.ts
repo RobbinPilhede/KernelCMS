@@ -72,6 +72,14 @@ export function effectiveFields(fields: ConfigField[]): AnyField[] {
   return out
 }
 
+/** Effective fields minus computed (`virtual`) ones — the fields that map to a
+ *  storage column and accept input. Storage/validation paths use this; output and
+ *  access paths use `effectiveFields` so virtual fields still appear and can be
+ *  access-controlled. */
+export function storageFields(fields: ConfigField[]): AnyField[] {
+  return effectiveFields(fields).filter((f) => !f.virtual)
+}
+
 /** Virtual reverse-relationship fields, flattened out of rows/tabs. */
 export function joinFields(
   fields: ConfigField[],
@@ -153,7 +161,7 @@ export function defaultForField(field: AnyField): unknown {
 }
 
 export function applyDefaults(fieldsIn: ConfigField[], data: Row): Row {
-  const fields = effectiveFields(fieldsIn)
+  const fields = storageFields(fieldsIn)
   const out: Row = { ...data }
   for (const field of fields) {
     if (out[field.name] === undefined) {
@@ -179,7 +187,7 @@ export async function validateFields(
   ctx: ValidateContext,
   prefix = '',
 ): Promise<FieldError[]> {
-  const fields = effectiveFields(fieldsIn)
+  const fields = storageFields(fieldsIn)
   const errors: FieldError[] = []
   for (const field of fields) {
     const path = prefix ? `${prefix}.${field.name}` : field.name
@@ -368,7 +376,7 @@ export interface SerializeOptions {
 
 /** Build a storage row from public field data, merging localized values. */
 export function serializeDoc(fieldsIn: ConfigField[], data: Row, opts: SerializeOptions): Row {
-  const fields = effectiveFields(fieldsIn)
+  const fields = storageFields(fieldsIn)
   const row: Row = {}
   for (const field of fields) {
     const has = Object.prototype.hasOwnProperty.call(data, field.name)
@@ -406,7 +414,7 @@ function resolveLocale(raw: unknown, locale: string, fallback: string | false): 
 
 /** Resolve a storage row into a public document body (localized values resolved). */
 export function deserializeDoc(fieldsIn: ConfigField[], row: Row, opts: DeserializeOptions): Row {
-  const fields = effectiveFields(fieldsIn)
+  const fields = storageFields(fieldsIn)
   const doc: Row = {}
   for (const field of fields) {
     const raw = row[field.name]

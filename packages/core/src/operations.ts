@@ -218,6 +218,19 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   /**
+   * Evaluate computed (`virtual`) fields on a read document. Runs after populate
+   * (so siblings/relations are resolved) and before read-field-access (so virtual
+   * fields can still be access-stripped). "Views as contract" at the field level.
+   */
+  async function applyComputed(fields: ConfigField[], doc: Row, req: RequestContext): Promise<void> {
+    for (const field of effectiveFields(fields)) {
+      if (field.virtual && typeof field.compute === 'function') {
+        doc[field.name] = await field.compute({ doc: doc as Doc, req })
+      }
+    }
+  }
+
+  /**
    * Field-level READ access. After a document is read, strip any field the
    * current user may not see (rule present and not allowed). Recurses into
    * group/array/blocks sub-fields. Skipped when access is overridden. Without
@@ -649,6 +662,7 @@ export function createOperations(ctx: OperationCtx) {
     doc = (await runHooks(collection.hooks?.afterChange, { req, operation: 'create', doc }, 'doc')) as Doc
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     doc = await populate(collection, doc, opts.depth ?? 0, req)
+    await applyComputed(collection.fields, doc, req)
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     if (pendingVerification) await sendVerificationEmail(collection, doc, pendingVerification)
     return doc as T
@@ -685,6 +699,7 @@ export function createOperations(ctx: OperationCtx) {
       let doc = rowToDoc(collection, row, req)
       doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
       doc = await populate(collection, doc, opts.depth ?? 0, req)
+      await applyComputed(collection.fields, doc, req)
       if (!override) await applyReadFieldAccess(collection.fields, doc, req)
       docs.push(doc as T)
     }
@@ -711,6 +726,7 @@ export function createOperations(ctx: OperationCtx) {
     let doc = rowToDoc(collection, row, req)
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     doc = await populate(collection, doc, opts.depth ?? 0, req)
+    await applyComputed(collection.fields, doc, req)
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     return doc as T
   }
@@ -768,6 +784,7 @@ export function createOperations(ctx: OperationCtx) {
     doc = (await runHooks(collection.hooks?.afterChange, { req, operation: 'update', doc }, 'doc')) as Doc
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     doc = await populate(collection, doc, opts.depth ?? 0, req)
+    await applyComputed(collection.fields, doc, req)
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     return doc as T
   }
@@ -1418,6 +1435,7 @@ export function createOperations(ctx: OperationCtx) {
     doc = await runHooks(global.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')
     // Field-level read access must apply to globals too, exactly as it does for
     // collection reads — otherwise a `field.access.read` rule is silently ignored.
+    await applyComputed(global.fields, doc, req)
     if (!(opts.overrideAccess ?? false)) await applyReadFieldAccess(global.fields, doc, req)
     return doc as T
   }
@@ -1452,6 +1470,7 @@ export function createOperations(ctx: OperationCtx) {
     }
     let doc = globalDoc(global, saved, req)
     doc = await runHooks(global.hooks?.afterChange, { req, operation: 'update', doc }, 'doc')
+    await applyComputed(global.fields, doc, req)
     if (!(opts.overrideAccess ?? false)) await applyReadFieldAccess(global.fields, doc, req)
     return doc as T
   }
