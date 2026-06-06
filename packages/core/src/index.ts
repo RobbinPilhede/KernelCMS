@@ -35,6 +35,8 @@ export { deliverWebhook, attachWebhooks } from './webhooks'
 export type { WebhookPayload } from './webhooks'
 export { memorySearch, attachSearch, extractSearchText } from './search'
 export { testPayment, stripePayment, signTestWebhook, verifyStripeSignature, PaymentError } from './payments'
+export { commerce } from './commerce'
+export type { CommerceOptions } from './commerce'
 export type {
   PaymentAdapter,
   PaymentLineItem,
