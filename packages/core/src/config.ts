@@ -148,6 +148,26 @@ function jobsCollection(): CollectionConfig {
   }
 }
 
+/** Reserved slug for the database-backed cache table (used by `dbCache()`). */
+export const CACHE_SLUG = 'kernel_cache'
+
+/** The hidden collection backing `dbCache()`. The cache key is the row id. */
+function cacheCollection(): CollectionConfig {
+  return {
+    slug: CACHE_SLUG,
+    labels: { singular: 'Cache entry', plural: 'Cache' },
+    access: { read: () => false, create: () => false, update: () => false, delete: () => false },
+    admin: { hidden: true },
+    timestamps: false,
+    fields: [
+      { name: 'value', type: 'json' },
+      { name: 'expires_at', type: 'number', integer: true, defaultValue: 0, index: true },
+      // Comma-delimited tag list (",posts,users,") for substring tag matching.
+      { name: 'tags_csv', type: 'text', index: true },
+    ],
+  }
+}
+
 const IDENT_RE = /^[a-z][a-z0-9_]*$/
 
 /** Identity helper that gives `kernel.config.ts` full type-checking and inference. */
@@ -196,6 +216,14 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
       `collection slug "${JOBS_SLUG}" is reserved for the background-jobs queue`,
     )
     baseCollections.push(jobsCollection())
+  }
+  // A database-backed cache (`dbCache()`) marks itself so we provision its table.
+  if (config.cache && (config.cache as { __needsTable?: string }).__needsTable === CACHE_SLUG) {
+    assert(
+      !baseCollections.some((c) => c.slug === CACHE_SLUG),
+      `collection slug "${CACHE_SLUG}" is reserved for the database cache`,
+    )
+    baseCollections.push(cacheCollection())
   }
   const hasOAuth = Boolean(config.oauth && config.oauth.length > 0)
   const collections = baseCollections.map((c) => {
@@ -299,7 +327,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   const cacheTtlBySlug: Record<string, number> = {}
   if (config.cache) {
     for (const collection of collections) {
-      if (collection.slug === JOBS_SLUG) continue
+      if (collection.slug === JOBS_SLUG || collection.slug === CACHE_SLUG) continue
       const c = collection.cache
       if (!c) continue
       cacheableSlugs.push(collection.slug)

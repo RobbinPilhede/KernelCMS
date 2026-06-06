@@ -46,7 +46,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   // adapter, otherwise the raw db. Access control still runs on every call.
   let opDb: DatabaseAdapter = sanitized.db
   if (sanitized.cache && sanitized.cacheableSlugs.length > 0) {
-    await sanitized.cache.init({ logger })
+    await sanitized.cache.init({ logger, db: sanitized.db })
     opDb = createCachedDb(sanitized.db, sanitized.cache, {
       cacheableSlugs: new Set(sanitized.cacheableSlugs),
       ttlMs: sanitized.cacheDefaultTtl,

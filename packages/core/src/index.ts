@@ -29,6 +29,8 @@ export { createOperations } from './operations'
 export type { Operations, OperationCtx } from './operations'
 export { memoryCache, createCachedDb } from './cache'
 export type { MemoryCacheOptions, CachedDbOptions } from './cache'
+export { dbCache, redisCache } from './cache-backends'
+export type { DbCacheOptions, RedisCacheOptions } from './cache-backends'
 export {
   hashPassword,
   verifyPassword,

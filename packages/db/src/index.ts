@@ -58,6 +58,9 @@ export interface Logger {
 
 export interface AdapterContext {
   logger: Logger
+  /** The kernel's database adapter, provided to non-db adapters that store state
+   *  in the database (e.g. a database-backed cache or queue). */
+  db?: DatabaseAdapter
 }
 
 export interface HealthStatus {
