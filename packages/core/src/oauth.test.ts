@@ -98,4 +98,18 @@ describe('loginWithOAuth', () => {
       kernel.loginWithOAuth({ collection: 'users', provider: 'nope', code: 'c', redirectUri: 'https://app.test/cb' }),
     ).rejects.toThrow()
   })
+
+  it('will not link to a pre-existing account when the provider email is unverified', async () => {
+    // A password user already owns this address.
+    await kernel.create({
+      collection: 'users',
+      data: { email: 'oauth@example.com', password: 'password123' },
+      ...trusted,
+    })
+    // The stub provider does not assert email verification → linking is refused,
+    // so an attacker who set their provider email to a victim's cannot take over.
+    await expect(
+      kernel.loginWithOAuth({ collection: 'users', provider: 'stub', code: 'c', redirectUri: 'https://app.test/cb' }),
+    ).rejects.toThrow(/already registered/)
+  })
 })

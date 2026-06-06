@@ -7,6 +7,7 @@
  * compile error until handled here.
  */
 import type { KernelRichText, LinkNode, Mark, RichBlockNode, RichInlineNode, TextNode } from './types'
+import { safeHref } from './sanitize'
 
 function assertNever(x: never): never {
   throw new Error(`Unhandled rich-text node: ${JSON.stringify(x)}`)
@@ -157,7 +158,8 @@ function wrapMarks(node: TextNode): string {
 }
 
 function linkHtml(node: LinkNode, opts: ToHTMLOptions): string {
-  const href = node.doc ? (opts.resolveHref?.(node.doc) ?? '#') : node.url
+  const raw = node.doc ? (opts.resolveHref?.(node.doc) ?? '#') : (node.url ?? '#')
+  const href = safeHref(String(raw))
   const attrs = [`href="${escapeHtml(href)}"`]
   if (node.newTab) attrs.push('target="_blank"', `rel="${escapeHtml(node.rel ?? 'noopener noreferrer')}"`)
   return `<a ${attrs.join(' ')}>${inlineHtml(node.children, opts)}</a>`

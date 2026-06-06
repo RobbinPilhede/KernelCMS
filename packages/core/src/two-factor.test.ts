@@ -69,6 +69,22 @@ describe('two-factor login flow', () => {
     ).resolves.toMatchObject({ user: { email: 'a@x.test' } })
   })
 
+  it('rejects replay of an already-used login code', async () => {
+    const user = (await kernel.find({ collection: 'users', ...trusted })).docs[0]!
+    const { secret } = await kernel.setupTwoFactor({ collection: 'users', id: user.id })
+    await kernel.enableTwoFactor({ collection: 'users', id: user.id, code: totpCode(secret) })
+
+    const code = totpCode(secret)
+    // First login with the code succeeds…
+    await expect(
+      kernel.login({ collection: 'users', email: 'a@x.test', password: 'password123', code }),
+    ).resolves.toMatchObject({ user: { email: 'a@x.test' } })
+    // …replaying the very same code is rejected (single-use within its window).
+    await expect(
+      kernel.login({ collection: 'users', email: 'a@x.test', password: 'password123', code }),
+    ).rejects.toThrow(/already been used/)
+  })
+
   it('rejects enabling 2FA with a bad code, and lets you disable it', async () => {
     const user = (await kernel.find({ collection: 'users', ...trusted })).docs[0]!
     const { secret } = await kernel.setupTwoFactor({ collection: 'users', id: user.id })

@@ -54,7 +54,7 @@ import {
   signToken,
   verifyPassword,
   verifyToken,
-  verifyTotp,
+  verifyTotpStep,
 } from './auth'
 import {
   applyDefaults,
@@ -84,6 +84,32 @@ const DEFAULT_LIMIT = 25
 // deployment should front this with a shared store (Redis) via a future adapter.
 const LOGIN_MAX_FAILURES = 10
 const LOGIN_WINDOW_MS = 15 * 60 * 1000
+
+// Throttle unauthenticated, email-sending actions (forgot-password, resend
+// verification) so they can't be used to mail-bomb an address or run up the email
+// provider bill. Same in-memory/per-process caveat as the login limiter.
+const EMAIL_ACTION_MAX = 3
+const EMAIL_ACTION_WINDOW_MS = 15 * 60 * 1000
+
+// Auth columns the server owns end-to-end. They are stripped from untrusted
+// create/update input so a row owner can't self-grant verification, keys, or 2FA
+// state, or tamper with the session epoch. Set only via trusted (overrideAccess)
+// paths and the dedicated auth operations.
+const SYSTEM_AUTH_FIELDS = [
+  'hash',
+  'api_key',
+  'email_verified',
+  'verification_token',
+  'verification_token_expiry',
+  'reset_token',
+  'reset_token_expiry',
+  'totp_secret',
+  'totp_enabled',
+  'totp_last_step',
+  'token_version',
+  'oauth_provider',
+  'oauth_subject',
+] as const
 
 export function createOperations(ctx: OperationCtx) {
   const { config, db } = ctx
@@ -116,6 +142,31 @@ export function createOperations(ctx: OperationCtx) {
       loginFailures.set(key, { count: 1, windowStart: now })
     } else {
       rec.count += 1
+    }
+  }
+
+  // A real (but useless) password hash, computed once, used to equalize login
+  // timing for non-existent accounts.
+  let dummyHashCache: string | null = null
+  async function dummyHash(): Promise<string> {
+    if (!dummyHashCache) dummyHashCache = await hashPassword('timing-equalizer-not-a-real-password')
+    return dummyHashCache
+  }
+
+  // action:slug:email -> sliding window, for email-sending throttles.
+  const emailActionAttempts = new Map<string, { count: number; windowStart: number }>()
+  function throttleEmailAction(action: string, slug: string, email: string): void {
+    const key = `${action}:${slug}:${email.trim().toLowerCase()}`
+    const now = Date.now()
+    const rec = emailActionAttempts.get(key)
+    if (!rec || now - rec.windowStart > EMAIL_ACTION_WINDOW_MS) {
+      emailActionAttempts.set(key, { count: 1, windowStart: now })
+      return
+    }
+    rec.count += 1
+    if (rec.count > EMAIL_ACTION_MAX) {
+      const retryAfter = Math.ceil((EMAIL_ACTION_WINDOW_MS - (now - rec.windowStart)) / 1000)
+      throw new TooManyRequestsError('Too many requests. Please try again later.', retryAfter)
     }
   }
 
@@ -153,6 +204,14 @@ export function createOperations(ctx: OperationCtx) {
           if (row && typeof row === 'object') {
             await applyFieldAccess(field.fields, row as Row, operation, req, id)
           }
+        }
+      } else if (field.type === 'blocks' && Array.isArray(value)) {
+        // Mirror the read path: enforce write access on fields nested in blocks too,
+        // otherwise a guarded field inside a block would always be writable.
+        for (const row of value) {
+          if (!row || typeof row !== 'object') continue
+          const def = field.blocks.find((b) => b.slug === (row as Row).blockType)
+          if (def) await applyFieldAccess(def.fields, row as Row, operation, req, id)
         }
       }
     }
@@ -243,6 +302,10 @@ export function createOperations(ctx: OperationCtx) {
       delete doc.reset_token_expiry
       // The TOTP secret must never leave the server (the `totp_enabled` flag is fine).
       delete doc.totp_secret
+      // Internal replay watermark — not meaningful or safe to expose.
+      delete doc.totp_last_step
+      // Internal session epoch — server-only.
+      delete doc.token_version
     }
     return doc
   }
@@ -257,10 +320,16 @@ export function createOperations(ctx: OperationCtx) {
     collection: CollectionConfig,
     data: Row,
     operation: 'create' | 'update',
+    override = false,
   ): Promise<Row> {
     if (!collection.auth) return data
     const next: Row = { ...data }
     delete next.hash
+    // Server-managed auth columns must never be set from untrusted client input —
+    // otherwise a caller with write access to their own row could self-verify
+    // (`email_verified`), grant a key, disable 2FA, or desync the session epoch.
+    // Trusted internal calls (overrideAccess) still set these directly.
+    if (!override) for (const f of SYSTEM_AUTH_FIELDS) delete next[f]
     const password = next.password
     delete next.password
     if (typeof password === 'string' && password.length > 0) {
@@ -415,9 +484,17 @@ export function createOperations(ctx: OperationCtx) {
       throw new BadRequestError(`Collection "${opts.collection}" does not have versions enabled.`)
     }
     const req = buildReq(opts.req)
-    if (!(opts.overrideAccess ?? false)) {
+    const override = opts.overrideAccess ?? false
+    if (!override) {
       const access = await evalAccess(collection.access?.read, { req, id: opts.id })
       if (!isAllowed(access)) throw new ForbiddenError()
+      // Row-level scope must be enforced against the PARENT, exactly like findByID —
+      // otherwise any reader can list another tenant's version history (IDOR).
+      const scope = asWhere(access)
+      if (scope) {
+        const parent = await db.findByID({ collection: collection.slug, id: opts.id })
+        if (!parent || !matchesWhere(parent, scope)) throw new ForbiddenError()
+      }
     }
     const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
     const page = Math.max(opts.page ?? 1, 1)
@@ -428,6 +505,15 @@ export function createOperations(ctx: OperationCtx) {
       limit,
       page,
     })
+    // Snapshots embed the full document; field-level read access must still apply
+    // so a restricted field can't be read out of the version history.
+    if (!override) {
+      for (const v of result.docs) {
+        if (v.version && typeof v.version === 'object') {
+          await applyReadFieldAccess(collection.fields, v.version as Row, req, opts.id)
+        }
+      }
+    }
     return { ...result, docs: result.docs as VersionDoc[] }
   }
 
@@ -435,6 +521,18 @@ export function createOperations(ctx: OperationCtx) {
     const collection = collectionOrThrow(opts.collection)
     if (!versionsOf(collection).enabled) {
       throw new BadRequestError(`Collection "${opts.collection}" does not have versions enabled.`)
+    }
+    // Enforce read access + row scope on the parent before reading any snapshot
+    // content; the subsequent update() re-checks write access independently.
+    if (!(opts.overrideAccess ?? false)) {
+      const req = buildReq(opts.req)
+      const access = await evalAccess(collection.access?.read, { req, id: opts.id })
+      if (!isAllowed(access)) throw new ForbiddenError()
+      const scope = asWhere(access)
+      if (scope) {
+        const parent = await db.findByID({ collection: collection.slug, id: opts.id })
+        if (!parent || !matchesWhere(parent, scope)) throw new ForbiddenError()
+      }
     }
     const vrow = await db.findByID({ collection: tableForVersions(collection.slug), id: opts.versionId })
     if (!vrow || String(vrow.parent) !== String(opts.id)) throw new NotFoundError('Version not found.')
@@ -529,7 +627,7 @@ export function createOperations(ctx: OperationCtx) {
     const incoming: Row = { ...opts.data }
     if (!override) await applyFieldAccess(collection.fields, incoming, 'create', req)
     let data = applyDefaults(collection.fields, incoming)
-    data = await prepareAuthInput(collection, data, 'create')
+    data = await prepareAuthInput(collection, data, 'create', override)
     // Email verification: seed a hashed, expiring token for a fresh signup. Trusted
     // creates (e.g. first-admin setup) pass `email_verified: true` and skip this.
     const pendingVerification = maybeStartVerification(collection, data)
@@ -634,7 +732,11 @@ export function createOperations(ctx: OperationCtx) {
 
     const filtered: Row = { ...opts.data }
     if (!override) await applyFieldAccess(collection.fields, filtered, 'update', req, opts.id)
-    const input = await prepareAuthInput(collection, filtered, 'update')
+    const input = await prepareAuthInput(collection, filtered, 'update', override)
+    // A password change invalidates existing sessions (bump the session epoch).
+    if (collection.auth && typeof input.hash === 'string') {
+      input.token_version = tokenVersionOf(existing) + 1
+    }
     const existingDoc = rowToDoc(collection, existing, req)
     let merged: Row = { ...existingDoc, ...input }
     merged = await runHooks(
@@ -783,7 +885,14 @@ export function createOperations(ctx: OperationCtx) {
       page: 1,
     })
     const row = result.docs[0]
-    const passwordOk = !!row && typeof row.hash === 'string' && (await verifyPassword(opts.password, row.hash))
+    let passwordOk = false
+    if (row && typeof row.hash === 'string') {
+      passwordOk = await verifyPassword(opts.password, row.hash)
+    } else {
+      // Burn equivalent work for a non-existent account so response latency can't
+      // be used to enumerate valid emails (timing oracle).
+      await verifyPassword(opts.password, await dummyHash())
+    }
     if (!row || !passwordOk) {
       recordLoginFailure(key)
       throw new UnauthorizedError('Invalid email or password.')
@@ -796,16 +905,32 @@ export function createOperations(ctx: OperationCtx) {
     // Two-factor: require a valid current code once the user has enabled 2FA.
     if (twoFactorEnabled(collection) && (row.totp_enabled === true || row.totp_enabled === 1)) {
       const secret = typeof row.totp_secret === 'string' ? row.totp_secret : ''
-      if (!opts.code || !secret || !verifyTotp(secret, opts.code)) {
+      const step = opts.code && secret ? verifyTotpStep(secret, opts.code) : null
+      if (step === null) {
         throw new UnauthorizedError('A valid two-factor code is required.')
       }
+      // Replay defence: a code may be used once. Reject any step at or below the
+      // last accepted one (RFC 6238 §5.2), and record the step we just consumed.
+      const lastStep = typeof row.totp_last_step === 'number' ? row.totp_last_step : Number(row.totp_last_step ?? 0)
+      if (Number.isFinite(lastStep) && step <= lastStep) {
+        throw new UnauthorizedError('That two-factor code has already been used.')
+      }
+      await db.update({ collection: collection.slug, id: String(row.id), data: { totp_last_step: step } })
     }
     const user = rowToDoc(collection, row, buildReq()) as AuthUser
     user.collection = collection.slug
     const ttl = authTtl(collection)
-    const token = signToken({ sub: user.id, collection: collection.slug }, config.secret, ttl)
+    const token = issueToken(user.id, collection.slug, row, ttl)
     return { user, token, exp: Math.floor(Date.now() / 1000) + ttl }
   }
+
+  // Current session epoch for a row (defaults to 0 for legacy rows/tokens).
+  const tokenVersionOf = (row: Row): number => {
+    const v = Number(row.token_version ?? 0)
+    return Number.isFinite(v) ? v : 0
+  }
+  const issueToken = (sub: string, slug: string, row: Row, ttl: number): string =>
+    signToken({ sub, collection: slug, tv: tokenVersionOf(row) }, config.secret, ttl)
 
   async function authenticate(token: string): Promise<AuthUser | null> {
     const payload = verifyToken(token, config.secret)
@@ -814,6 +939,9 @@ export function createOperations(ctx: OperationCtx) {
     if (!collection?.auth) return null
     const row = await db.findByID({ collection: collection.slug, id: payload.sub })
     if (!row) return null
+    // Reject tokens minted before the account's current session epoch (e.g. issued
+    // before a password reset / change), so those sessions can't outlive the change.
+    if (Number(payload.tv ?? 0) !== tokenVersionOf(row)) return null
     const user = rowToDoc(collection, row, buildReq()) as AuthUser
     user.collection = collection.slug
     return user
@@ -903,7 +1031,9 @@ export function createOperations(ctx: OperationCtx) {
     const row = await db.findByID({ collection: collection.slug, id: opts.id })
     const secret = typeof row?.totp_secret === 'string' ? row.totp_secret : ''
     if (!secret) throw new BadRequestError('Set up two-factor before enabling it.')
-    if (!verifyTotp(secret, opts.code)) throw new BadRequestError('That code is invalid or expired.')
+    if (verifyTotpStep(secret, opts.code) === null) throw new BadRequestError('That code is invalid or expired.')
+    // Replay tracking starts at login (the enrolment code may legitimately be the
+    // user's first login code in the same time-step); each login code is single-use.
     await db.update({ collection: collection.slug, id: opts.id, data: { totp_enabled: true } })
     return { enabled: true }
   }
@@ -912,7 +1042,11 @@ export function createOperations(ctx: OperationCtx) {
     const collection = collectionOrThrow(opts.collection)
     if (!twoFactorEnabled(collection))
       throw new BadRequestError(`Collection "${opts.collection}" does not have two-factor enabled.`)
-    await db.update({ collection: collection.slug, id: opts.id, data: { totp_secret: null, totp_enabled: false } })
+    await db.update({
+      collection: collection.slug,
+      id: opts.id,
+      data: { totp_secret: null, totp_enabled: false, totp_last_step: null },
+    })
     return { enabled: false }
   }
 
@@ -933,24 +1067,66 @@ export function createOperations(ctx: OperationCtx) {
     if (!profile.email) throw new BadRequestError('The OAuth provider did not return an email address.')
 
     const hasField = (name: string) => collection.fields.some((f) => 'name' in f && f.name === name)
-    let row: Row | undefined = (
-      await db.find({ collection: collection.slug, where: { email: { equals: profile.email } }, limit: 1, page: 1 })
-    ).docs[0]
+    const canLinkIdentity = hasField('oauth_provider') && hasField('oauth_subject')
+
+    // 1) Returning user: match on the stable provider identity, never on email
+    //    alone. This is spoof-proof — the provider asserts the subject id.
+    let row: Row | undefined
+    if (canLinkIdentity && profile.id) {
+      row = (
+        await db.find({
+          collection: collection.slug,
+          where: { and: [{ oauth_provider: { equals: opts.provider } }, { oauth_subject: { equals: profile.id } }] },
+          limit: 1,
+          page: 1,
+        })
+      ).docs[0]
+    }
+
     if (!row) {
-      // First sign-in → create the account. A random password satisfies the auth
-      // pipeline; the user can set one later via forgot-password. OAuth ⇒ verified.
-      const data: Row = { email: profile.email, password: randomBytes(24).toString('base64url') }
-      if (profile.name && hasField('name')) data.name = profile.name
-      if (hasField('email_verified')) data.email_verified = true
-      const created = await create({ collection: collection.slug, data, overrideAccess: true })
-      row = (await db.findByID({ collection: collection.slug, id: created.id })) ?? undefined
+      const existing = (
+        await db.find({ collection: collection.slug, where: { email: { equals: profile.email } }, limit: 1, page: 1 })
+      ).docs[0]
+      if (existing) {
+        // 2) Linking a provider to a PRE-EXISTING account (e.g. a password user).
+        //    Only safe when the provider has VERIFIED the email — otherwise an
+        //    attacker who sets their provider email to a victim's could take over.
+        if (!profile.emailVerified) {
+          throw new ForbiddenError('This email is already registered. Sign in with your password to link OAuth.')
+        }
+        // OAuth carries no second factor, so it must never bypass an account's 2FA.
+        if (twoFactorEnabled(collection) && (existing.totp_enabled === true || existing.totp_enabled === 1)) {
+          throw new ForbiddenError('This account has two-factor enabled. Sign in with your password and code.')
+        }
+        if (canLinkIdentity) {
+          await db.update({
+            collection: collection.slug,
+            id: String(existing.id),
+            data: { oauth_provider: opts.provider, oauth_subject: profile.id },
+          })
+        }
+        row = (await db.findByID({ collection: collection.slug, id: String(existing.id) })) ?? undefined
+      } else {
+        // 3) First sign-in → create the account. A random password satisfies the
+        //    auth pipeline; the user can set one later via forgot-password. Only
+        //    mark the email verified when the provider actually verified it.
+        const data: Row = { email: profile.email, password: randomBytes(24).toString('base64url') }
+        if (profile.name && hasField('name')) data.name = profile.name
+        if (hasField('email_verified')) data.email_verified = profile.emailVerified === true
+        if (canLinkIdentity) {
+          data.oauth_provider = opts.provider
+          data.oauth_subject = profile.id
+        }
+        const created = await create({ collection: collection.slug, data, overrideAccess: true })
+        row = (await db.findByID({ collection: collection.slug, id: created.id })) ?? undefined
+      }
     }
     if (!row) throw new BadRequestError('Could not resolve the OAuth user.')
 
     const user = rowToDoc(collection, row, buildReq()) as AuthUser
     user.collection = collection.slug
     const ttl = authTtl(collection)
-    const token = signToken({ sub: user.id, collection: collection.slug }, config.secret, ttl)
+    const token = issueToken(user.id, collection.slug, row, ttl)
     return { user, token, exp: nowSec() + ttl }
   }
 
@@ -1006,6 +1182,8 @@ export function createOperations(ctx: OperationCtx) {
     const collection = collectionOrThrow(opts.collection)
     const opt = forgotOptions(collection)
     if (!opt) throw new BadRequestError(`Collection "${opts.collection}" does not have forgotPassword enabled.`)
+    // Throttle before any DB/email work to blunt mail-bombing and cost abuse.
+    throttleEmailAction('forgot', collection.slug, opts.email)
     const result = await db.find({
       collection: collection.slug,
       where: { email: { equals: opts.email } },
@@ -1046,15 +1224,22 @@ export function createOperations(ctx: OperationCtx) {
     if (!row || exp < nowSec()) {
       throw new BadRequestError('This password reset link is invalid or has expired.')
     }
+    // Bump the session epoch so every token issued before this reset stops working.
+    const nextVersion = tokenVersionOf(row) + 1
     await db.update({
       collection: collection.slug,
       id: String(row.id),
-      data: { hash: await hashPassword(opts.password), reset_token: null, reset_token_expiry: null },
+      data: {
+        hash: await hashPassword(opts.password),
+        reset_token: null,
+        reset_token_expiry: null,
+        token_version: nextVersion,
+      },
     })
     const user = rowToDoc(collection, { ...row, hash: undefined }, buildReq()) as AuthUser
     user.collection = collection.slug
     const ttl = authTtl(collection)
-    const token = signToken({ sub: user.id, collection: collection.slug }, config.secret, ttl)
+    const token = issueToken(user.id, collection.slug, { ...row, token_version: nextVersion }, ttl)
     return { user, token, exp: nowSec() + ttl }
   }
 
@@ -1089,6 +1274,7 @@ export function createOperations(ctx: OperationCtx) {
     const collection = collectionOrThrow(opts.collection)
     const opt = verifyOptions(collection)
     if (!opt) throw new BadRequestError(`Collection "${opts.collection}" does not have email verification enabled.`)
+    throttleEmailAction('verify', collection.slug, opts.email)
     const result = await db.find({
       collection: collection.slug,
       where: { email: { equals: opts.email } },
@@ -1230,6 +1416,9 @@ export function createOperations(ctx: OperationCtx) {
     const row = await db.findByID({ collection: table, id: GLOBAL_ROW_ID })
     let doc = globalDoc(global, row, req)
     doc = await runHooks(global.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')
+    // Field-level read access must apply to globals too, exactly as it does for
+    // collection reads — otherwise a `field.access.read` rule is silently ignored.
+    if (!(opts.overrideAccess ?? false)) await applyReadFieldAccess(global.fields, doc, req)
     return doc as T
   }
 
@@ -1263,6 +1452,7 @@ export function createOperations(ctx: OperationCtx) {
     }
     let doc = globalDoc(global, saved, req)
     doc = await runHooks(global.hooks?.afterChange, { req, operation: 'update', doc }, 'doc')
+    if (!(opts.overrideAccess ?? false)) await applyReadFieldAccess(global.fields, doc, req)
     return doc as T
   }
 
@@ -1402,7 +1592,11 @@ export function createOperations(ctx: OperationCtx) {
 
   function fileExtension(name: string): string {
     const dot = name.lastIndexOf('.')
-    return dot > 0 ? name.slice(dot + 1).toLowerCase() : 'bin'
+    const raw = dot > 0 ? name.slice(dot + 1).toLowerCase() : 'bin'
+    // Clamp to a safe, bounded token so a crafted filename extension can never
+    // shape the storage key (path separators, dots, length abuse).
+    const cleaned = raw.replace(/[^a-z0-9]/g, '').slice(0, 8)
+    return cleaned || 'bin'
   }
   function derivativeKey(originalKey: string, sizeName: string, ext: string): string {
     const dot = originalKey.lastIndexOf('.')

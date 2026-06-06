@@ -110,18 +110,31 @@ export function totpCode(secret: string, timeMs: number = Date.now()): string {
   return hotp(secret, Math.floor(timeMs / 1000 / 30))
 }
 
-/** Verify a code within ±`window` 30s steps (clock-drift tolerance). */
-export function verifyTotp(secret: string, code: string, timeMs: number = Date.now(), window = 1): boolean {
+/**
+ * Verify a code within ±`window` 30s steps and return the matched absolute step
+ * counter, or null if no step matches. Callers persist the returned step and
+ * reject codes whose step is <= the last accepted one, which closes the TOTP
+ * replay window (a single code can otherwise be reused for ~90s).
+ */
+export function verifyTotpStep(secret: string, code: string, timeMs: number = Date.now(), window = 1): number | null {
   const trimmed = String(code ?? '').trim()
-  if (!/^\d{6}$/.test(trimmed)) return false
+  if (!/^\d{6}$/.test(trimmed)) return null
   const counter = Math.floor(timeMs / 1000 / 30)
+  let matched: number | null = null
+  // Check every step in the window (no early return) for constant-time behaviour.
   for (let i = -window; i <= window; i++) {
-    const expected = hotp(secret, counter + i)
+    const step = counter + i
+    const expected = hotp(secret, step)
     const a = Buffer.from(expected)
     const b = Buffer.from(trimmed)
-    if (a.length === b.length && timingSafeEqual(a, b)) return true
+    if (a.length === b.length && timingSafeEqual(a, b)) matched = step
   }
-  return false
+  return matched
+}
+
+/** Verify a code within ±`window` 30s steps (clock-drift tolerance). */
+export function verifyTotp(secret: string, code: string, timeMs: number = Date.now(), window = 1): boolean {
+  return verifyTotpStep(secret, code, timeMs, window) !== null
 }
 
 /** Build the `otpauth://` URI for QR enrolment in an authenticator app. */
@@ -151,6 +164,14 @@ export function verifyToken(token: string, secret: string): TokenPayload | null 
   const parts = token.split('.')
   if (parts.length !== 3) return null
   const [header, body, sig] = parts as [string, string, string]
+  // Pin the algorithm: only HS256 is ever issued. Rejecting the header up front
+  // forecloses any "alg" confusion/downgrade attempt before signature checking.
+  try {
+    const head = JSON.parse(Buffer.from(header, 'base64url').toString('utf8')) as { alg?: unknown; typ?: unknown }
+    if (head.alg !== 'HS256' || head.typ !== 'JWT') return null
+  } catch {
+    return null
+  }
   const expected = createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url')
   const a = Buffer.from(sig)
   const b = Buffer.from(expected)

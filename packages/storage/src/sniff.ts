@@ -38,15 +38,33 @@ export function sniffMimeType(buf: Buffer): string | null {
  * allowed for text/* and application/json where there is no reliable signature.
  */
 export function isContentTypeConsistent(declared: string, sniffed: string | null): boolean {
+  // Active-content types are never accepted on the strength of a declaration alone:
+  // text/html, XHTML and JS execute in a browser and are the core stored-XSS risk.
+  if (DANGEROUS_TEXT_TYPES.has(declared)) return false
   if (sniffed) {
     if (declared === sniffed) return true
     // jpeg sometimes declared as image/jpg
     if (declared === 'image/jpg' && sniffed === 'image/jpeg') return true
     return false
   }
-  // No signature: only trust inherently text-based types.
-  return declared.startsWith('text/') || declared === 'application/json'
+  // No signature: only trust an explicit allow-list of inert text types. (A bare
+  // `text/*` accept-all would trust an arbitrary declared label; xml/svg must come
+  // through the signature path instead.)
+  return SAFE_NO_SIGNATURE_TYPES.has(declared)
 }
+
+const SAFE_NO_SIGNATURE_TYPES = new Set(['text/plain', 'text/csv', 'text/markdown', 'application/json'])
+
+// HTML/JS execute as documents in a browser and have no business being accepted
+// from a declared content-type with no matching signature. (SVG/XML can be
+// legitimate and are made safe at delivery via attachment + nosniff instead.)
+const DANGEROUS_TEXT_TYPES = new Set([
+  'text/html',
+  'application/xhtml+xml',
+  'text/javascript',
+  'application/javascript',
+  'application/x-javascript',
+])
 
 function ascii(b: Buffer, offset: number, str: string): boolean {
   if (b.length < offset + str.length) return false

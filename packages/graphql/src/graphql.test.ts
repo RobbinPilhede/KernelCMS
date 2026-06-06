@@ -45,6 +45,30 @@ afterEach(async () => {
   await kernel.destroy()
 })
 
+describe('GraphQL hardening', () => {
+  it('rejects a query nested deeper than the depth limit (DoS guard)', async () => {
+    const shallow = createGraphQL(kernel, { maxDepth: 3 })
+    // posts -> docs -> author -> name is depth 4, beyond the cap.
+    const res = await shallow({ query: '{ posts { docs { author { name } } } }', context: sys })
+    expect(res.errors?.[0]?.message).toMatch(/maximum depth/i)
+  })
+
+  it('can disable introspection', async () => {
+    const noIntrospect = createGraphQL(kernel, { disableIntrospection: true })
+    const res = await noIntrospect({ query: '{ __schema { types { name } } }', context: sys })
+    expect(res.errors && res.errors.length).toBeGreaterThan(0)
+  })
+
+  it('does not let a JSON arg pollute Object.prototype', async () => {
+    await gql({
+      query: 'mutation($d: JSON!) { createPosts(data: $d) { id } }',
+      variables: { d: { title: 'ok', __proto__: { polluted: 'yes' } } },
+      context: sys,
+    })
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+})
+
 describe('GraphQL API', () => {
   it('creates and queries documents through generated types', async () => {
     const created = await gql({

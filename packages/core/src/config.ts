@@ -23,7 +23,7 @@ function consoleEmailFallback(): EmailAdapter {
 }
 
 /** Inject email + password-hash fields into auth-enabled collections. */
-function withAuthFields(collection: CollectionConfig): CollectionConfig {
+function withAuthFields(collection: CollectionConfig, hasOAuth = false): CollectionConfig {
   const fields: ConfigField[] = [...collection.fields]
   const has = (name: string) => fields.some((f) => 'name' in f && f.name === name)
   if (!has('email')) {
@@ -31,6 +31,11 @@ function withAuthFields(collection: CollectionConfig): CollectionConfig {
   }
   if (!has('hash')) {
     fields.push({ name: 'hash', type: 'text', admin: { hidden: true } })
+  }
+  // Session epoch: embedded in issued tokens and bumped on password change/reset
+  // so previously-issued JWTs stop authenticating. Server-managed.
+  if (!has('token_version')) {
+    fields.push({ name: 'token_version', type: 'number', integer: true, defaultValue: 0, admin: { hidden: true } })
   }
   // API-key auth stores only a hash of the key (never the key itself).
   const auth = collection.auth
@@ -66,6 +71,21 @@ function withAuthFields(collection: CollectionConfig): CollectionConfig {
     }
     if (!has('totp_enabled')) {
       fields.push({ name: 'totp_enabled', type: 'boolean', defaultValue: false, admin: { readOnly: true } })
+    }
+    // The last accepted TOTP step — used to reject code replay. Server-managed.
+    if (!has('totp_last_step')) {
+      fields.push({ name: 'totp_last_step', type: 'number', integer: true, admin: { hidden: true } })
+    }
+  }
+  // OAuth identity: returning users are matched by the stable provider+subject so
+  // a re-login never relies on email (which an attacker could spoof). Set on the
+  // account the first time it signs in via a provider.
+  if (hasOAuth) {
+    if (!has('oauth_provider')) {
+      fields.push({ name: 'oauth_provider', type: 'text', index: true, admin: { hidden: true } })
+    }
+    if (!has('oauth_subject')) {
+      fields.push({ name: 'oauth_subject', type: 'text', index: true, admin: { hidden: true } })
     }
   }
   return { ...collection, fields }
@@ -177,9 +197,10 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     )
     baseCollections.push(jobsCollection())
   }
+  const hasOAuth = Boolean(config.oauth && config.oauth.length > 0)
   const collections = baseCollections.map((c) => {
     let out = c
-    if (out.auth) out = withAuthFields(out)
+    if (out.auth) out = withAuthFields(out, hasOAuth)
     if (out.upload) out = withUploadFields(out)
     return out
   })
@@ -208,7 +229,20 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     localization = { locales, defaultLocale, fallback: fallback ?? true }
   }
 
-  const secret = config.secret ?? process.env.KERNEL_SECRET ?? devSecret()
+  const configuredSecret = config.secret ?? process.env.KERNEL_SECRET
+  // Refuse to boot in production with no real secret: the dev fallback is a public
+  // constant, so anyone could forge a valid admin session JWT against it.
+  if (!configuredSecret && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[KernelCMS] No `secret` or KERNEL_SECRET is set. A strong secret is required in production ' +
+        '(NODE_ENV=production); the built-in development secret is public and would let anyone forge sessions.',
+    )
+  }
+  // Also reject explicitly pinning the known-insecure constant in production.
+  if (configuredSecret === DEV_SECRET && process.env.NODE_ENV === 'production') {
+    throw new Error('[KernelCMS] The development secret must not be used in production. Set a unique KERNEL_SECRET.')
+  }
+  const secret = configuredSecret ?? devSecret()
 
   const adminUser = config.admin?.user ?? collections.find((c) => c.auth)?.slug ?? 'users'
 

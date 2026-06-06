@@ -21,6 +21,27 @@ export interface SanitizeResult {
 
 const ID_RE = /^[A-Za-z0-9_-]+$/
 const SAFE_SCHEME_RE = /^(https?:|mailto:|tel:)/i
+// A leading URL scheme like `javascript:` / `data:` (letter then scheme chars + ':').
+const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
+
+/**
+ * Coerce an href to a safe value: an http(s)/mailto/tel URL, or a relative/anchor
+ * URL (no scheme). Anything with a disallowed scheme — `javascript:`, `data:`,
+ * `vbscript:`, … — becomes `#`. This is the final guard used by every serializer,
+ * so even a host `resolveHref` that returns a hostile scheme can't emit clickable
+ * XSS.
+ */
+export function safeHref(href: unknown): string {
+  const trimmed = String(href ?? '').trim()
+  // Drop whitespace + ASCII control chars that browsers ignore inside a scheme
+  // (e.g. "java\tscript:") before classifying.
+  let collapsed = ''
+  for (const ch of trimmed) if (ch.codePointAt(0)! > 0x20) collapsed += ch
+  if (SAFE_SCHEME_RE.test(collapsed)) return trimmed
+  // No scheme at all → relative path or anchor, safe.
+  if (!HAS_SCHEME_RE.test(collapsed)) return trimmed
+  return '#'
+}
 // Canonical, stable mark order so equal mark sets serialize identically (diffable).
 const MARK_ORDER: MarkType[] = ['bold', 'italic', 'underline', 'strike', 'code', 'sub', 'sup']
 

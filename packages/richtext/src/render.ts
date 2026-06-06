@@ -5,6 +5,7 @@
  * wrapper consumers call with React's createElement. See spec §8.
  */
 import type { KernelRichText, LinkNode, Mark, RichBlockNode, RichInlineNode, TextNode } from './types'
+import { safeHref } from './sanitize'
 
 /** Minimal createElement signature (compatible with React.createElement). */
 export type CreateElement<E> = (type: string, props: Record<string, unknown> | null, ...children: (E | string)[]) => E
@@ -96,7 +97,8 @@ function renderInlineNode<E>(node: RichInlineNode, opts: RenderOptions<E>): E | 
     case 'text':
       return renderText(node, h)
     case 'link': {
-      const href = node.doc ? (opts.resolvers?.resolveHref?.(node.doc) ?? '#') : node.url
+      const rawHref = node.doc ? (opts.resolvers?.resolveHref?.(node.doc) ?? '#') : (node.url ?? '#')
+      const href = safeHref(String(rawHref))
       const props: Record<string, unknown> = { key: k(), href }
       if (node.newTab) {
         props.target = '_blank'

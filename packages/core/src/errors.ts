@@ -7,6 +7,7 @@ export type ErrorCode =
   | 'UNAUTHORIZED'
   | 'CONFLICT'
   | 'BAD_REQUEST'
+  | 'PAYLOAD_TOO_LARGE'
   | 'TOO_MANY_REQUESTS'
   | 'INTERNAL'
 
@@ -82,6 +83,13 @@ export class ConflictError extends KernelError {
   constructor(message = 'The resource already exists.', details?: unknown) {
     super(message, 'CONFLICT', 409, details)
     this.name = 'ConflictError'
+  }
+}
+
+export class PayloadTooLargeError extends KernelError {
+  constructor(message = 'Request body too large.', details?: unknown) {
+    super(message, 'PAYLOAD_TOO_LARGE', 413, details)
+    this.name = 'PayloadTooLargeError'
   }
 }
 

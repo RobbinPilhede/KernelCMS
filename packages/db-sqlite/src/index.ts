@@ -241,9 +241,13 @@ class SQLiteAdapter implements DatabaseAdapter {
       const sub = where.and.map((w) => this.buildWhere(w, table, cols, allowed, params)).filter(Boolean)
       if (sub.length) clauses.push(`(${sub.join(' AND ')})`)
     }
-    if (where.or?.length) {
-      const sub = where.or.map((w) => this.buildWhere(w, table, cols, allowed, params)).filter(Boolean)
-      if (sub.length) clauses.push(`(${sub.join(' OR ')})`)
+    if (where.or) {
+      // An explicit empty `or: []` means "match nothing" (deny), so fail closed.
+      if (where.or.length === 0) clauses.push('0')
+      else {
+        const sub = where.or.map((w) => this.buildWhere(w, table, cols, allowed, params)).filter(Boolean)
+        if (sub.length) clauses.push(`(${sub.join(' OR ')})`)
+      }
     }
     for (const [field, cond] of Object.entries(where)) {
       if (field === 'and' || field === 'or' || cond === undefined) continue

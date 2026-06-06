@@ -89,7 +89,9 @@ function matchesCondition(value: unknown, cond: WhereCondition): boolean {
 export function matchesWhere(row: Row, where: Where | undefined): boolean {
   if (!where) return true
   if (where.and && !where.and.every((w) => matchesWhere(row, w))) return false
-  if (where.or && where.or.length > 0 && !where.or.some((w) => matchesWhere(row, w))) return false
+  // An explicit empty `or: []` means "match nothing" (deny), not "match all" —
+  // so a deny-all access scope written as `{ or: [] }` fails closed.
+  if (where.or && !where.or.some((w) => matchesWhere(row, w))) return false
   for (const [key, cond] of Object.entries(where)) {
     if (key === 'and' || key === 'or' || cond === undefined) continue
     if (!matchesCondition(row[key], cond as WhereCondition)) return false

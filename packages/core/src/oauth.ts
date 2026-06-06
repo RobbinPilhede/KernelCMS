@@ -9,6 +9,9 @@ export interface OAuthProfile {
   /** Stable provider-side id. */
   id: string
   email: string
+  /** Whether the provider has verified the email belongs to this account.
+   *  When false/undefined, `loginWithOAuth` will not link to an existing user. */
+  emailVerified?: boolean
   name?: string
 }
 
@@ -76,8 +79,10 @@ export function googleOAuth(opts: { clientId: string; clientSecret: string }): O
         headers: { authorization: `Bearer ${accessToken}` },
       })
       if (!res.ok) throw new Error(`Google userinfo failed (${res.status}).`)
-      const u = (await res.json()) as { sub: string; email: string; name?: string }
-      return { id: u.sub, email: u.email, name: u.name }
+      const u = (await res.json()) as { sub: string; email: string; email_verified?: boolean | string; name?: string }
+      // Google returns email_verified as a boolean (or the string "true").
+      const verified = u.email_verified === true || u.email_verified === 'true'
+      return { id: u.sub, email: u.email, emailVerified: verified, name: u.name }
     },
   })
 }
@@ -92,12 +97,28 @@ export function githubOAuth(opts: { clientId: string; clientSecret: string }): O
     clientSecret: opts.clientSecret,
     scope: 'read:user user:email',
     async profile(accessToken) {
-      const res = await fetch('https://api.github.com/user', {
-        headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
-      })
+      const headers = { authorization: `Bearer ${accessToken}`, accept: 'application/json' }
+      const res = await fetch('https://api.github.com/user', { headers })
       if (!res.ok) throw new Error(`GitHub user fetch failed (${res.status}).`)
       const u = (await res.json()) as { id: number; email: string | null; name?: string; login: string }
-      return { id: String(u.id), email: u.email ?? `${u.login}@users.noreply.github.com`, name: u.name ?? u.login }
+      // The /user email can be unverified or hidden. Resolve the verified primary
+      // address from /user/emails so we never trust an attacker-set unverified email.
+      let email = u.email ?? `${u.login}@users.noreply.github.com`
+      let emailVerified = false
+      try {
+        const emailsRes = await fetch('https://api.github.com/user/emails', { headers })
+        if (emailsRes.ok) {
+          const emails = (await emailsRes.json()) as { email: string; primary: boolean; verified: boolean }[]
+          const primary = emails.find((e) => e.primary && e.verified) ?? emails.find((e) => e.verified)
+          if (primary) {
+            email = primary.email
+            emailVerified = true
+          }
+        }
+      } catch {
+        emailVerified = false
+      }
+      return { id: String(u.id), email, emailVerified, name: u.name ?? u.login }
     },
   })
 }

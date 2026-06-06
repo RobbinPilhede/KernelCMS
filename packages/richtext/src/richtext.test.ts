@@ -272,4 +272,17 @@ describe('toHTML', () => {
     const html = toHTML(clean, { resolveHref: (ref) => `/${ref.relationTo}/${ref.value}` })
     expect(html).toBe('<p><a href="/pages/home" target="_blank" rel="noopener noreferrer">Home</a></p>')
   })
+
+  it('neutralizes a javascript: href returned by a host resolveHref', () => {
+    const { doc: clean } = sanitizeRichText(
+      doc({
+        type: 'paragraph',
+        children: [{ type: 'link', url: '#', doc: { relationTo: 'pages', value: 'x' }, children: [textNode('Click')] }],
+      }),
+      full,
+    )
+    // A hostile resolver must not be able to emit a clickable javascript: URL.
+    const html = toHTML(clean, { resolveHref: () => 'javascript:alert(document.cookie)' })
+    expect(html).toBe('<p><a href="#">Click</a></p>')
+  })
 })

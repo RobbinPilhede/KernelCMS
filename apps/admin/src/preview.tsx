@@ -5,6 +5,7 @@
 // the common section types and falls back to a generic view otherwise. A real
 // project points live preview at its own frontend URL instead.
 import { useEffect, useState } from 'react'
+import DOMPurify from 'dompurify'
 import { fetchSchema } from './api'
 import type { AdminBlockMeta, AdminCollection, AdminFieldMeta } from './api'
 
@@ -12,7 +13,17 @@ type Data = Record<string, unknown>
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 const rows = (v: unknown): Data[] => (Array.isArray(v) ? (v as Data[]) : [])
-const html = (v: unknown) => ({ __html: str(v) })
+// Author-supplied rich content is sanitized before it ever reaches the DOM. The
+// preview runs on the admin origin where the session token lives, so an
+// unsanitized field value would be a stored-XSS / privilege-escalation vector.
+const html = (v: unknown) => ({ __html: DOMPurify.sanitize(str(v)) })
+// Only emit a CSS background URL when it can't break out of the `url(...)`
+// declaration (no quotes/parens/whitespace/backslashes) — prevents CSS injection.
+const bgImage = (v: unknown): { backgroundImage: string } | undefined => {
+  const s = str(v).trim()
+  if (!s || /["'()\\\s]/.test(s)) return undefined
+  return { backgroundImage: `url("${s}")` }
+}
 
 export function PreviewPage({ collection }: { collection: string }) {
   const [coll, setColl] = useState<AdminCollection | null>(null)
@@ -36,10 +47,14 @@ export function PreviewPage({ collection }: { collection: string }) {
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
+      // Only trust the editor that hosts this iframe (same-origin parent). Without
+      // these checks any page could postMessage HTML into the preview, which is
+      // rendered into the document — a DOM-XSS path on the admin's own origin.
+      if (e.source !== window.parent || e.origin !== window.location.origin) return
       if (e.data && e.data.type === 'kernel-preview') setData((e.data.data as Data) ?? {})
     }
     window.addEventListener('message', onMessage)
-    window.parent?.postMessage({ type: 'kernel-preview-ready' }, '*')
+    window.parent?.postMessage({ type: 'kernel-preview-ready' }, window.location.origin)
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
@@ -88,7 +103,7 @@ function Eyebrow({ children }: { children: unknown }) {
 
 function Hero({ data }: { data: Data }) {
   return (
-    <section className="s-hero" style={data.image ? { backgroundImage: `url(${str(data.image)})` } : undefined}>
+    <section className="s-hero" style={bgImage(data.image)}>
       <div className="s-hero-overlay" />
       <div className="s-hero-inner">
         <Eyebrow>{data.eyebrow}</Eyebrow>
@@ -189,9 +204,7 @@ function TvStreaming({ data }: { data: Data }) {
 
 function MediaSplit({ data }: { data: Data }) {
   const right = str(data.image_side) === 'right'
-  const media = (
-    <div className="s-split-media" style={data.image ? { backgroundImage: `url(${str(data.image)})` } : undefined} />
-  )
+  const media = <div className="s-split-media" style={bgImage(data.image)} />
   const text = (
     <div className="s-split-text">
       <Eyebrow>{data.eyebrow}</Eyebrow>
@@ -220,7 +233,7 @@ function MediaSplit({ data }: { data: Data }) {
 function Faq({ data }: { data: Data }) {
   return (
     <section className="s-split s-faq">
-      <div className="s-split-media" style={data.image ? { backgroundImage: `url(${str(data.image)})` } : undefined} />
+      <div className="s-split-media" style={bgImage(data.image)} />
       <div className="s-split-text">
         <Eyebrow>{data.eyebrow}</Eyebrow>
         <h2 className="s-h2">{str(data.heading)}</h2>

@@ -181,6 +181,8 @@ function LivePreview({ slug, form, url }: { slug: string; form: Record<string, u
   // data. This avoids the race where data is sent before the iframe is listening.
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
+      // Only react to the iframe we host, on the origin we post to.
+      if (e.source !== iframeRef.current?.contentWindow || e.origin !== targetOrigin) return
       if (e.data && e.data.type === 'kernel-preview-ready') {
         readyRef.current = true
         post()

@@ -6,7 +6,7 @@ import { sqliteAdapter } from '@kernel/db-sqlite'
 import { initKernel, memoryEmail, totpCode } from '@kernel/core'
 import type { EmailMessage, Kernel, MemoryEmailAdapter } from '@kernel/core'
 import { localStorage } from '@kernel/storage'
-import { createRequestHandler } from './index'
+import { createRequestHandler, parseWhere } from './index'
 
 let kernel: Kernel
 
@@ -424,7 +424,32 @@ describe('uploads (REST + local delivery)', () => {
     const file = await h(new Request(`http://localhost${doc.url}`))
     expect(file.status).toBe(200)
     expect(file.headers.get('content-type')).toBe('image/png')
+    // Raster images may render inline, but never without nosniff.
+    expect(file.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(file.headers.get('content-disposition')).toBe('inline')
     expect(Buffer.from(await file.arrayBuffer()).equals(PNG)).toBe(true)
+  })
+
+  it('serves an uploaded SVG as a download with nosniff (stored-XSS defence)', async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', 'utf8')
+    const form = new FormData()
+    form.set('file', new File([svg], 'x.svg', { type: 'image/svg+xml' }))
+    form.set('alt', 'vector')
+    const res = await h(
+      new Request('http://localhost/api/media', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${SVC}` },
+        body: form,
+      }),
+    )
+    expect(res.status).toBe(201)
+    const doc = (await res.json()) as { url: string }
+    const file = await h(new Request(`http://localhost${doc.url}`))
+    expect(file.status).toBe(200)
+    // SVG is an active document: it must download, never render inline, and the
+    // browser must not be allowed to sniff a different type.
+    expect(file.headers.get('content-disposition')).toBe('attachment')
+    expect(file.headers.get('x-content-type-options')).toBe('nosniff')
   })
 
   it('rejects a non-image masquerading via its filename', async () => {
@@ -744,5 +769,46 @@ describe('admin component overrides (script injection)', () => {
     const plain = createRequestHandler(k, { admin: true })
     const plainBody = await (await plain(new Request('http://localhost/admin'))).text()
     expect(plainBody).not.toContain('/custom/fields.js')
+  })
+})
+
+describe('parseWhere hardening', () => {
+  const params = (qs: string) => new URLSearchParams(qs)
+
+  it('rejects prototype-pollution keys in the bracket form', () => {
+    expect(() => parseWhere(params('where[__proto__][polluted]=1'))).toThrow()
+    // The pollution attempt must not have leaked onto Object.prototype.
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
+  it('rejects prototype-pollution keys in the JSON form', () => {
+    expect(() => parseWhere(params(`where=${encodeURIComponent('{"constructor":{"prototype":{"x":1}}}')}`))).toThrow()
+  })
+
+  it('rejects an over-deeply-nested where (DoS guard)', () => {
+    let nested = '{"id":{"equals":1}}'
+    for (let i = 0; i < 30; i++) nested = `{"or":[${nested}]}`
+    expect(() => parseWhere(params(`where=${encodeURIComponent(nested)}`))).toThrow()
+  })
+
+  it('still parses a normal where', () => {
+    const w = parseWhere(params('where[title][equals]=hello'))
+    expect(w).toEqual({ title: { equals: 'hello' } })
+  })
+})
+
+describe('security headers', () => {
+  it('sets nosniff, frame-options and referrer-policy on API responses', async () => {
+    const handler = createRequestHandler(kernel, {})
+    const res = await handler(new Request('http://localhost/api/health'))
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(res.headers.get('x-frame-options')).toBe('SAMEORIGIN')
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+  })
+
+  it('locks the admin shell against third-party framing via CSP', async () => {
+    const handler = createRequestHandler(kernel, { admin: true })
+    const res = await handler(new Request('http://localhost/admin'))
+    expect(res.headers.get('content-security-policy')).toContain("frame-ancestors 'self'")
   })
 })

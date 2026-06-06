@@ -22,7 +22,12 @@ interface SharpLike {
     info: { width: number; height: number; format: string }
   }>
 }
-type SharpFactory = (input: Buffer) => SharpLike
+type SharpFactory = (input: Buffer, opts?: Record<string, unknown>) => SharpLike
+
+// Cap decoded pixels to defang decompression bombs (a few-KB file that inflates
+// to hundreds of megapixels of RAM). ~50 MP comfortably covers real photos.
+const MAX_INPUT_PIXELS = 50_000_000
+const SHARP_INPUT_OPTS = { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' as const }
 
 let cached: SharpFactory | null = null
 async function loadSharp(): Promise<SharpFactory> {
@@ -51,14 +56,14 @@ export function sharpImageProcessor(): ImageProcessor {
     name: 'sharp',
     async probe(data: Buffer): Promise<ImageInfo | null> {
       const sharp = await loadSharp()
-      const meta = await sharp(data).metadata()
+      const meta = await sharp(data, SHARP_INPUT_OPTS).metadata()
       if (!meta.width || !meta.height) return null
       return { width: meta.width, height: meta.height, format: meta.format ?? 'unknown' }
     },
     async resize(data: Buffer, options: ResizeOptions): Promise<ResizeResult> {
       const sharp = await loadSharp()
       const fit = options.fit ?? 'cover'
-      let img: SharpLike = sharp(data).resize({
+      let img: SharpLike = sharp(data, SHARP_INPUT_OPTS).resize({
         width: options.width,
         height: options.height,
         fit,

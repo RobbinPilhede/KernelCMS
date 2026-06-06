@@ -5,11 +5,13 @@
  */
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { timingSafeEqual } from 'node:crypto'
 import type { AuthUser, Kernel, Row, Where } from '@kernel/core'
 import {
   BadRequestError,
   ForbiddenError,
   NotFoundError,
+  PayloadTooLargeError,
   UnauthorizedError,
   describeConfig,
   isKernelError,
@@ -70,8 +72,32 @@ function html(body: string, status = 200): Response {
 function adminShell(options: HandlerOptions): string {
   const scripts = typeof options.admin === 'object' ? (options.admin.scripts ?? []) : []
   if (scripts.length === 0) return ADMIN_HTML
-  const tags = scripts.map((src) => `<script src="${src.replace(/"/g, '&quot;')}" type="module"></script>`).join('')
+  const escAttr = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const tags = scripts.map((src) => `<script src="${escAttr(src)}" type="module"></script>`).join('')
   return ADMIN_HTML.includes('</body>') ? ADMIN_HTML.replace('</body>', `${tags}</body>`) : ADMIN_HTML + tags
+}
+
+const OAUTH_STATE_COOKIE = 'kernel_oauth_state'
+
+/** Read a single cookie value from the request's Cookie header. */
+function readCookie(request: Request, name: string): string | null {
+  const header = request.headers.get('cookie')
+  if (!header) return null
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq === -1) continue
+    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim())
+  }
+  return null
+}
+
+/** Constant-time string comparison that never short-circuits on length. */
+function timingEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
 }
 
 type RequestHandler = (request: Request) => Promise<Response>
@@ -79,29 +105,45 @@ type RequestHandler = (request: Request) => Promise<Response>
 export function createRequestHandler(kernel: Kernel, options: HandlerOptions = {}): RequestHandler {
   const apiBase = kernel.config.routes.api
   const adminBase = adminBaseOf(options)
+  const finish = (response: Response, request: Request): Response =>
+    withSecurityHeaders(withCors(response, options, request))
   return async function handle(request: Request): Promise<Response> {
-    if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }), options, request)
+    if (request.method === 'OPTIONS') return finish(new Response(null, { status: 204 }), request)
 
     // Built-in admin UI (same-origin HTML shell). The SPA decides setup/login/
     // dashboard from auth state, so every admin path returns the same document.
     if (adminBase && request.method === 'GET') {
       const { pathname } = new URL(request.url)
       if (pathname === '/login' || pathname === adminBase || pathname.startsWith(adminBase + '/')) {
-        return withCors(html(adminShell(options)), options, request)
+        const shell = html(adminShell(options))
+        // The admin can only be framed by its own origin (live preview iframe),
+        // never embedded by a third party (clickjacking); plugin <base>/<object>
+        // tricks are blocked too.
+        shell.headers.set('content-security-policy', "frame-ancestors 'self'; object-src 'none'; base-uri 'self'")
+        return finish(shell, request)
       }
     }
 
     // Local-disk delivery: stream stored bytes from the adapter's servePath.
     const fileResponse = await maybeServeFile(kernel, options, request)
-    if (fileResponse) return withCors(fileResponse, options, request)
+    if (fileResponse) return finish(fileResponse, request)
 
     try {
       const response = await route(kernel, options, request, apiBase)
-      return withCors(response, options, request)
+      return finish(response, request)
     } catch (err) {
-      return withCors(errorResponse(err), options, request)
+      return finish(errorResponse(err), request)
     }
   }
+}
+
+/** Baseline hardening headers applied to every response. */
+function withSecurityHeaders(response: Response): Response {
+  if (!response.headers.has('x-content-type-options')) response.headers.set('x-content-type-options', 'nosniff')
+  // SAMEORIGIN (not DENY) so the admin's same-origin live-preview iframe still works.
+  response.headers.set('x-frame-options', 'SAMEORIGIN')
+  response.headers.set('referrer-policy', 'no-referrer')
+  return response
 }
 
 const EXT_MIME: Record<string, string> = {
@@ -114,6 +156,10 @@ const EXT_MIME: Record<string, string> = {
   pdf: 'application/pdf',
   mp4: 'video/mp4',
 }
+
+// Content types safe to render inline. Notably excludes image/svg+xml: SVG is an
+// active document (can carry <script>) and must never be served inline same-origin.
+const INLINE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
 /**
  * Serve a stored object when the request targets the storage adapter's servePath.
@@ -162,10 +208,18 @@ async function maybeServeFile(kernel: Kernel, options: HandlerOptions, request: 
       }
       const bytes = await adapter.get(key)
       const ext = key.slice(key.lastIndexOf('.') + 1).toLowerCase()
+      const contentType = EXT_MIME[ext] ?? 'application/octet-stream'
+      // Only raster images are ever served inline. SVG, PDF, video and anything
+      // unknown is forced to download (`attachment`) so a hostile uploaded SVG or
+      // HTML-polyglot can never execute script on our own origin where the admin
+      // session lives. `nosniff` stops browsers from re-guessing a dangerous type.
+      const disposition = INLINE_CONTENT_TYPES.has(contentType) ? 'inline' : 'attachment'
       return new Response(bytes, {
         status: 200,
         headers: {
-          'content-type': EXT_MIME[ext] ?? 'application/octet-stream',
+          'content-type': contentType,
+          'content-disposition': disposition,
+          'x-content-type-options': 'nosniff',
           'cache-control': 'private, max-age=31536000, immutable',
         },
       })
@@ -368,14 +422,29 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     const redirectUri = `${url.origin}${apiBase}/${collection}/oauth/${provider}/callback`
 
     if (segments.length === 3) {
-      // Note: CSRF `state` validation needs a session store — tracked as a follow-up.
-      const location = def.authorizationUrl({ redirectUri, state: globalThis.crypto.randomUUID() })
-      return new Response(null, { status: 302, headers: { location } })
+      // CSRF defence: bind a random `state` to an httpOnly, SameSite=Lax cookie.
+      // The callback must echo the same value, so a forged callback (login CSRF /
+      // session fixation) without the cookie is rejected.
+      const state = globalThis.crypto.randomUUID()
+      const location = def.authorizationUrl({ redirectUri, state })
+      const cookie = `${OAUTH_STATE_COOKIE}=${state}; HttpOnly; Secure; SameSite=Lax; Path=${apiBase}/${collection}/oauth/${provider}; Max-Age=600`
+      return new Response(null, { status: 302, headers: { location, 'set-cookie': cookie } })
     }
     if (segments.length === 4 && segments[3] === 'callback') {
       const code = url.searchParams.get('code')
       if (!code) throw new BadRequestError('Missing OAuth `code`.')
-      return json(await kernel.loginWithOAuth({ collection, provider, code, redirectUri }))
+      const returned = url.searchParams.get('state') ?? ''
+      const expected = readCookie(request, OAUTH_STATE_COOKIE)
+      if (!expected || !timingEqual(returned, expected)) {
+        throw new BadRequestError('Invalid OAuth `state`.')
+      }
+      const res = json(await kernel.loginWithOAuth({ collection, provider, code, redirectUri }))
+      // Burn the one-time state cookie.
+      res.headers.set(
+        'set-cookie',
+        `${OAUTH_STATE_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=${apiBase}/${collection}/oauth/${provider}; Max-Age=0`,
+      )
+      return res
     }
   }
 
@@ -397,6 +466,11 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       const contentType = request.headers.get('content-type') ?? ''
       // Upload collections accept multipart/form-data with a `file` part.
       if (collConfig?.upload && contentType.includes('multipart/form-data')) {
+        // Reject oversized uploads by Content-Length before buffering the body
+        // (guards the runtime-agnostic fetch path; the Node adapter also caps).
+        const uploadCfg = typeof collConfig.upload === 'object' ? collConfig.upload : {}
+        const maxFile = typeof uploadCfg.maxFileSize === 'number' ? uploadCfg.maxFileSize : DEFAULT_MAX_BODY_BYTES
+        assertBodyWithinLimit(request, maxFile + 1024 * 1024)
         const form = await request.formData()
         const filePart = form.get('file')
         if (!(filePart instanceof File)) throw new BadRequestError('Expected a "file" part in the form data.')
@@ -501,7 +575,7 @@ async function resolveAuth(
   request: Request,
 ): Promise<{ user: AuthUser | null; overrideAccess: boolean }> {
   const auth = request.headers.get('authorization')
-  if (options.apiKey && auth === `Bearer ${options.apiKey}`) {
+  if (options.apiKey && auth?.startsWith('Bearer ') && timingEqual(auth.slice('Bearer '.length), options.apiKey)) {
     return { user: { id: 'system', roles: ['admin'], collection: 'system' }, overrideAccess: true }
   }
   if (options.getUser) {
@@ -509,7 +583,7 @@ async function resolveAuth(
     if (user) return { user, overrideAccess: false }
   }
   // Per-collection API keys: `Authorization: <collection> API-Key <key>`.
-  const apiKeyMatch = auth?.match(/^(\w+) API-Key (.+)$/)
+  const apiKeyMatch = auth?.match(/^(\w+) API-Key (\S{1,512})$/)
   if (apiKeyMatch) {
     const user = await kernel.authenticateAPIKey(apiKeyMatch[1]!, apiKeyMatch[2]!)
     if (user) return { user, overrideAccess: false }
@@ -521,7 +595,21 @@ async function resolveAuth(
   return { user: null, overrideAccess: false }
 }
 
+/** Ceiling for JSON request bodies on the runtime-agnostic fetch path (the Node
+ *  adapter has its own streaming cap). Multipart uploads use a larger cap. */
+const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024
+
+/** Reject by Content-Length before reading the stream, so a host that wires the
+ *  fetch handler directly (serverless/edge) still gets a body-size guard. */
+function assertBodyWithinLimit(request: Request, limit: number): void {
+  const len = Number(request.headers.get('content-length'))
+  if (Number.isFinite(len) && len > limit) {
+    throw new PayloadTooLargeError('Request body too large.')
+  }
+}
+
 async function readBody(request: Request): Promise<Row> {
+  assertBodyWithinLimit(request, MAX_JSON_BODY_BYTES)
   let parsed: unknown
   try {
     parsed = await request.json()
@@ -546,7 +634,18 @@ function coerce(value: string): unknown {
   return value
 }
 
+// Keys that would let a crafted `where` reach Object.prototype (prototype
+// pollution) — rejected on every path before any object walk.
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+// Bounds on a client-supplied `where` so a deeply nested or enormous filter
+// can't blow the stack / pin the CPU in the recursive query matcher (DoS).
+const MAX_WHERE_DEPTH = 12
+const MAX_WHERE_NODES = 500
+
 function setDeep(root: Record<string, unknown>, path: string[], value: unknown): void {
+  for (const key of path) {
+    if (FORBIDDEN_KEYS.has(key)) throw new BadRequestError('Invalid `where` key.')
+  }
   let node: Record<string, unknown> = root
   for (let i = 0; i < path.length - 1; i++) {
     const key = path[i]!
@@ -556,14 +655,35 @@ function setDeep(root: Record<string, unknown>, path: string[], value: unknown):
   node[path[path.length - 1]!] = value
 }
 
+/** Reject dangerous keys and over-large/over-deep structures in a parsed `where`. */
+function assertSafeWhere(value: unknown, depth: number, counter: { n: number }): void {
+  if (depth > MAX_WHERE_DEPTH) throw new BadRequestError('`where` is nested too deeply.')
+  if (value === null || typeof value !== 'object') return
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (++counter.n > MAX_WHERE_NODES) throw new BadRequestError('`where` is too large.')
+      assertSafeWhere(item, depth + 1, counter)
+    }
+    return
+  }
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) throw new BadRequestError('Invalid `where` key.')
+    if (++counter.n > MAX_WHERE_NODES) throw new BadRequestError('`where` is too large.')
+    assertSafeWhere((value as Record<string, unknown>)[key], depth + 1, counter)
+  }
+}
+
 export function parseWhere(params: URLSearchParams): Where | undefined {
   const raw = params.get('where')
   if (raw) {
+    let parsed: unknown
     try {
-      return JSON.parse(raw) as Where
+      parsed = JSON.parse(raw)
     } catch {
       throw new BadRequestError('`where` must be valid JSON.')
     }
+    assertSafeWhere(parsed, 0, { n: 0 })
+    return parsed as Where
   }
   const root: Record<string, unknown> = {}
   let found = false
@@ -576,7 +696,10 @@ export function parseWhere(params: URLSearchParams): Where | undefined {
       .filter(Boolean)
     setDeep(root, path, coerce(value))
   }
-  return found ? (root as Where) : undefined
+  if (!found) return undefined
+  // Apply the same depth/size bounds to the bracket form as the JSON form.
+  assertSafeWhere(root, 0, { n: 0 })
+  return root as Where
 }
 
 // ---------------------------------------------------------------------------
@@ -645,15 +768,36 @@ function toNum(value: string | null): number | undefined {
 // Node http adapter
 // ---------------------------------------------------------------------------
 
-export function toNodeListener(handler: RequestHandler) {
+/** Default ceiling on a single request body (covers uploads); overridable. */
+export const DEFAULT_MAX_BODY_BYTES = 50 * 1024 * 1024
+
+export function toNodeListener(handler: RequestHandler, opts: { maxBodyBytes?: number } = {}) {
+  const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   return (req: IncomingMessage, res: ServerResponse): void => {
     const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
+    let size = 0
+    let aborted = false
+    req.on('data', (chunk: Buffer) => {
+      if (aborted) return
+      size += chunk.length
+      // Reject oversized bodies before buffering them all into memory (DoS).
+      if (size > maxBodyBytes) {
+        aborted = true
+        res.statusCode = 413
+        res.setHeader('content-type', 'application/json')
+        res.setHeader('x-content-type-options', 'nosniff')
+        res.end(JSON.stringify({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Request body too large.' } }))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
     req.on('error', () => {
       res.statusCode = 400
       res.end()
     })
     req.on('end', () => {
+      if (aborted) return
       void (async () => {
         const headers = new Headers()
         for (const [key, value] of Object.entries(req.headers)) {
@@ -678,6 +822,7 @@ export function toNodeListener(handler: RequestHandler) {
           console.error('[kernel] listener error:', err)
           res.statusCode = 500
           res.setHeader('content-type', 'application/json')
+          res.setHeader('x-content-type-options', 'nosniff')
           res.end(JSON.stringify({ error: { code: 'INTERNAL', message: 'Internal server error.' } }))
         }
       })()
@@ -687,6 +832,8 @@ export function toNodeListener(handler: RequestHandler) {
 
 export interface ServeOptions extends HandlerOptions {
   port?: number
+  /** Max bytes accepted for a single request body. Defaults to 50 MB. */
+  maxBodyBytes?: number
 }
 
 export interface RunningServer {
@@ -697,7 +844,7 @@ export interface RunningServer {
 
 export async function serve(kernel: Kernel, options: ServeOptions = {}): Promise<RunningServer> {
   const handler = createRequestHandler(kernel, options)
-  const server = createServer(toNodeListener(handler))
+  const server = createServer(toNodeListener(handler, { maxBodyBytes: options.maxBodyBytes }))
   const requested = options.port ?? 3000
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)

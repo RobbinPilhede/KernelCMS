@@ -40,7 +40,7 @@ export const JSONScalar = new GraphQLScalarType({
   name: 'JSON',
   description: 'Arbitrary JSON value.',
   serialize: (v) => v,
-  parseValue: (v) => v,
+  parseValue: (v) => sanitizeJson(v),
   parseLiteral: function parse(node: ValueNode): unknown {
     switch (node.kind) {
       case Kind.STRING:
@@ -55,7 +55,12 @@ export const JSONScalar = new GraphQLScalarType({
         return node.values.map(parse)
       case Kind.OBJECT: {
         const obj: Record<string, unknown> = {}
-        for (const field of node.fields) obj[field.name.value] = parse(field.value)
+        for (const field of node.fields) {
+          // Reject prototype-pollution keys before assigning (obj['__proto__']=…
+          // would otherwise reach Object.prototype).
+          if (FORBIDDEN_JSON_KEYS.has(field.name.value)) continue
+          obj[field.name.value] = parse(field.value)
+        }
         return obj
       }
       default:
@@ -63,6 +68,23 @@ export const JSONScalar = new GraphQLScalarType({
     }
   },
 })
+
+const FORBIDDEN_JSON_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Recursively strip prototype-pollution keys from a runtime JSON value
+ *  (the variables path, which bypasses parseLiteral). */
+function sanitizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeJson)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value)) {
+      if (FORBIDDEN_JSON_KEYS.has(k)) continue
+      out[k] = sanitizeJson(v)
+    }
+    return out
+  }
+  return value
+}
 
 function pascalCase(slug: string): string {
   return slug.replace(/(^|[_-])([a-z])/g, (_m, _s, c: string) => c.toUpperCase())
