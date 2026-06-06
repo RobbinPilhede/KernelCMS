@@ -1,5 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="KernelCMS" fill="none">
-  <path d="M43.3 28.3 Q50 16 56.7 28.3 L77.3 65.7 Q84 78 70 78 L30 78 Q16 78 22.7 65.7 L43.3 28.3 Z"
-        stroke="#0E1116" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
-  <circle cx="50" cy="55" r="4.6" fill="#0E1116"/>
+  <defs>
+    <linearGradient id="kernelIcon" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#050506" />
+      <stop offset="0.5" stop-color="#3f3f46" />
+      <stop offset="1" stop-color="#050506" />
+    </linearGradient>
+  </defs>
+  <path
+    d="M50 0 L53 34 L68 3 L55 36 L90 12 L58 40 L98 38 L59 46 L100 50 L59 55 L96 68 L57 58 L88 90 L54 62 L65 98 L51 64 L50 100 L48 62 L32 96 L45 60 L8 85 L42 56 L2 65 L41 52 L0 50 L42 46 L4 35 L44 42 L12 14 L46 38 L35 5 L48 36 Z"
+    fill="url(#kernelIcon)"
+  />
 </svg>
