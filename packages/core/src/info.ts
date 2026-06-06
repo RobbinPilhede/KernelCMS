@@ -25,6 +25,8 @@ export interface SetupRuntime {
   email: boolean
   /** Number of content collections the user defined (excludes system collections). */
   collections: number
+  /** A cache adapter is configured (read-through caching is available). */
+  cache: boolean
   /** Node.js version the server is running on. */
   node: string
   /** KernelCMS engine version. */
@@ -42,6 +44,8 @@ export interface ConnectorStatus {
   email: { configured: boolean; kind: string | null }
   oauth: string[]
   image: boolean
+  /** Configured cache adapter kind ('memory' | 'database' | 'redis'), or null. */
+  cache: { configured: boolean; kind: string | null }
 }
 
 export function connectorStatus(kernel: Kernel): ConnectorStatus {
@@ -61,6 +65,7 @@ export function connectorStatus(kernel: Kernel): ConnectorStatus {
     email: { configured: Boolean(cfg.email), kind: cfg.email ? (nameOf(cfg.email) ?? 'email') : null },
     oauth: (cfg.oauth ?? []).map((p) => p.name),
     image: Boolean(cfg.image),
+    cache: { configured: Boolean(cfg.cache), kind: cfg.cache ? (nameOf(cfg.cache) ?? 'cache') : null },
   }
 }
 
@@ -73,6 +78,7 @@ export function setupRuntime(kernel: Kernel): SetupRuntime {
     storage: Boolean(cfg.storage),
     email: Boolean(cfg.email),
     collections: cfg.collections.filter((c) => c.slug !== JOBS_SLUG).length,
+    cache: Boolean(cfg.cache),
     node: typeof process !== 'undefined' && process.version ? process.version : '',
     version: KERNEL_VERSION,
   }
@@ -100,6 +106,7 @@ export interface SystemInfo {
     drafts: boolean
     storage: boolean
     localization: boolean
+    cache: boolean
   }
 }
 
@@ -138,6 +145,7 @@ export function systemInfo(kernel: Kernel): SystemInfo {
       drafts: cfg.collections.some((c) => versionsOf(c).drafts),
       storage: Boolean(cfg.storage),
       localization: Boolean(cfg.localization),
+      cache: Boolean(cfg.cache),
     },
   }
 }

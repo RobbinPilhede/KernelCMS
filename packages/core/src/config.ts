@@ -328,6 +328,9 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   if (config.cache) {
     for (const collection of collections) {
       if (collection.slug === JOBS_SLUG || collection.slug === CACHE_SLUG) continue
+      // Never cache auth collections: session epoch (token_version) and TOTP
+      // replay defence rely on fresh reads, and stale auth state is a security risk.
+      if (collection.auth) continue
       const c = collection.cache
       if (!c) continue
       cacheableSlugs.push(collection.slug)

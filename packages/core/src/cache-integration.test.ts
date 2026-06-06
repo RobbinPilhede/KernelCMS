@@ -61,6 +61,36 @@ describe('cache wired through a real kernel', () => {
     expect(after?.title).toBe('v2')
   })
 
+  it('never caches auth collections, even when opted in', async () => {
+    const c = memoryCache()
+    const k = await initKernel(
+      {
+        secret: 'cache-auth-test',
+        db: sqliteAdapter({ url: ':memory:' }),
+        cache: c,
+        collections: [
+          {
+            slug: 'admins',
+            auth: true,
+            cache: true, // requested, but auth collections are excluded for safety
+            access: { read: () => true, create: () => true },
+            fields: [{ name: 'name', type: 'text' }],
+          },
+          {
+            slug: 'articles',
+            cache: true,
+            access: { read: () => true },
+            fields: [{ name: 'title', type: 'text' }],
+          },
+        ],
+      },
+      { logLevel: 'error' },
+    )
+    expect(k.config.cacheableSlugs).toContain('articles')
+    expect(k.config.cacheableSlugs).not.toContain('admins')
+    await k.destroy()
+  })
+
   it('does not cache collections that did not opt in', async () => {
     const created = await kernel.create({ collection: 'notes', data: { body: 'x' }, overrideAccess: true })
     const before = cache.stats().hits

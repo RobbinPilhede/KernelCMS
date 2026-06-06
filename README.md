@@ -136,6 +136,7 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Auth:** `auth: { forgotPassword: true, twoFactor: true }` adds email password reset and TOTP two-factor.
 - **Uploads + images:** add `storage: localStorage(...)` (or S3 / R2) and `imageSizes` for auto-resized variants.
 - **Postgres:** swap `sqliteAdapter` for `postgresAdapter()` and set `DATABASE_URL` (or pick it in the first-run Connectors step). Configs scaffolded by `npx kernel init` are already env-driven: set `DATABASE_URL` and they use Postgres, otherwise a local SQLite file.
+- **Caching:** add `cache: memoryCache()` (or `dbCache()` / `redisCache()`) and mark a collection `cache: true`. Reads are served read-through and invalidated automatically on write. See [Caching](docs/03-persistence/caching.md).
 - **Hooks, access rules, localization, background jobs, plugins:** all configured the same way.
 
 See [What is in the box](#what-is-in-the-box) for the full list.
