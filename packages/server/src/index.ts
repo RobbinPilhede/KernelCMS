@@ -23,6 +23,7 @@ import {
   parseEndpointInput,
   renderErrorMessage,
   setupRuntime,
+  KERNEL_VERSION,
 } from '@kernel/core'
 import type { EndpointConfig, RequestContext } from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
@@ -429,6 +430,28 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     if (segments[1] === 'connectors' && segments.length === 2 && method === 'GET') {
       if (!user) throw new UnauthorizedError()
       return json({ ...connectorStatus(kernel), graphql: Boolean(options.graphql) })
+    }
+
+    // GET /_admin/metrics -> runtime observability for authenticated admins:
+    // adapter health, cache hit/miss counters, uptime. Non-sensitive operational
+    // facts only (no connection strings or secrets).
+    if (segments[1] === 'metrics' && segments.length === 2 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      const [dbHealth, cacheHealth, searchHealth] = await Promise.all([
+        kernel.db.health(),
+        kernel.cache ? kernel.cache.health() : Promise.resolve(null),
+        kernel.search ? kernel.search.health() : Promise.resolve(null),
+      ])
+      const uptimeMs =
+        typeof process !== 'undefined' && typeof process.uptime === 'function' ? Math.round(process.uptime() * 1000) : 0
+      return json({
+        version: KERNEL_VERSION,
+        uptimeMs,
+        collections: kernel.config.collections.length,
+        db: { name: kernel.db.name, health: dbHealth },
+        cache: kernel.cache ? { name: kernel.cache.name, health: cacheHealth, stats: kernel.cache.stats() } : null,
+        search: kernel.search ? { name: kernel.search.name, health: searchHealth } : null,
+      })
     }
 
     // POST /_admin/env -> persist chosen connector settings to the project .env.
