@@ -16,7 +16,7 @@ import {
 } from '@kernel/core'
 import type { Kernel, KernelConfig, KernelSchema } from '@kernel/core'
 import { serve } from '@kernel/server'
-import { moduleTemplate, toSlug } from './templates'
+import { configTemplate, moduleTemplate, toSlug } from './templates'
 
 interface Flags {
   [key: string]: string | boolean
@@ -73,6 +73,7 @@ const HELP = `KernelCMS CLI
 Usage: kernel <command> [options]
 
 Commands:
+  init               Scaffold a starter kernel.config.ts in the current directory
   migrate            Create/update database tables from the config schema
   migrate:status     Diff the config schema against the saved snapshot (risk-classified)
   migrate:snapshot   Save the compiled schema to kernel/schema-snapshot.json
@@ -96,6 +97,19 @@ export async function run(argv: string[]): Promise<void> {
   const { command, flags, positionals } = parseArgs(argv)
 
   switch (command) {
+    case 'init': {
+      const out =
+        typeof flags.out === 'string' ? resolve(process.cwd(), flags.out) : resolve(process.cwd(), 'kernel.config.ts')
+      if (existsSync(out)) {
+        console.error(`Refusing to overwrite existing file: ${out}`)
+        process.exitCode = 1
+        break
+      }
+      writeFileSync(out, configTemplate())
+      console.log(`✓ Wrote ${out}\n\nNext steps:\n  npm install kernelcms\n  npx kernel dev`)
+      break
+    }
+
     case 'generate:module': {
       const name = positionals[0]
       if (!name) {

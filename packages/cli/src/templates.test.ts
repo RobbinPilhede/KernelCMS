@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { moduleTemplate, toSlug } from './templates'
+import { configTemplate, moduleTemplate, toSlug } from './templates'
+
+describe('configTemplate', () => {
+  it('scaffolds a runnable starter config', () => {
+    const out = configTemplate()
+    expect(out).toContain("import { defineConfig } from 'kernelcms'")
+    expect(out).toContain("import { sqliteAdapter } from 'kernelcms/sqlite'")
+    expect(out).toContain('export default defineConfig({')
+    expect(out).toContain("slug: 'users'")
+    expect(out).toContain('auth: true')
+    expect(out).toContain("slug: 'posts'")
+  })
+})
 
 describe('toSlug', () => {
   it('normalizes names to snake_case', () => {

@@ -5,7 +5,7 @@
  */
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { timingSafeEqual } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import type { AuthUser, Kernel, Row, Where } from '@kernel/core'
 import {
   BadRequestError,
@@ -608,9 +608,20 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   return json({ error: { code: 'NOT_FOUND', message: `No route for ${url.pathname}` } }, 404)
 }
 
-// A shared logger for custom endpoint handlers. P7 will replace this with a
-// request-scoped structured logger; for now it gives handlers a real Logger.
-const endpointLogger = createLogger()
+// The base logger; each request gets a child tagged with its request id.
+const baseLogger = createLogger()
+type ServerLogger = ReturnType<typeof createLogger>
+
+/** A request-scoped logger: every line is tagged with the request id for tracing. */
+function requestScopedLogger(base: ServerLogger, requestId: string): ServerLogger {
+  const tag = (m: string) => `[req:${requestId}] ${m}`
+  return {
+    debug: (m, meta) => base.debug(tag(m), meta),
+    info: (m, meta) => base.info(tag(m), meta),
+    warn: (m, meta) => base.warn(tag(m), meta),
+    error: (m, meta) => base.error(tag(m), meta),
+  }
+}
 
 /**
  * Run a matched custom endpoint through the shared pipeline: authorize (explicit
@@ -627,12 +638,14 @@ async function runEndpoint(
   auth: { user: AuthUser | null; locale?: string },
 ): Promise<Response> {
   const { user } = auth
+  const requestId = randomUUID()
+  const logger = requestScopedLogger(baseLogger, requestId)
   const defaultLocale = kernel.config.localization ? kernel.config.localization.defaultLocale : 'en'
   const req: RequestContext = {
     user,
     locale: auth.locale ?? defaultLocale,
     fallbackLocale: false,
-    context: {},
+    context: { requestId },
   }
 
   // Authorize: explicit access rule, else secure-by-default (authenticated only).
@@ -657,7 +670,7 @@ async function runEndpoint(
 
   const result = await endpoint.handler({
     input,
-    ctx: { req, user, local: kernel, logger: endpointLogger, request },
+    ctx: { req, user, local: kernel, logger, request },
   })
   if (result instanceof Response) return result
   return json(result ?? null)
