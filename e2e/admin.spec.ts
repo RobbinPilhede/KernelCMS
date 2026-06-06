@@ -51,16 +51,26 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
   await expect(page.getByRole('button', { name: /Skip for now/ })).toBeVisible()
   await page.getByRole('button', { name: /Connect your stack/ }).click()
 
-  // Step 1 — Coolify-style connectors picker with brand tiles + setup details.
+  // Step 1 — Coolify-style connectors picker: clean on/off switches per provider.
   await expect(page.getByRole('heading', { name: /Connect your stack/ })).toBeVisible()
   const postgres = page.getByRole('button', { name: /PostgreSQL/ })
   await expect(postgres).toBeVisible()
   await postgres.click()
-  await expect(page.getByRole('button', { name: /Copy config/ }).first()).toBeVisible()
   // In setup the DB is actually configurable: an inline form writes .env.
   await expect(page.getByRole('button', { name: 'Save to .env' })).toBeVisible()
+  // The verbose config is tucked behind a compact "Manual setup" disclosure.
+  await page
+    .getByRole('button', { name: /Manual setup/ })
+    .first()
+    .click()
+  await expect(page.getByRole('button', { name: /Copy config/ }).first()).toBeVisible()
+  // New connectors are present: each has an enable switch; MySQL/MongoDB/Redis too.
+  await expect(page.getByRole('switch', { name: /Enable PostgreSQL/ })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Enable MySQL/ })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Enable MongoDB/ })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Enable Redis/ })).toBeVisible()
   // The static-site migration helper is present in the catalog.
-  await expect(page.getByRole('button', { name: /Migrate an existing site/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Migrate an existing site/ }).first()).toBeVisible()
   await page.getByRole('button', { name: /Create your account/ }).click()
 
   // Step 2 — create the owner account.
@@ -83,7 +93,10 @@ test('connectors panel: sidebar entry shows the catalog and migration helper', a
   await expect(page.getByRole('heading', { name: /Connect your stack/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /PostgreSQL/ })).toBeVisible()
   // The migration helper expands to a copyable prompt.
-  await page.getByRole('button', { name: /Migrate an existing site/ }).click()
+  await page
+    .getByRole('button', { name: /Migrate an existing site/ })
+    .first()
+    .click()
   await expect(page.getByRole('button', { name: 'Copy prompt' }).first()).toBeVisible()
 })
 

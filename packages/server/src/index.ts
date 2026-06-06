@@ -94,6 +94,9 @@ function adminShell(options: HandlerOptions): string {
 // Env keys the first-run setup is allowed to write — the connector settings only.
 const ALLOWED_ENV_KEYS = new Set([
   'DATABASE_URL',
+  'MYSQL_URL',
+  'MONGODB_URI',
+  'REDIS_URL',
   'KERNEL_SECRET',
   'S3_BUCKET',
   'AWS_REGION',

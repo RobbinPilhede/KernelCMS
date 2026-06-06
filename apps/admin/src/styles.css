@@ -3062,13 +3062,20 @@ a {
   border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
 }
 .cx-head {
-  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+}
+.cx-head-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 13px;
-  padding: 13px 15px;
   background: none;
   border: 0;
+  padding: 0;
   text-align: left;
   cursor: pointer;
   color: var(--text);
@@ -3081,9 +3088,9 @@ a {
   border-radius: 10px;
   display: grid;
   place-items: center;
-  color: var(--cx-accent);
-  background: color-mix(in srgb, var(--cx-accent) 14%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--cx-accent) 26%, transparent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  border: 1px solid var(--border);
 }
 .cx-text {
   display: flex;
@@ -3101,38 +3108,116 @@ a {
   line-height: 1.45;
   color: var(--muted);
 }
-.cx-pill {
+/* on/off switch */
+.cx-switch {
   flex: none;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 9px;
+  width: 40px;
+  height: 23px;
+  padding: 0;
+  border: 0;
   border-radius: 999px;
-  white-space: nowrap;
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--motion-fast) var(--ease-out);
 }
-.cx-pill-connected {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 16%, transparent);
+.cx-switch.on {
+  background: var(--primary);
 }
-.cx-pill-available {
+.cx-switch:disabled {
+  cursor: default;
+}
+.cx-switch:disabled.on {
+  background: var(--ok);
+}
+.cx-switch .cx-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+.cx-switch.on .cx-knob {
+  transform: translateX(17px);
+}
+.cx-switch:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.cx-expand {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
   color: var(--muted);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-.cx-pill-adapter {
-  color: #b45309;
-  background: color-mix(in srgb, #f59e0b 18%, transparent);
-}
-:root.dark .cx-pill-adapter {
-  color: #fbbf24;
 }
 .cx-chev {
-  flex: none;
   font-size: 20px;
   line-height: 1;
   color: var(--muted);
   transition: transform var(--motion-base) var(--ease-out);
 }
-.cx-card.open .cx-chev {
+.cx-card.open .cx-expand .cx-chev {
   transform: rotate(90deg);
+}
+.cx-active-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 7px;
+  border-radius: 999px;
+  background: var(--ok);
+  vertical-align: middle;
+}
+.cx-active-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ok);
+  font-weight: 500;
+}
+/* "Manual setup" disclosure keeps the verbose config out of the way */
+.cx-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cx-manual-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.cx-manual-toggle:hover {
+  color: var(--text);
+}
+.cx-manual-toggle .cx-chev {
+  font-size: 16px;
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+.cx-manual-toggle.open .cx-chev {
+  transform: rotate(90deg);
+}
+.cx-manual-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 .cx-body {
   overflow: hidden;
