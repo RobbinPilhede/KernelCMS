@@ -425,6 +425,24 @@ export interface LocalizationConfig {
   fallback?: boolean
 }
 
+export type WebhookEvent = 'create' | 'update' | 'delete'
+
+export interface WebhookConfig {
+  /** Destination URL for the POST. */
+  url: string
+  /** HMAC-SHA256 signing secret. When set, an `x-kernel-signature: sha256=<hex>`
+   *  header lets the receiver verify the body. Read from env; never hardcode. */
+  secret?: string
+  /** Restrict to these collection slugs. Default: all non-system collections. */
+  collections?: string[]
+  /** Restrict to these events. Default: create, update, delete. */
+  events?: WebhookEvent[]
+  /** Extra headers to send (e.g. an auth token for the receiver). */
+  headers?: Record<string, string>
+  /** Abort the delivery after this many ms. Default 5000. */
+  timeoutMs?: number
+}
+
 export interface KernelConfig {
   serverURL?: string
   db: DatabaseAdapter
@@ -464,6 +482,8 @@ export interface KernelConfig {
   /** Cache adapter (e.g. `memoryCache()`, `dbCache()`, `redisCache(...)`). When set,
    *  collections with `cache` enabled are served read-through and invalidated on write. */
   cache?: CacheAdapter
+  /** Outbound webhooks: fire a signed HTTP POST when documents change. */
+  webhooks?: WebhookConfig[]
   /** Default cache TTL in ms applied to cached collections that don't set their own.
    *  0 (default) means entries live until invalidated by a write. */
   cacheDefaults?: { ttl?: number }
@@ -508,6 +528,8 @@ export interface SanitizedConfig {
   cacheTtlBySlug: Record<string, number>
   /** Default cache TTL (ms). */
   cacheDefaultTtl: number
+  /** Configured outbound webhooks. */
+  webhooks?: WebhookConfig[]
 }
 
 // ---------------------------------------------------------------------------

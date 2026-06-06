@@ -31,6 +31,8 @@ export { memoryCache, createCachedDb } from './cache'
 export type { MemoryCacheOptions, CachedDbOptions } from './cache'
 export { dbCache, redisCache } from './cache-backends'
 export type { DbCacheOptions, RedisCacheOptions } from './cache-backends'
+export { deliverWebhook, attachWebhooks } from './webhooks'
+export type { WebhookPayload } from './webhooks'
 export {
   hashPassword,
   verifyPassword,

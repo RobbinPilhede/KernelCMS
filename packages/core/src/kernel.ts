@@ -4,6 +4,8 @@ import { sanitizeConfig } from './config'
 import { compileSchema } from './schema'
 import { createOperations } from './operations'
 import { createCachedDb } from './cache'
+import { CACHE_SLUG, JOBS_SLUG } from './config'
+import { attachWebhooks } from './webhooks'
 import { applyPlugins } from './plugins'
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const
@@ -36,6 +38,11 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   // Plugins transform the raw config (add collections/fields/hooks) before sanitize.
   const resolved = await applyPlugins(config, logger)
   const sanitized = sanitizeConfig(resolved)
+  // Outbound webhooks: attach firing hooks to targeted collections (excluding
+  // system tables) before operations are created.
+  if (sanitized.webhooks && sanitized.webhooks.length > 0) {
+    attachWebhooks(sanitized.collections, sanitized.webhooks, new Set([JOBS_SLUG, CACHE_SLUG]), logger)
+  }
   const schema = compileSchema(sanitized)
 
   await sanitized.db.init({ logger })

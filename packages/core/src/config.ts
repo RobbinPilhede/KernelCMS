@@ -357,6 +357,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     ...(config.image ? { image: config.image } : {}),
     ...(email ? { email } : {}),
     ...(config.cache ? { cache: config.cache } : {}),
+    ...(config.webhooks && config.webhooks.length > 0 ? { webhooks: config.webhooks } : {}),
     ...(config.jobs && config.jobs.length > 0 ? { jobs: config.jobs } : {}),
     ...(endpoints.length > 0 ? { endpoints } : {}),
     ...(config.oauth && config.oauth.length > 0 ? { oauth: config.oauth } : {}),
