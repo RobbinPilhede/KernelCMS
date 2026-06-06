@@ -1,5 +1,7 @@
 # KernelCMS
 
+[![CI](https://github.com/RobbinPilhede/KernelCMS/actions/workflows/ci.yml/badge.svg)](https://github.com/RobbinPilhede/KernelCMS/actions/workflows/ci.yml)
+
 **The lightweight, standalone, type-safe headless CMS that does not hijack your framework.**
 
 KernelCMS is a config-as-code, end-to-end TypeScript headless CMS. You model your
