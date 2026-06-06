@@ -34,6 +34,18 @@ export type { DbCacheOptions, RedisCacheOptions } from './cache-backends'
 export { deliverWebhook, attachWebhooks } from './webhooks'
 export type { WebhookPayload } from './webhooks'
 export { memorySearch, attachSearch, extractSearchText } from './search'
+export { testPayment, stripePayment, signTestWebhook, verifyStripeSignature, PaymentError } from './payments'
+export type {
+  PaymentAdapter,
+  PaymentLineItem,
+  CreateCheckoutArgs,
+  CheckoutSession,
+  PaymentEvent,
+  PaymentStatus,
+  RefundResult,
+  TestPaymentOptions,
+  StripePaymentOptions,
+} from './payments'
 export {
   hashPassword,
   verifyPassword,

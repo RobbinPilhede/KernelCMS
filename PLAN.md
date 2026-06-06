@@ -16,12 +16,14 @@ Access control + field strip still run every call. Never cache post-access docs 
 ## TRACK A — Caching layer (fills the declared `'cache'` adapter slot)
 
 ### A1. Contract
+
 - [ ] A1.1 Add `CacheAdapter` interface to `@kernel/db` (kind:'cache', get/set/delete/deleteByTag/clear, getMany optional).
 - [ ] A1.2 Add `CacheSetOptions { ttlMs?, tags? }`, `CacheAdapterFactory`, `CacheStats`.
 - [ ] A1.3 Export cache types from `@kernel/db` index; re-export through `kernelcms`.
 - [ ] A1.4 Add `contractVersion` constant for cache adapters.
 
 ### A2. memoryCache (default)
+
 - [ ] A2.1 `memoryCache()` in `@kernel/core/cache.ts`: Map store, per-key expiry, tag→keys index.
 - [ ] A2.2 TTL expiry on read (lazy) + optional periodic sweep with unref timer.
 - [ ] A2.3 maxEntries LRU cap (evict oldest) to bound memory.
@@ -29,6 +31,7 @@ Access control + field strip still run every call. Never cache post-access docs 
 - [ ] A2.5 Stats counters (hits/misses/evictions) for observability.
 
 ### A3. Read-through DB wrapper
+
 - [ ] A3.1 `createCachedDb(db, cache, { cacheableSlugs, ttlMs })` implementing `DatabaseAdapter`.
 - [ ] A3.2 find/findByID/count: stable key from (op, collection, JSON args); read-through.
 - [ ] A3.3 create/update/delete: passthrough then `deleteByTag(collection)`.
@@ -38,6 +41,7 @@ Access control + field strip still run every call. Never cache post-access docs 
 - [ ] A3.7 Key hashing stable + collision-safe (sorted JSON).
 
 ### A4. Config + wiring
+
 - [ ] A4.1 `KernelConfig.cache?: CacheAdapter`; `SanitizedConfig.cache?`.
 - [ ] A4.2 `CollectionConfig.cache?: boolean | { ttl?: number }`; `KernelConfig.cacheDefaults?`.
 - [ ] A4.3 sanitizeConfig passes cache + resolves per-collection cache flags + cacheableSlugs.
@@ -46,21 +50,25 @@ Access control + field strip still run every call. Never cache post-access docs 
 - [ ] A4.6 Guard: cache never wraps writes/auth lookups that must be fresh (login reads bypass).
 
 ### A5. Request-scoped dedupe
+
 - [ ] A5.1 Per-request memo for findByID within one operation tree (populate dedupe).
 - [ ] A5.2 Wire through `req.context` without leaking across requests.
 
 ### A6. dbCache (the seamlr "use your own database" option)
+
 - [ ] A6.1 Reserved hidden `_cache` table injected like JOBS_SLUG (key pk, value json, expires_at, tags json).
 - [ ] A6.2 `dbCache()` uses the kernel db; get/set/delete/deleteByTag/clear via the table.
 - [ ] A6.3 TTL sweep query; tag match via stored tags array.
 - [ ] A6.4 Passes the cache conformance suite. Document single-table contention caveats.
 
 ### A7. redisCache (multi-node)
+
 - [ ] A7.1 `redisCache({ url })` lazy-imports ioredis (optional dep); SET PX, tag sets, DEL.
 - [ ] A7.2 deleteByTag via a per-tag Redis set of keys; clear via prefix scan.
 - [ ] A7.3 Passes conformance. Graceful degrade if Redis down (fail-open to db, log).
 
 ### A8. Conformance + tests
+
 - [ ] A8.1 Shared `cacheConformance(makeAdapter)` suite (get/set/ttl/tags/clear/overwrite).
 - [ ] A8.2 Run suite for memory (+ db, + redis behind env guard / skip if absent).
 - [ ] A8.3 Integration: second read served from cache (spy db call count); write invalidates.
@@ -68,12 +76,14 @@ Access control + field strip still run every call. Never cache post-access docs 
 - [ ] A8.5 Localization/draft keys differ (locale, draft flag in key).
 
 ### A9. Connectors UI made real
+
 - [ ] A9.1 "Postgres cache (no extra infra)" connector → dbCache; flips real.
 - [ ] A9.2 Redis connector → redisCache; "connected" reflects configured cache kind.
 - [ ] A9.3 connectorStatus reports cache kind; runtime exposes it.
 - [ ] A9.4 e2e: cache connectors render + switch.
 
 ### A10. Docs + security gate
+
 - [ ] A10.1 README + a caching guide (when to use, safety model, backends).
 - [ ] A10.2 generate:types / info / doctor mention cache.
 - [ ] A10.3 Security sweep (Saga audit + Loki red-team) on the cache layer; fix HIGH/CRIT.
@@ -152,13 +162,60 @@ Access control + field strip still run every call. Never cache post-access docs 
 ---
 
 ## Z — Re-evaluation log (append after each track; research, then add tracks)
+
 - [ ] Z1 After Track A: re-survey gaps, append Track(s) as needed.
 - [ ] Z2 After Track B/C/D: re-survey; research Payload/Strapi/Directus parity gaps.
 - [ ] Z3 Keep appending until the 6h window is covered; never idle.
 
 ---
 
+## TRACK H — Payments & Orders (e-commerce) + "building a site" gaps
+
+### Research: what a real site/store needs that KernelCMS lacks
+
+Surveyed against Shopify/Medusa/Saleor/Stripe + Payload's ecommerce template. Gaps:
+
+- **Commerce domain:** products (price, currency, SKU, inventory, variants), orders
+  (line items, totals, status lifecycle, customer + addresses), carts, discounts/coupons,
+  tax, shipping. KernelCMS has none today.
+- **Payments:** no payment integration. Need a provider-agnostic `PaymentAdapter`
+  (Stripe first) — create checkout, verify inbound webhooks (signed), refund.
+- **Inbound webhooks:** we have OUTBOUND webhooks; payments need a VERIFIED INBOUND
+  endpoint (raw body + signature) to transition orders on payment events.
+- **Site-building (broader, future tracks):** form builder + submissions, redirects,
+  sitemap.xml/robots.txt, navigation/menus global, newsletter signup, comments/reviews.
+
+### Design (fits the existing architecture)
+
+- `PaymentAdapter` contract in `@kernel/core` (`payments.ts`): createCheckout / parseWebhook
+  (verify + normalize) / refund. Provider-agnostic, no SDK deps.
+- `testPayment()` — deterministic, fully testable (HMAC-signed webhooks). `stripePayment({
+secretKey, webhookSecret })` — Stripe REST via `fetch` (form-encoded), webhook signature
+  verified with node:crypto HMAC (the `t=..,v1=..` scheme) — testable without network.
+- `commerce()` module (`commerce.ts`, via `defineModule`) injects `products` + `orders`
+  collections + `POST /commerce/checkout` (compute totals server-side from real product
+  prices, create a pending order, open a checkout session) + `POST /commerce/webhook`
+  (verify signature, transition the order: paid/failed/refunded). Money is integer minor
+  units; totals are always recomputed server-side (never trust client amounts).
+- Exported from core → available via `kernelcms`. (Could extract to `@kernel/commerce`
+  like the SEO plugin later.)
+
+### Phases
+
+- [ ] H1 PaymentAdapter contract + types (money in minor units, normalized PaymentEvent).
+- [ ] H2 testPayment() deterministic adapter + conformance-style tests.
+- [ ] H3 stripePayment(): checkout session (REST), webhook signature verify (HMAC), refund.
+- [ ] H4 commerce() module: products + orders collections, sane fields + access (orders
+      are server/admin-only; products read-public).
+- [ ] H5 checkout endpoint: server-side total recompute from product prices; create pending
+      order; create checkout session; store session/provider on the order.
+- [ ] H6 webhook endpoint: raw-body signature verify; idempotent order status transition.
+- [ ] H7 order lifecycle helpers + refund flow; inventory decrement on paid (optional/guarded).
+- [ ] H8 tests (full flow with testPayment through a real kernel), docs, security gate
+      (amount tampering, webhook forgery, IDOR on orders), README. Ship.
+
 ## Progress log
+
 - 8efd21d — Track A A1-A5,A8: CacheAdapter contract + memoryCache + read-through wrapper + wiring + tests (295 unit).
 - e517960 — Track A A6,A7: dbCache (no-infra) + redisCache backends (301 unit).
 - bba2341 — Track A A10: surface cache in info/connectorStatus; exclude auth collections; caching docs (302 unit).
@@ -168,12 +225,14 @@ Access control + field strip still run every call. Never cache post-access docs 
 - 0c30890 — Track E E4: signed outbound webhooks on create/update/delete (315 unit).
 - 465adce — Track C C1-C5(core): SearchAdapter + memorySearch + kernel.searchDocs (access-safe) (321 unit).
 - 8e35faf — Track C C5(server): GET /:collection/search REST endpoint (323 unit).
-- 781ff60 — Track E E6: authenticated /_admin/metrics (adapter health + cache stats) (325 unit).
+- 781ff60 — Track E E6: authenticated /\_admin/metrics (adapter health + cache stats) (325 unit).
 - (this) — Track G G2: doctor diagnostics for cache/search/webhook misconfig (330 unit).
 - Tracks done: A (cache, complete), C (search core+REST), E (E1-E4,E6). 330 unit + 12 e2e green; all pushed.
 
 ## Re-evaluation after Track A
+
 Next highest-value, fully-verifiable work (no external services needed to test):
+
 - TRACK E (security & ops): general HTTP rate limiting + security headers/CSP. Real gap (only login is limited today) and aligns with always-on security rules. Server-middleware scoped, testable. → DOING NEXT.
 - TRACK C (search): start with a portable `memorySearch()` (FTS needs adapter-specific raw SQL, so defer sqlite/postgres FTS); contract + memory impl + sync + kernel.search() + REST. Testable.
 - TRACK B (queue): jobs are already DB-backed; a QueueAdapter mainly adds a Redis backend (not locally testable) — lower marginal value, do later.
