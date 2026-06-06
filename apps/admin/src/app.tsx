@@ -5,16 +5,7 @@ import { fetchSchema } from './api'
 import { SchemaProvider } from './schema'
 import { LocaleProvider } from './locale'
 import { AuthProvider } from './auth'
-import {
-  AppFrame,
-  ConnectorsView,
-  Dashboard,
-  EditView,
-  GlobalView,
-  ListView,
-  ResetPasswordPage,
-  VerifyEmailPage,
-} from './views'
+import { AppFrame, Dashboard, EditView, GlobalView, ListView, ResetPasswordPage, VerifyEmailPage } from './views'
 import { PreviewPage } from './preview'
 
 const rootRoute = createRootRoute({ component: AppFrame })
@@ -23,9 +14,8 @@ const listRoute = createRoute({ getParentRoute: () => rootRoute, path: '/collect
 const newRoute = createRoute({ getParentRoute: () => rootRoute, path: '/collections/$slug/new', component: EditView })
 const editRoute = createRoute({ getParentRoute: () => rootRoute, path: '/collections/$slug/$id', component: EditView })
 const globalRoute = createRoute({ getParentRoute: () => rootRoute, path: '/globals/$slug', component: GlobalView })
-const connectorsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/connectors', component: ConnectorsView })
 
-const routeTree = rootRoute.addChildren([indexRoute, listRoute, newRoute, editRoute, globalRoute, connectorsRoute])
+const routeTree = rootRoute.addChildren([indexRoute, listRoute, newRoute, editRoute, globalRoute])
 const router = createRouter({ routeTree, history: createHashHistory(), defaultPreload: 'intent' })
 
 declare module '@tanstack/react-router' {

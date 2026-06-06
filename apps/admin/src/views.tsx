@@ -11,7 +11,6 @@ import {
   deleteDoc,
   deleteManyDocs,
   forgotPassword,
-  getConnectors,
   getDoc,
   getGlobal,
   listDocs,
@@ -37,7 +36,7 @@ import { useAuth } from './auth'
 import { useCollection, useGlobal, useSchema } from './schema'
 import { FieldInput, stripRowKeys, withRowKeys } from './fields'
 import { getCell, getWidgets } from './registry'
-import { ConnectorGrid, connectedCount } from './connectors'
+import { ConnectorGrid } from './connectors'
 import type { ConnectorState } from './connectors'
 import { Logo } from './Logo'
 import { CommandPalette } from './CommandPalette'
@@ -903,16 +902,6 @@ function DashboardIcon() {
   )
 }
 
-function ConnectorsIcon() {
-  return (
-    <svg {...ICON_SVG}>
-      <path d="M9 7V4M15 7V4M9 20v-3M15 20v-3" />
-      <rect x="6" y="7" width="12" height="6" rx="2" />
-      <path d="M8 13v1a4 4 0 0 0 8 0v-1" />
-    </svg>
-  )
-}
-
 function NavIcon({ collection, global }: { collection?: AdminCollection; global?: boolean }) {
   if (global) {
     return (
@@ -1095,16 +1084,6 @@ function Shell() {
   const collections = schema.collections.filter((c) => !c.hidden)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const isActive = (base: string) => pathname === base || pathname.startsWith(`${base}/`)
-  const { data: connectors } = useQuery({ queryKey: ['connectors'], queryFn: getConnectors })
-  const connectorCount = connectors
-    ? connectedCount({
-        db: connectors.db,
-        storage: connectors.storage.configured,
-        email: connectors.email.configured,
-        oauth: connectors.oauth,
-        image: connectors.image,
-      })
-    : 0
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -1139,13 +1118,6 @@ function Shell() {
           ))}
         </nav>
         <div className="sidebar-foot">
-          <Link to="/connectors" className={`sidebar-connectors${isActive('/connectors') ? ' active' : ''}`}>
-            <span className="nav-icon">
-              <ConnectorsIcon />
-            </span>
-            <span className="sc-label">Connectors</span>
-            {connectorCount > 0 && <span className="sc-count">{connectorCount}</span>}
-          </Link>
           <div className="sidebar-theme">
             <span>Theme</span>
             <ThemeToggle />
@@ -1258,37 +1230,6 @@ export function Dashboard() {
           </motion.div>
         ))}
       </motion.div>
-    </div>
-  )
-}
-
-/** Connectors panel: databases, storage, email, and sign-in providers, with
- *  connected status and copy-paste setup. Reached from the sidebar. */
-export function ConnectorsView() {
-  const { data, isLoading, error } = useQuery({ queryKey: ['connectors'], queryFn: getConnectors })
-  const status: ConnectorState = data
-    ? {
-        db: data.db,
-        storage: data.storage.configured,
-        email: data.email.configured,
-        oauth: data.oauth,
-        image: data.image,
-      }
-    : { db: 'unknown', storage: false, email: false, oauth: [], image: false }
-  return (
-    <div className="page">
-      <motion.header className="dash-hero" variants={itemVariants} initial="initial" animate="animate">
-        <p className="dash-eyebrow">Connectors</p>
-        <h1 className="dash-title">Connect your stack</h1>
-        <p className="dash-sub">Databases, storage, email, and sign-in. Connected ones are live; add more anytime.</p>
-      </motion.header>
-      {isLoading ? (
-        <div className="center muted">Loading connectors…</div>
-      ) : error ? (
-        <div className="alert">Could not load connectors.</div>
-      ) : (
-        <ConnectorGrid status={status} />
-      )}
     </div>
   )
 }

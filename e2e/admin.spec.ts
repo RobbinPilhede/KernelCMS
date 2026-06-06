@@ -94,19 +94,6 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
   await expect(page.locator('.sidebar .logo-word')).toHaveText('KernelCMS')
 })
 
-test('connectors panel: sidebar entry shows the catalog', async ({ page }) => {
-  await ensureSignedIn(page)
-  await page.getByRole('link', { name: 'Connectors' }).click()
-  await expect(page.getByRole('heading', { name: /Connect your stack/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /PostgreSQL/ })).toBeVisible()
-  // The PostgreSQL card expands to reveal its Manual setup with a copyable prompt.
-  // Scope to that card: the selected database (SQLite) also auto-expands.
-  const pgCard = page.locator('.cx-card', { hasText: 'PostgreSQL' })
-  await pgCard.getByRole('button', { name: /PostgreSQL/ }).click()
-  await pgCard.getByRole('button', { name: /Manual setup/ }).click()
-  await expect(pgCard.getByRole('button', { name: 'Copy prompt' })).toBeVisible()
-})
-
 test('registered dashboard widget renders (window.KernelCMS.widgets)', async ({ page }) => {
   // Register a widget before the admin bundle boots — the same surface the
   // server's `admin.scripts` option uses, exercised directly here.
