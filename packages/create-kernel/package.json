@@ -1,7 +1,8 @@
 {
   "name": "create-kernel",
   "version": "0.1.0",
-  "description": "Scaffold a new KernelCMS app on TanStack Start — one command, ready to run.",
+  "description": "Scaffold a new KernelCMS app on TanStack Start - one command, ready to run.",
+  "private": true,
   "type": "module",
   "bin": {
     "create-kernel": "index.js"

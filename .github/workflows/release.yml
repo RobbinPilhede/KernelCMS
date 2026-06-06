@@ -9,50 +9,41 @@ concurrency: release-${{ github.ref }}
 permissions:
   contents: write
   pull-requests: write
-  id-token: write
+  id-token: write # required for npm Trusted Publishing (OIDC)
 
 jobs:
   release:
     name: Version or publish
     runs-on: ubuntu-latest
-    # Job-level env is readable in step `if` conditions. The release stays idle
-    # (green, no-op) until an NPM_TOKEN secret is configured.
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
-      - name: Release is idle until NPM_TOKEN is set
-        if: ${{ env.NPM_TOKEN == '' }}
-        run: echo "No NPM_TOKEN secret configured. Add one in repo Settings to enable versioning + publishing."
-
       - uses: actions/checkout@v4
-        if: ${{ env.NPM_TOKEN != '' }}
         with:
           fetch-depth: 0
 
       - name: Set up pnpm
-        if: ${{ env.NPM_TOKEN != '' }}
         uses: pnpm/action-setup@v4
 
       - name: Set up Node
-        if: ${{ env.NPM_TOKEN != '' }}
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      # Trusted Publishing (OIDC) requires npm >= 11.5.1.
+      - name: Use a publish-capable npm
+        run: npm install -g npm@latest
+
       - name: Install dependencies
-        if: ${{ env.NPM_TOKEN != '' }}
         run: pnpm install --frozen-lockfile
 
       - name: Build all packages
-        if: ${{ env.NPM_TOKEN != '' }}
         run: pnpm -r run build
 
-      # With changesets present this opens/updates a "Version Packages" PR.
-      # When that PR merges (versions bumped, no changesets left), it publishes.
+      # With changesets present, this opens/updates a "Version Packages" PR.
+      # When that PR merges (versions bumped, no changesets left), it publishes to
+      # npm using OIDC Trusted Publishing - no token required.
       - name: Create release PR or publish
-        if: ${{ env.NPM_TOKEN != '' }}
         uses: changesets/action@v1
         with:
           version: pnpm version-packages
@@ -61,4 +52,3 @@ jobs:
           title: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
