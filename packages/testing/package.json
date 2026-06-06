@@ -1,0 +1,21 @@
+{
+  "name": "@kernel/testing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean"
+  },
+  "dependencies": {
+    "@kernel/core": "workspace:*",
+    "@kernel/db-sqlite": "workspace:*"
+  }
+}

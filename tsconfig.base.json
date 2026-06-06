@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "baseUrl": ".",
+    "paths": {
+      "@kernel/db": ["packages/db/src/index.ts"],
+      "@kernel/core": ["packages/core/src/index.ts"],
+      "@kernel/db-sqlite": ["packages/db-sqlite/src/index.ts"],
+      "@kernel/server": ["packages/server/src/index.ts"],
+      "@kernel/client": ["packages/client/src/index.ts"]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@kernel/example-blog",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "tsx ../../packages/cli/src/bin.ts migrate --config ./kernel.config.ts",
+    "seed": "tsx ../../packages/cli/src/bin.ts seed --config ./kernel.config.ts",
+    "dev": "tsx ../../packages/cli/src/bin.ts dev --config ./kernel.config.ts"
+  },
+  "dependencies": {
+    "@kernel/core": "workspace:*",
+    "@kernel/db-sqlite": "workspace:*",
+    "@kernel/server": "workspace:*",
+    "@kernel/client": "workspace:*",
+    "@kernel/cli": "workspace:*"
+  }
+}

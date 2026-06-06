@@ -1,0 +1,31 @@
+{
+  "name": "kernelcms",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "kernel": "tsx packages/cli/src/bin.ts",
+    "admin": "pnpm --filter @kernel/admin-app dev",
+    "example:migrate": "tsx packages/cli/src/bin.ts migrate --config examples/blog/kernel.config.ts",
+    "example:seed": "tsx packages/cli/src/bin.ts seed --config examples/blog/kernel.config.ts",
+    "example:dev": "tsx packages/cli/src/bin.ts dev --config examples/blog/kernel.config.ts"
+  },
+  "devDependencies": {
+    "@kernel/richtext": "workspace:*",
+    "@kernel/storage": "workspace:*",
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^22.10.5",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

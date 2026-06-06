@@ -1,0 +1,26 @@
+{
+  "name": "create-kernel",
+  "version": "0.1.0",
+  "description": "Scaffold a new KernelCMS app on TanStack Start — one command, ready to run.",
+  "type": "module",
+  "bin": {
+    "create-kernel": "index.js"
+  },
+  "files": [
+    "index.js",
+    "template"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "kernelcms",
+    "cms",
+    "tanstack",
+    "tanstack-start",
+    "create",
+    "scaffold",
+    "starter"
+  ],
+  "license": "MIT"
+}
