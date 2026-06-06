@@ -662,6 +662,17 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return methodNotAllowed()
   }
 
+  // /:collection/search?q=...  (reserved subpath; document ids are UUIDs)
+  if (segments.length === 2 && segments[1] === 'search' && method === 'GET') {
+    const result = await kernel.searchDocs({
+      collection,
+      query: url.searchParams.get('q') ?? '',
+      limit: toNum(url.searchParams.get('limit')),
+      ...base,
+    })
+    return json(result)
+  }
+
   // /:collection/:id
   if (segments.length === 2) {
     const id = segments[1]!
