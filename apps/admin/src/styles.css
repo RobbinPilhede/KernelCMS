@@ -3122,13 +3122,10 @@ a {
   transition: background var(--motion-fast) var(--ease-out);
 }
 .cx-switch.on {
-  background: var(--primary);
+  background: var(--ok);
 }
 .cx-switch:disabled {
   cursor: default;
-}
-.cx-switch:disabled.on {
-  background: var(--ok);
 }
 .cx-switch .cx-knob {
   position: absolute;

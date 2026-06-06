@@ -466,7 +466,7 @@ function connectorStateFromRuntime(rt: SetupRuntime | null): ConnectorState {
 
 export function Setup() {
   const { signUp, completeSetup, runtime } = useAuth()
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(0)
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -489,7 +489,7 @@ export function Setup() {
     setError(null)
     try {
       await signUp(email, password)
-      setStep(3)
+      setStep(4)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed.')
     } finally {
@@ -511,7 +511,7 @@ export function Setup() {
       <LoginBackdrop />
       <div className="wz-card">
         <div className="wz-rail" aria-hidden>
-          {[0, 1, 2, 3].map((i) => (
+          {[0, 1, 2, 3, 4].map((i) => (
             <span key={i} className={`wz-dot${i === step ? ' active' : ''}${i < step ? ' done' : ''}`} />
           ))}
         </div>
@@ -547,7 +547,7 @@ export function Setup() {
               <button className="btn primary wz-next" type="button" onClick={() => setStep(1)}>
                 Connect your stack →
               </button>
-              <button type="button" className="link-btn wz-skip" onClick={() => setStep(2)}>
+              <button type="button" className="link-btn wz-skip" onClick={() => setStep(3)}>
                 Skip for now, just create my account
               </button>
               <div className="wz-foot">
@@ -558,7 +558,7 @@ export function Setup() {
 
           {step === 1 && (
             <motion.div
-              key="connectors"
+              key="database"
               className="wz-step"
               variants={stepVariants}
               initial="initial"
@@ -567,21 +567,22 @@ export function Setup() {
             >
               <div className="wz-head">
                 <Logo />
-                <h1>Connect your stack</h1>
+                <h1>Choose your database</h1>
                 <p className="muted">
-                  Choose a database, storage, email, or sign-in provider. Everything is optional. Connect now, or
-                  anytime from Connectors in the sidebar.
+                  SQLite runs with zero setup while you build. Pick PostgreSQL for production, or another engine. You
+                  can change this anytime.
                 </p>
               </div>
               <ConnectorGrid
                 status={connectorStateFromRuntime(runtime)}
                 setupMode
+                categories={['Database']}
                 onApply={async (values) => {
                   await writeSetupEnv(values)
                 }}
               />
               <button className="btn primary wz-next" type="button" onClick={() => setStep(2)}>
-                Create your account →
+                Continue →
               </button>
               <button type="button" className="link-btn" onClick={() => setStep(0)}>
                 ← Back
@@ -590,6 +591,40 @@ export function Setup() {
           )}
 
           {step === 2 && (
+            <motion.div
+              key="services"
+              className="wz-step"
+              variants={stepVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <div className="wz-head">
+                <Logo />
+                <h1>Connect services</h1>
+                <p className="muted">
+                  Cache, file storage, email, and sign-in providers. All optional, and addable anytime from Connectors
+                  in the sidebar.
+                </p>
+              </div>
+              <ConnectorGrid
+                status={connectorStateFromRuntime(runtime)}
+                setupMode
+                categories={['Cache', 'Storage', 'Email', 'Authentication']}
+                onApply={async (values) => {
+                  await writeSetupEnv(values)
+                }}
+              />
+              <button className="btn primary wz-next" type="button" onClick={() => setStep(3)}>
+                Create your account →
+              </button>
+              <button type="button" className="link-btn" onClick={() => setStep(1)}>
+                ← Back
+              </button>
+            </motion.div>
+          )}
+
+          {step === 3 && (
             <motion.div
               key="account"
               className="wz-step"
@@ -641,14 +676,14 @@ export function Setup() {
                 <button className="btn primary" type="submit" disabled={busy}>
                   {busy ? 'Creating…' : 'Create account'}
                 </button>
-                <button type="button" className="link-btn" onClick={() => setStep(1)} disabled={busy}>
+                <button type="button" className="link-btn" onClick={() => setStep(2)} disabled={busy}>
                   ← Back
                 </button>
               </form>
             </motion.div>
           )}
 
-          {step === 3 && (
+          {step === 4 && (
             <motion.div
               key="next"
               className="wz-step"
@@ -661,8 +696,7 @@ export function Setup() {
                 <Logo />
                 <h1>You're all set</h1>
                 <p className="muted">
-                  Your workspace is ready. Every connector, plus the static-site migration helper, lives under
-                  Connectors in the sidebar whenever you need it.
+                  Your workspace is ready. Every connector lives under Connectors in the sidebar whenever you need it.
                 </p>
               </div>
               <button className="btn primary wz-next" type="button" onClick={enterDashboard} disabled={busy}>

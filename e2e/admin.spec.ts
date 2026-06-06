@@ -51,8 +51,8 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
   await expect(page.getByRole('button', { name: /Skip for now/ })).toBeVisible()
   await page.getByRole('button', { name: /Connect your stack/ }).click()
 
-  // Step 1 — Coolify-style connectors picker: clean on/off switches per provider.
-  await expect(page.getByRole('heading', { name: /Connect your stack/ })).toBeVisible()
+  // Step 1 — Choose your database (single-select radio group).
+  await expect(page.getByRole('heading', { name: /Choose your database/ })).toBeVisible()
   const postgres = page.getByRole('button', { name: /PostgreSQL/ })
   await expect(postgres).toBeVisible()
   await postgres.click()
@@ -64,14 +64,23 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
     .first()
     .click()
   await expect(page.getByRole('button', { name: /Copy config/ }).first()).toBeVisible()
-  // New connectors are present: each has an enable switch; MySQL/MongoDB/Redis too.
-  await expect(page.getByRole('switch', { name: /Enable PostgreSQL/ })).toBeVisible()
-  await expect(page.getByRole('switch', { name: /Enable MySQL/ })).toBeVisible()
-  await expect(page.getByRole('switch', { name: /Enable MongoDB/ })).toBeVisible()
+  // Databases are a single-select group: each is a "Use <db>" radio switch.
+  await expect(page.getByRole('switch', { name: /Use SQLite/ })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Use PostgreSQL/ })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Use MySQL/ })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Use MongoDB/ })).toBeVisible()
+  // Selecting Postgres makes it the chosen database.
+  await page.getByRole('switch', { name: /Use PostgreSQL/ }).click()
+  await expect(page.getByRole('switch', { name: /Use PostgreSQL/ })).toHaveAttribute('aria-checked', 'true')
+  await page.getByRole('button', { name: /^Continue/ }).click()
+
+  // Step 2 — Connect services (cache / storage / email / auth).
+  await expect(page.getByRole('heading', { name: /Connect services/ })).toBeVisible()
   await expect(page.getByRole('switch', { name: /Enable Redis/ })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Enable Google/ })).toBeVisible()
   await page.getByRole('button', { name: /Create your account/ }).click()
 
-  // Step 2 — create the owner account.
+  // Step 3 — create the owner account.
   await page.getByRole('textbox', { name: 'Email' }).fill('admin@e2e.test')
   const pwds = page.locator('input[type="password"]')
   await pwds.nth(0).fill('supersecret123')
@@ -90,13 +99,12 @@ test('connectors panel: sidebar entry shows the catalog', async ({ page }) => {
   await page.getByRole('link', { name: 'Connectors' }).click()
   await expect(page.getByRole('heading', { name: /Connect your stack/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /PostgreSQL/ })).toBeVisible()
-  // A connector expands to reveal its Manual setup with a copyable prompt.
-  await page.getByRole('button', { name: /PostgreSQL/ }).click()
-  await page
-    .getByRole('button', { name: /Manual setup/ })
-    .first()
-    .click()
-  await expect(page.getByRole('button', { name: 'Copy prompt' }).first()).toBeVisible()
+  // The PostgreSQL card expands to reveal its Manual setup with a copyable prompt.
+  // Scope to that card: the selected database (SQLite) also auto-expands.
+  const pgCard = page.locator('.cx-card', { hasText: 'PostgreSQL' })
+  await pgCard.getByRole('button', { name: /PostgreSQL/ }).click()
+  await pgCard.getByRole('button', { name: /Manual setup/ }).click()
+  await expect(pgCard.getByRole('button', { name: 'Copy prompt' })).toBeVisible()
 })
 
 test('registered dashboard widget renders (window.KernelCMS.widgets)', async ({ page }) => {

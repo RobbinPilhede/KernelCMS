@@ -4,7 +4,7 @@
 // kernel.config.ts snippet, the .env template, and an AI prompt) tucks behind a
 // small "Manual setup" disclosure so cards stay short. Used in the first-run wizard
 // and in the Connectors panel.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { EASE_OUT, itemVariants, listContainer } from './motion'
 
@@ -425,11 +425,20 @@ function ConnectorCard({
   status,
   setupMode,
   onApply,
+  radio,
+  selected,
+  onSelect,
 }: {
   c: ConnectorDef
   status: ConnectorState
   setupMode?: boolean
   onApply?: (values: Record<string, string>) => Promise<void>
+  /** Part of a single-select group (e.g. Database): selecting one deselects siblings. */
+  radio?: boolean
+  /** Controlled selected state when `radio`. */
+  selected?: boolean
+  /** Select this card (radio). */
+  onSelect?: () => void
 }) {
   const state = c.state(status)
   const connected = state === 'connected'
@@ -439,15 +448,28 @@ function ConnectorCard({
   // values are written to the project .env and applied (or wired) on next start.
   const canApply = Boolean(setupMode && onApply && c.env && c.env.length > 0)
 
-  const [expanded, setExpanded] = useState(false)
+  // In radio mode the "on" state is the controlled `selected`; otherwise a local
+  // enable toggle (seeded from the runtime-connected state).
   const [enabled, setEnabled] = useState(connected)
+  const on = radio ? Boolean(selected) : enabled
+  const [expanded, setExpanded] = useState(radio ? Boolean(selected) : false)
   const [manual, setManual] = useState(false)
+  // Keep a radio card's body in sync as the selection moves between siblings.
+  useEffect(() => {
+    if (radio) setExpanded(Boolean(selected))
+  }, [radio, selected])
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saveErr, setSaveErr] = useState<string | null>(null)
 
   const toggle = (next: boolean) => {
+    if (radio) {
+      // A radio group always keeps one selected: turning a card on selects it
+      // (deselecting siblings); you cannot turn the selected one off directly.
+      if (next && !selected) onSelect?.()
+      return
+    }
     setEnabled(next)
     setExpanded(next)
   }
@@ -481,7 +503,7 @@ function ConnectorCard({
 
   return (
     <motion.div
-      className={`cx-card cx-${state}${expanded ? ' open' : ''}${enabled ? ' enabled' : ''}`}
+      className={`cx-card cx-${state}${expanded ? ' open' : ''}${on ? ' enabled' : ''}`}
       variants={itemVariants}
     >
       <div className="cx-head">
@@ -498,9 +520,10 @@ function ConnectorCard({
           </span>
         </button>
         <Switch
-          checked={enabled}
-          disabled={connected}
-          label={connected ? `${c.name} is active` : `Enable ${c.name}`}
+          checked={on}
+          // Radio cards stay selectable; only a non-radio runtime-active card locks.
+          disabled={!radio && connected}
+          label={radio ? `Use ${c.name}` : connected ? `${c.name} is active` : `Enable ${c.name}`}
           onChange={toggle}
         />
       </div>
@@ -581,30 +604,54 @@ function ConnectorCard({
   )
 }
 
-/** The full connector catalog, grouped by category. In `setupMode`, connectors
- *  with env vars become fillable forms that write to .env via `onApply`. */
+const DB_IDS = ['sqlite', 'postgres', 'mysql', 'mongodb']
+
+/** The connector catalog, grouped by category. Pass `categories` to render a
+ *  subset (the first-run wizard shows Database on its own step, then the rest).
+ *  The Database group is single-select: choosing one deselects the others. In
+ *  `setupMode`, connectors with env vars become fillable forms that write to
+ *  .env via `onApply`. */
 export function ConnectorGrid({
   status,
   setupMode,
   onApply,
+  categories,
 }: {
   status: ConnectorState
   setupMode?: boolean
   onApply?: (values: Record<string, string>) => Promise<void>
+  categories?: Category[]
 }) {
+  const shown = categories ?? CATEGORY_ORDER
+  // The selected database is single-choice. Seed from the running adapter.
+  const [dbSelection, setDbSelection] = useState(() => (DB_IDS.includes(status.db) ? status.db : 'sqlite'))
   return (
     <motion.div className="cx-grid" variants={listContainer} initial="initial" animate="animate">
-      {CATEGORY_ORDER.map((cat) => {
+      {shown.map((cat) => {
         const items = CONNECTORS.filter((c) => c.category === cat)
         if (items.length === 0) return null
+        const isDb = cat === 'Database'
         return (
           <div key={cat} className="cx-group">
             <motion.p className="cx-group-title" variants={itemVariants}>
               {cat}
             </motion.p>
-            {items.map((c) => (
-              <ConnectorCard key={c.id} c={c} status={status} setupMode={setupMode} onApply={onApply} />
-            ))}
+            {items.map((c) =>
+              isDb ? (
+                <ConnectorCard
+                  key={c.id}
+                  c={c}
+                  status={status}
+                  setupMode={setupMode}
+                  onApply={onApply}
+                  radio
+                  selected={dbSelection === c.id}
+                  onSelect={() => setDbSelection(c.id)}
+                />
+              ) : (
+                <ConnectorCard key={c.id} c={c} status={status} setupMode={setupMode} onApply={onApply} />
+              ),
+            )}
           </div>
         )
       })}
