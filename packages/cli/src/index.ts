@@ -251,6 +251,9 @@ export async function run(argv: string[]): Promise<void> {
         cors: true,
         admin: true,
         graphql: true,
+        // Local development: don't throttle yourself. Production (`kernel start`)
+        // keeps the default rate limiter on.
+        rateLimit: { enabled: false },
       })
       console.log(`\n  KernelCMS dev server`)
       console.log(`  ➜  Admin:  ${server.url}/admin`)

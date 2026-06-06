@@ -27,6 +27,13 @@ import {
 import type { EndpointConfig, RequestContext } from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
 import { buildOpenApiSpec, scalarHtml } from './openapi'
+import {
+  HEADER_REMOTE_ADDR,
+  rateLimitCheck,
+  resolveRateLimit,
+  type RateLimitOptions,
+  type ResolvedRateLimit,
+} from './rate-limit'
 import { ADMIN_HTML } from './admin-assets.generated'
 
 // One generated GraphQL executor per kernel, built lazily on first use.
@@ -60,6 +67,10 @@ export interface HandlerOptions {
   /** Serve an OpenAPI spec at `<api>/openapi` and a Scalar API reference at
    *  `<api>/docs`. Defaults to true. */
   openapi?: boolean
+  /** HTTP rate limiting. Enabled by default with conservative limits; pass
+   *  `{ enabled: false }` to disable, or tune `windowMs`/`max`/`authMax`. Set
+   *  `trustProxy: true` only behind a trusted proxy that sets `x-forwarded-for`. */
+  rateLimit?: RateLimitOptions
 }
 
 /** The auth collection the admin UI logs into: configured admin.user, else the first auth collection. */
@@ -161,10 +172,23 @@ type RequestHandler = (request: Request) => Promise<Response>
 export function createRequestHandler(kernel: Kernel, options: HandlerOptions = {}): RequestHandler {
   const apiBase = kernel.config.routes.api
   const adminBase = adminBaseOf(options)
+  const rateLimit: ResolvedRateLimit = resolveRateLimit(options.rateLimit)
   const finish = (response: Response, request: Request): Response =>
     withSecurityHeaders(withCors(response, options, request))
   return async function handle(request: Request): Promise<Response> {
     if (request.method === 'OPTIONS') return finish(new Response(null, { status: 204 }), request)
+
+    // Rate limit before any work. The admin HTML shell and static file delivery
+    // are cheap and same-origin, so the general limit covers them too; auth
+    // routes get a much stricter budget. 429 carries Retry-After.
+    if (rateLimit.enabled) {
+      const verdict = await rateLimitCheck(rateLimit, request, apiBase)
+      if (!verdict.allowed) {
+        const res = json({ error: { code: 'TOO_MANY_REQUESTS', message: 'Too many requests.' } }, 429)
+        res.headers.set('retry-after', String(verdict.retryAfter))
+        return finish(res, request)
+      }
+    }
 
     // Built-in admin UI (same-origin HTML shell). The SPA decides setup/login/
     // dashboard from auth state, so every admin path returns the same document.
@@ -199,6 +223,15 @@ function withSecurityHeaders(response: Response): Response {
   // SAMEORIGIN (not DENY) so the admin's same-origin live-preview iframe still works.
   response.headers.set('x-frame-options', 'SAMEORIGIN')
   response.headers.set('referrer-policy', 'no-referrer')
+  // HSTS is honoured only over HTTPS (browsers ignore it on plain HTTP), so it is
+  // safe to always emit; it pins TLS for two years once seen over https.
+  if (!response.headers.has('strict-transport-security')) {
+    response.headers.set('strict-transport-security', 'max-age=63072000; includeSubDomains')
+  }
+  // Drop powerful features by default; the admin never needs them.
+  if (!response.headers.has('permissions-policy')) {
+    response.headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=(), browsing-topics=()')
+  }
   return response
 }
 
@@ -1029,6 +1062,12 @@ export function toNodeListener(handler: RequestHandler, opts: { maxBodyBytes?: n
         }
         const url = `http://${req.headers.host ?? 'localhost'}${req.url ?? '/'}`
         const method = req.method ?? 'GET'
+        // Expose the socket peer address for rate limiting. A client cannot set
+        // this header itself (we overwrite any incoming value); x-forwarded-for is
+        // only consulted when the operator opts into trustProxy.
+        const remote = req.socket?.remoteAddress
+        if (remote) headers.set(HEADER_REMOTE_ADDR, remote)
+        else headers.delete(HEADER_REMOTE_ADDR)
         const hasBody = method !== 'GET' && method !== 'HEAD' && chunks.length > 0
         const request = new Request(url, {
           method,
