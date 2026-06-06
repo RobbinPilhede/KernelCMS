@@ -58,7 +58,12 @@ function fieldSchema(field: AdminField): JsonSchema {
 
 function propertiesOf(fields: AdminField[]): Record<string, JsonSchema> {
   const props: Record<string, JsonSchema> = {}
-  for (const f of fields) props[f.name] = fieldSchema(f)
+  for (const f of fields) {
+    // Never document hidden fields — these are server-managed columns
+    // (hash/api_key/reset_token/totp_secret/…) whose names should not leak.
+    if (f.admin?.hidden) continue
+    props[f.name] = fieldSchema(f)
+  }
   return props
 }
 
@@ -237,7 +242,7 @@ export function scalarHtml(specUrl: string): string {
   </head>
   <body>
     <script id="api-reference" data-url="${specUrl.replace(/"/g, '&quot;')}"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1" crossorigin="anonymous"></script>
   </body>
 </html>`
 }

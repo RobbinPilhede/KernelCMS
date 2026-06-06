@@ -129,4 +129,48 @@ describe('custom endpoints', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toHaveProperty('posts')
   })
+
+  it('rejects an oversized custom-endpoint body (DoS guard)', async () => {
+    const big = JSON.stringify({ title: 'x'.repeat(2_100_000) }) // > 2 MB
+    const res = await handler(
+      new Request('http://localhost/api/notes', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: big,
+      }),
+    )
+    expect(res.status).toBe(413)
+  })
+})
+
+describe('custom endpoint route-collision guard', () => {
+  it('rejects an endpoint that shadows a built-in auth route', async () => {
+    await expect(
+      initKernel(
+        {
+          secret: 'collide',
+          db: sqliteAdapter({ url: ':memory:' }),
+          collections: [{ slug: 'users', auth: true, fields: [] }],
+          endpoints: [
+            defineEndpoint({ method: 'POST', path: '/users/login', access: () => true, handler: () => ({}) }),
+          ],
+        },
+        { logLevel: 'error' },
+      ),
+    ).rejects.toThrow(/auth route/)
+  })
+
+  it('rejects an endpoint on a reserved system path', async () => {
+    await expect(
+      initKernel(
+        {
+          secret: 'collide',
+          db: sqliteAdapter({ url: ':memory:' }),
+          collections: [{ slug: 'posts', access: { read: () => true }, fields: [{ name: 'title', type: 'text' }] }],
+          endpoints: [defineEndpoint({ method: 'GET', path: '/openapi', access: () => true, handler: () => ({}) })],
+        },
+        { logLevel: 'error' },
+      ),
+    ).rejects.toThrow(/reserved/)
+  })
 })

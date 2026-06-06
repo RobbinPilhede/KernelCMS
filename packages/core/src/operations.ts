@@ -662,6 +662,10 @@ export function createOperations(ctx: OperationCtx) {
     doc = (await runHooks(collection.hooks?.afterChange, { req, operation: 'create', doc }, 'doc')) as Doc
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     doc = await populate(collection, doc, opts.depth ?? 0, req)
+    // Strip read-restricted fields BEFORE computing, so a virtual field's `compute`
+    // cannot observe (and thus cannot leak) a sibling the caller may not read; then
+    // strip again to apply any access rule on the virtual fields themselves.
+    if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     await applyComputed(collection.fields, doc, req)
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     if (pendingVerification) await sendVerificationEmail(collection, doc, pendingVerification)
@@ -699,6 +703,9 @@ export function createOperations(ctx: OperationCtx) {
       let doc = rowToDoc(collection, row, req)
       doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
       doc = await populate(collection, doc, opts.depth ?? 0, req)
+      // Strip read-restricted fields before computing (so a virtual field can't
+      // leak a restricted sibling), then strip again for the virtual fields' rules.
+      if (!override) await applyReadFieldAccess(collection.fields, doc, req)
       await applyComputed(collection.fields, doc, req)
       if (!override) await applyReadFieldAccess(collection.fields, doc, req)
       docs.push(doc as T)
@@ -726,6 +733,10 @@ export function createOperations(ctx: OperationCtx) {
     let doc = rowToDoc(collection, row, req)
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     doc = await populate(collection, doc, opts.depth ?? 0, req)
+    // Strip read-restricted fields BEFORE computing, so a virtual field's `compute`
+    // cannot observe (and thus cannot leak) a sibling the caller may not read; then
+    // strip again to apply any access rule on the virtual fields themselves.
+    if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     await applyComputed(collection.fields, doc, req)
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     return doc as T
@@ -784,6 +795,10 @@ export function createOperations(ctx: OperationCtx) {
     doc = (await runHooks(collection.hooks?.afterChange, { req, operation: 'update', doc }, 'doc')) as Doc
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     doc = await populate(collection, doc, opts.depth ?? 0, req)
+    // Strip read-restricted fields BEFORE computing, so a virtual field's `compute`
+    // cannot observe (and thus cannot leak) a sibling the caller may not read; then
+    // strip again to apply any access rule on the virtual fields themselves.
+    if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     await applyComputed(collection.fields, doc, req)
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     return doc as T
@@ -1435,6 +1450,7 @@ export function createOperations(ctx: OperationCtx) {
     doc = await runHooks(global.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')
     // Field-level read access must apply to globals too, exactly as it does for
     // collection reads — otherwise a `field.access.read` rule is silently ignored.
+    if (!(opts.overrideAccess ?? false)) await applyReadFieldAccess(global.fields, doc, req)
     await applyComputed(global.fields, doc, req)
     if (!(opts.overrideAccess ?? false)) await applyReadFieldAccess(global.fields, doc, req)
     return doc as T
@@ -1470,6 +1486,7 @@ export function createOperations(ctx: OperationCtx) {
     }
     let doc = globalDoc(global, saved, req)
     doc = await runHooks(global.hooks?.afterChange, { req, operation: 'update', doc }, 'doc')
+    if (!(opts.overrideAccess ?? false)) await applyReadFieldAccess(global.fields, doc, req)
     await applyComputed(global.fields, doc, req)
     if (!(opts.overrideAccess ?? false)) await applyReadFieldAccess(global.fields, doc, req)
     return doc as T

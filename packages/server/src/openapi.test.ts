@@ -20,6 +20,7 @@ beforeEach(async () => {
             { name: 'title', type: 'text', required: true },
             { name: 'views', type: 'number' },
             { name: 'published', type: 'boolean' },
+            { name: 'internal_token', type: 'text', admin: { hidden: true } },
           ],
         },
       ],
@@ -66,6 +67,8 @@ describe('OpenAPI', () => {
     expect((posts.views as { type: string }).type).toBe('number')
     expect((posts.published as { type: string }).type).toBe('boolean')
     expect(posts.id).toBeTruthy()
+    // Hidden (server-managed) field names must NOT leak into the public spec.
+    expect(posts.internal_token).toBeUndefined()
   })
 
   it('documents custom endpoints with converted path params', async () => {

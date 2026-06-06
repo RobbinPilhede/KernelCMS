@@ -84,4 +84,36 @@ describe('computed (virtual) fields', () => {
     expect(full_name.virtual).toBe(true)
     expect(full_name.admin?.readOnly).toBe(true)
   })
+
+  it('does not leak a read-restricted sibling through a virtual field', async () => {
+    const k = await initKernel(
+      {
+        secret: 'computed-acl',
+        db: sqliteAdapter({ url: ':memory:' }),
+        collections: [
+          {
+            slug: 'records',
+            access: { read: () => true, create: () => true },
+            fields: [
+              { name: 'first', type: 'text' },
+              { name: 'secret_note', type: 'text', access: { read: () => false } },
+              // A naive/hostile virtual field that tries to echo the restricted sibling.
+              { name: 'leak', type: 'text', virtual: true, compute: ({ doc }) => String(doc.secret_note ?? 'none') },
+            ],
+          },
+        ],
+      },
+      { logLevel: 'error' },
+    )
+    await k.migrate()
+    await k.create({ collection: 'records', data: { first: 'A', secret_note: 'TOPSECRET' }, overrideAccess: true })
+
+    // Read as a non-override caller: the restricted sibling is stripped BEFORE
+    // compute runs, so the virtual field cannot observe (or echo) it.
+    const list = await k.find({ collection: 'records', req: { user: { id: 'u', collection: 'records' } } })
+    const doc = list.docs[0]!
+    expect(doc.secret_note).toBeUndefined()
+    expect(doc.leak).toBe('none')
+    await k.destroy()
+  })
 })

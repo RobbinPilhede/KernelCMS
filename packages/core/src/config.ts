@@ -255,10 +255,25 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     email = consoleEmailFallback()
   }
 
-  // Validate custom endpoints: known method, rooted path, and no duplicate
-  // method+path (a duplicate is a real conflict, never last-write-wins).
+  // Validate custom endpoints: known method, rooted path, no duplicate method+path,
+  // and no collision with reserved system routes or per-auth-collection
+  // auth/OAuth routes — so a (possibly third-party) module can't shadow and
+  // intercept login/reset/OAuth flows.
   const endpoints = config.endpoints ?? []
   if (endpoints.length > 0) {
+    const reservedFirst = new Set(['health', '_config', '_admin', 'openapi', 'docs', 'graphql', 'globals'])
+    const authActions = new Set([
+      'login',
+      'me',
+      'forgot-password',
+      'reset-password',
+      'verify-email',
+      'resend-verification',
+      '2fa-setup',
+      '2fa-enable',
+      '2fa-disable',
+    ])
+    const authSlugs = new Set(collections.filter((c) => c.auth).map((c) => c.slug))
     const seen = new Set<string>()
     for (const ep of endpoints) {
       assert(
@@ -269,6 +284,11 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
       const key = `${ep.method} ${ep.path}`
       assert(!seen.has(key), `duplicate endpoint "${key}"`)
       seen.add(key)
+      const segs = ep.path.split('/').filter(Boolean)
+      assert(!reservedFirst.has(segs[0] ?? ''), `endpoint path "${ep.path}" collides with a reserved route`)
+      if (segs[0] && authSlugs.has(segs[0]) && segs[1] && (authActions.has(segs[1]) || segs[1] === 'oauth')) {
+        assert(false, `endpoint path "${ep.path}" collides with a built-in auth route`)
+      }
     }
   }
 

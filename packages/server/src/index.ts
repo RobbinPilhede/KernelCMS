@@ -296,7 +296,18 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       return json(buildOpenApiSpec(kernel, { apiBase, title: 'KernelCMS API' }))
     }
     if (segments[0] === 'docs') {
-      return html(scalarHtml(`${apiBase}/openapi`))
+      const docs = html(scalarHtml(`${apiBase}/openapi`))
+      // The docs page is same-origin with the admin (token in localStorage), so
+      // lock script execution to the pinned Scalar CDN only — any other injected
+      // script is blocked. (For zero third-party trust, self-host Scalar or set
+      // `openapi: false`.)
+      docs.headers.set(
+        'content-security-policy',
+        "default-src 'none'; script-src https://cdn.jsdelivr.net 'unsafe-inline'; " +
+          "style-src https://cdn.jsdelivr.net 'unsafe-inline'; img-src 'self' data: https:; " +
+          "font-src https://cdn.jsdelivr.net data:; connect-src 'self'",
+      )
+      return docs
     }
   }
 
@@ -652,13 +663,26 @@ async function runEndpoint(
   const allowed = endpoint.access ? await endpoint.access({ req, request }) : Boolean(user)
   if (!allowed) throw user ? new ForbiddenError() : new UnauthorizedError()
 
-  // Read the JSON body only when the endpoint declares a body validator.
+  // Read the JSON body only when the endpoint declares a body validator. Enforce
+  // the same size ceiling core JSON routes use — check the declared Content-Length
+  // first, then the actual bytes (a chunked request omits Content-Length, so the
+  // header alone isn't enough on the fetch/edge path).
   let body: unknown
   if (endpoint.input?.body) {
+    assertBodyWithinLimit(request, MAX_JSON_BODY_BYTES)
+    let text: string
     try {
-      body = await request.json()
+      text = await request.text()
     } catch {
       throw new BadRequestError('Request body must be valid JSON.')
+    }
+    if (text.length > MAX_JSON_BODY_BYTES) throw new PayloadTooLargeError('Request body too large.')
+    if (text) {
+      try {
+        body = JSON.parse(text)
+      } catch {
+        throw new BadRequestError('Request body must be valid JSON.')
+      }
     }
   }
   const query = Object.fromEntries(url.searchParams.entries())
