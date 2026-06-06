@@ -20,8 +20,7 @@ Pick your own database, storage, email, image processor, and auth providers thro
 small adapter contracts. Run it fully self-hosted on a single container.
 
 ```bash
-npm create kernel@latest my-app
-cd my-app && pnpm dev
+npm install kernelcms     # then add a kernel.config.ts and run: npx kernel dev
 ```
 
 ---
@@ -49,55 +48,33 @@ optional adapters, never in `@kernel/core`. The lean default is the product.
 
 ## Quickstart
 
-### Create a new app
+A working CMS, an admin panel, and a typed REST + GraphQL API in three steps.
+
+### 1. Install
 
 ```bash
-npm create kernel@latest my-app    # or: pnpm create kernel my-app
-cd my-app
-pnpm dev                            # open the URL it prints
+npm install kernelcms
 ```
 
-The generated app is fully self-contained and seeds a demo blog, so it runs before any
-`@kernel/*` packages are even on npm.
-
-### Or run this monorepo
-
-```bash
-pnpm install
-pnpm example:seed     # creates ./blog.db with demo content and an admin user
-pnpm example:dev      # REST and GraphQL API on http://localhost:3000/api
-pnpm admin            # the admin UI on http://localhost:5173
-```
-
-Sign in with `admin@example.com` / `password123` (from the seed), then hit the API:
-
-```bash
-curl http://localhost:3000/api/health
-curl "http://localhost:3000/api/posts?where[status][equals]=published&depth=1"
-```
-
----
-
-## A config is all you need
+### 2. Add a `kernel.config.ts`
 
 ```ts
 import { defineConfig } from 'kernelcms'
 import { sqliteAdapter } from 'kernelcms/sqlite'
-import { localStorage } from 'kernelcms/storage'
 
 export default defineConfig({
+  // Set KERNEL_SECRET in production; anything works locally.
+  secret: process.env.KERNEL_SECRET ?? 'dev-only-secret',
   db: sqliteAdapter({ url: 'file:./content.db' }),
-  storage: localStorage({ rootDir: './uploads', servePath: '/files' }),
   collections: [
     {
       slug: 'users',
-      auth: { forgotPassword: true, twoFactor: true },
+      auth: true, // email + password sign-in, included
       fields: [{ name: 'name', type: 'text' }],
     },
     {
       slug: 'posts',
-      versions: { drafts: true },
-      access: { read: () => true },
+      access: { read: () => true }, // public reads
       fields: [
         { name: 'title', type: 'text', required: true },
         { name: 'body', type: 'richText' },
@@ -108,8 +85,52 @@ export default defineConfig({
 })
 ```
 
-That gives you typed CRUD, drafts and version history, auth with optional reset and
-two-factor, REST and GraphQL endpoints, and a full admin UI for the model above.
+### 3. Run it
+
+```bash
+npx kernel dev
+```
+
+That creates the database tables, starts the server, and gives you:
+
+- **Admin panel** at http://localhost:3000/admin (the first visit asks you to create your admin account)
+- **REST API** at http://localhost:3000/api/posts
+- **GraphQL** at http://localhost:3000/api/graphql
+
+Edit `kernel.config.ts`, refresh, and the admin and APIs update with it. That is the whole setup.
+
+```bash
+# try the API
+curl http://localhost:3000/api/health
+curl "http://localhost:3000/api/posts?where[title][like]=hello&depth=1"
+```
+
+> Needs Node 22.18+ or 24 (it runs your TypeScript config directly, no build step).
+
+---
+
+## Go further
+
+Everything is opt-in on the same config. A few one-liners unlock a lot:
+
+```ts
+{
+  slug: 'posts',
+  versions: { drafts: true }, // drafts, version history, scheduled publish
+  fields: [
+    { name: 'cover', type: 'upload', relationTo: 'media' },
+    // polymorphic relationship to more than one collection
+    { name: 'related', type: 'relationship', relationTo: ['posts', 'pages'], hasMany: true },
+  ],
+}
+```
+
+- **Auth:** `auth: { forgotPassword: true, twoFactor: true }` adds email password reset and TOTP two-factor.
+- **Uploads + images:** add `storage: localStorage(...)` (or S3 / R2) and `imageSizes` for auto-resized variants.
+- **Postgres:** swap `sqliteAdapter` for `postgresAdapter()` and set `DATABASE_URL`.
+- **Hooks, access rules, localization, background jobs, plugins:** all configured the same way.
+
+See [What is in the box](#what-is-in-the-box) for the full list.
 
 ---
 
