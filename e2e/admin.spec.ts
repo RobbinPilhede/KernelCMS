@@ -21,8 +21,8 @@ async function ensureSignedIn(page: Page) {
       .isVisible()
       .catch(() => false)
   ) {
-    await page.getByRole('button', { name: /Connect your stack/ }).click() // step 0 → connectors
-    await page.getByRole('button', { name: /Create your account/ }).click() // connectors → account
+    // Skip connectors and go straight to account creation (welcome → account).
+    await page.getByRole('button', { name: /Skip for now/ }).click()
     await page.getByRole('textbox', { name: 'Email' }).fill('admin@e2e.test')
     const pwds = page.locator('input[type="password"]')
     await pwds.nth(0).fill('supersecret123')
@@ -47,6 +47,8 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
   // Step 0 — welcome + honest "how it's running" status.
   await expect(page.getByRole('heading', { name: /Welcome to KernelCMS/ })).toBeVisible()
   await expect(page.getByText(/Running on SQLite/)).toBeVisible()
+  // The whole connector step is skippable from the welcome screen.
+  await expect(page.getByRole('button', { name: /Skip for now/ })).toBeVisible()
   await page.getByRole('button', { name: /Connect your stack/ }).click()
 
   // Step 1 — Coolify-style connectors picker with brand tiles + setup details.

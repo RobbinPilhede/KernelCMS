@@ -547,6 +547,9 @@ export function Setup() {
               <button className="btn primary wz-next" type="button" onClick={() => setStep(1)}>
                 Connect your stack →
               </button>
+              <button type="button" className="link-btn wz-skip" onClick={() => setStep(2)}>
+                Skip for now, just create my account
+              </button>
               <div className="wz-foot">
                 <ThemeToggle />
               </div>

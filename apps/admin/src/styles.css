@@ -2893,6 +2893,10 @@ a {
   padding: 12px;
   margin-top: 2px;
 }
+.wz-skip {
+  align-self: center;
+  margin-top: 10px;
+}
 .wz-foot {
   display: flex;
   justify-content: center;
