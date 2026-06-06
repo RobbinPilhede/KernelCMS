@@ -78,6 +78,12 @@ test('first-run wizard: runtime, connectors picker, account, dashboard', async (
   await expect(page.getByRole('heading', { name: /Connect services/ })).toBeVisible()
   await expect(page.getByRole('switch', { name: /Enable Redis/ })).toBeVisible()
   await expect(page.getByRole('switch', { name: /Enable Google/ })).toBeVisible()
+  // Storage is single-select: a default (Local disk) plus S3 and R2 like the DB step.
+  await expect(page.getByRole('switch', { name: /Use Local disk/ })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Use Amazon S3/ })).toBeVisible()
+  await page.getByRole('switch', { name: /Use Amazon S3/ }).click()
+  await expect(page.getByRole('switch', { name: /Use Amazon S3/ })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('switch', { name: /Use Local disk/ })).toHaveAttribute('aria-checked', 'false')
   await page.getByRole('button', { name: /Create your account/ }).click()
 
   // Step 3 — create the owner account.

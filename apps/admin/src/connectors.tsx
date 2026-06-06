@@ -85,23 +85,39 @@ const SqliteLogo = () => (
   </svg>
 )
 
-const StorageLogo = () => (
+const LocalDiskLogo = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="#94a3b8" strokeWidth="1.7" />
+    <circle cx="8" cy="12" r="3.2" stroke="#94a3b8" strokeWidth="1.7" />
+    <circle cx="8" cy="12" r="0.6" fill="#94a3b8" />
+    <path d="M14 9.5h4M14 12h4M14 14.5h4" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+)
+
+const AwsLogo = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <path d="M5 14c2.5 1.6 9.5 1.6 12 0" stroke="#FF9900" strokeWidth="1.7" strokeLinecap="round" />
+    <path d="M16.5 12.6c1 .4 2 .4 3 0" stroke="#FF9900" strokeWidth="1.7" strokeLinecap="round" />
+    <path
+      d="M4 6.5h2l1.2 4 1.3-4h1.6l1.3 4 1.2-4h2"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+)
+
+const R2Logo = () => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
     <path
-      d="M5 7.5 6.3 19a2 2 0 0 0 2 1.8h7.4a2 2 0 0 0 2-1.8L19 7.5"
+      d="M7 18a4 4 0 0 1-.5-7.97A5 5 0 0 1 16 9.5a3.5 3.5 0 0 1 .5 6.96"
       stroke="#F38020"
       strokeWidth="1.7"
       strokeLinecap="round"
       strokeLinejoin="round"
     />
-    <path d="M3.4 7.5h17.2" stroke="#F38020" strokeWidth="1.7" strokeLinecap="round" />
-    <path
-      d="M9 7.5V6a3 3 0 0 1 6 0v1.5"
-      stroke="#F38020"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
+    <path d="M8 18h8" stroke="#F38020" strokeWidth="1.7" strokeLinecap="round" />
   </svg>
 )
 
@@ -236,29 +252,53 @@ db: postgresAdapter({ url: process.env.DATABASE_URL }),`,
     prompt: `I'm using KernelCMS and want to add Redis for caching and/or a background-job queue. Help me: run Redis locally with Docker (or pick a managed one like Upstash), put REDIS_URL in .env (gitignored), and wire it through a KernelCMS module/job handler using ioredis that reads process.env.REDIS_URL. Show a small cache helper and a queue example.`,
   },
   {
-    id: 'object-storage',
-    name: 'Object storage (S3 / R2)',
+    id: 'local-disk',
+    name: 'Local disk',
     category: 'Storage',
-    Icon: StorageLogo,
-    blurb: 'Store uploads in S3, Cloudflare R2, MinIO, or any S3-compatible bucket. Local disk is the default.',
+    Icon: LocalDiskLogo,
+    blurb: 'Built-in, zero-config. Uploads are stored on the local filesystem. The default while you build.',
     state: (s) => (s.storage ? 'connected' : 'available'),
-    localNote:
-      'Local disk is the zero-config default:\nstorage: localStorage({ rootDir: "./uploads", servePath: "/files" })',
+    localNote: 'Already the default:\nstorage: localStorage({ rootDir: "./uploads", servePath: "/files" })',
+    snippet: `import { localStorage } from 'kernelcms/storage'
+
+storage: localStorage({ rootDir: './uploads', servePath: '/files' }),`,
+  },
+  {
+    id: 's3',
+    name: 'Amazon S3',
+    category: 'Storage',
+    Icon: AwsLogo,
+    blurb: 'Store uploads in an AWS S3 bucket. Recommended for production.',
+    state: () => 'available',
     env: [
       { key: 'S3_BUCKET', example: 'my-bucket' },
-      { key: 'AWS_REGION', example: 'auto' },
+      { key: 'AWS_REGION', example: 'us-east-1' },
       { key: 'AWS_ACCESS_KEY_ID', example: '••••' },
       { key: 'AWS_SECRET_ACCESS_KEY', example: '••••' },
-      { key: 'R2_ENDPOINT', example: 'https://<account-id>.r2.cloudflarestorage.com' },
     ],
-    snippet: `import { s3Storage, r2 } from 'kernelcms/storage'
+    snippet: `import { s3Storage } from 'kernelcms/storage'
 
-// AWS S3 (credentials from the standard AWS env chain):
-storage: s3Storage({ bucket: process.env.S3_BUCKET!, region: process.env.AWS_REGION }),
+storage: s3Storage({ bucket: process.env.S3_BUCKET!, region: process.env.AWS_REGION }),`,
+    prompt: `I'm using KernelCMS and want uploaded files stored in AWS S3. Give me click-by-click steps to create a bucket + an IAM access key with least-privilege S3 permissions, put S3_BUCKET, AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY in .env (gitignored), and configure storage: s3Storage({ bucket, region }) from 'kernelcms/storage' in kernel.config.ts.`,
+  },
+  {
+    id: 'r2',
+    name: 'Cloudflare R2',
+    category: 'Storage',
+    Icon: R2Logo,
+    blurb: 'Store uploads in Cloudflare R2 (S3-compatible, no egress fees).',
+    state: () => 'available',
+    env: [
+      { key: 'S3_BUCKET', example: 'my-bucket' },
+      { key: 'R2_ENDPOINT', example: 'https://<account-id>.r2.cloudflarestorage.com' },
+      { key: 'AWS_ACCESS_KEY_ID', example: '••••' },
+      { key: 'AWS_SECRET_ACCESS_KEY', example: '••••' },
+      { key: 'R2_PUBLIC_BASE_URL', example: 'https://files.yourdomain.com' },
+    ],
+    snippet: `import { r2 } from 'kernelcms/storage'
 
-// or Cloudflare R2:
 storage: r2({ bucket: process.env.S3_BUCKET!, endpoint: process.env.R2_ENDPOINT }),`,
-    prompt: `I'm using KernelCMS and want uploaded files stored in object storage instead of local disk. I'd like Cloudflare R2 (or AWS S3). Give me click-by-click steps to create a bucket + access keys, put them in .env (gitignored), and configure storage in kernel.config.ts using r2(...) or s3Storage(...) from 'kernelcms/storage', reading creds from process.env.`,
+    prompt: `I'm using KernelCMS and want uploaded files stored in Cloudflare R2. Give me click-by-click steps to create an R2 bucket + an S3-compatible access key, put S3_BUCKET, R2_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (and optionally R2_PUBLIC_BASE_URL) in .env (gitignored), and configure storage: r2({ bucket, endpoint }) from 'kernelcms/storage' in kernel.config.ts.`,
   },
   {
     id: 'email',
@@ -605,11 +645,13 @@ function ConnectorCard({
 }
 
 const DB_IDS = ['sqlite', 'postgres', 'mysql', 'mongodb']
+// Categories where you pick exactly one backend (radio); the rest are additive.
+const RADIO_CATEGORIES = new Set<Category>(['Database', 'Storage'])
 
 /** The connector catalog, grouped by category. Pass `categories` to render a
  *  subset (the first-run wizard shows Database on its own step, then the rest).
- *  The Database group is single-select: choosing one deselects the others. In
- *  `setupMode`, connectors with env vars become fillable forms that write to
+ *  Database and Storage are single-select: choosing one deselects the others.
+ *  In `setupMode`, connectors with env vars become fillable forms that write to
  *  .env via `onApply`. */
 export function ConnectorGrid({
   status,
@@ -623,21 +665,25 @@ export function ConnectorGrid({
   categories?: Category[]
 }) {
   const shown = categories ?? CATEGORY_ORDER
-  // The selected database is single-choice. Seed from the running adapter.
-  const [dbSelection, setDbSelection] = useState(() => (DB_IDS.includes(status.db) ? status.db : 'sqlite'))
+  // Single-choice selection per radio category, seeded from the running stack.
+  const [selection, setSelection] = useState<Record<string, string>>(() => ({
+    Database: DB_IDS.includes(status.db) ? status.db : 'sqlite',
+    // Storage kind isn't distinguishable from the runtime flag, so default to local.
+    Storage: 'local-disk',
+  }))
   return (
     <motion.div className="cx-grid" variants={listContainer} initial="initial" animate="animate">
       {shown.map((cat) => {
         const items = CONNECTORS.filter((c) => c.category === cat)
         if (items.length === 0) return null
-        const isDb = cat === 'Database'
+        const isRadio = RADIO_CATEGORIES.has(cat)
         return (
           <div key={cat} className="cx-group">
             <motion.p className="cx-group-title" variants={itemVariants}>
               {cat}
             </motion.p>
             {items.map((c) =>
-              isDb ? (
+              isRadio ? (
                 <ConnectorCard
                   key={c.id}
                   c={c}
@@ -645,8 +691,8 @@ export function ConnectorGrid({
                   setupMode={setupMode}
                   onApply={onApply}
                   radio
-                  selected={dbSelection === c.id}
-                  onSelect={() => setDbSelection(c.id)}
+                  selected={selection[cat] === c.id}
+                  onSelect={() => setSelection((s) => ({ ...s, [cat]: c.id }))}
                 />
               ) : (
                 <ConnectorCard key={c.id} c={c} status={status} setupMode={setupMode} onApply={onApply} />
