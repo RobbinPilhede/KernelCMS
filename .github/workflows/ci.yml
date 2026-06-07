@@ -87,12 +87,18 @@ jobs:
       - name: CLI exits 1 on a bad config (no libuv abort)
         shell: pwsh
         run: |
-          pnpm kernel doctor --config ./e2e/fixtures/bad.config.ts
-          if ($LASTEXITCODE -ne 1) {
-            Write-Error "Expected exit code 1 from a bad config, got $LASTEXITCODE"
+          # Call tsx directly (not `pnpm kernel`) to avoid pnpm's own ELIFECYCLE
+          # exit-code propagation, and capture the code before it's clobbered.
+          pnpm exec tsx packages/cli/src/bin.ts doctor --config ./e2e/fixtures/bad.config.ts
+          $code = $LASTEXITCODE
+          if ($code -ne 1) {
+            Write-Error "Expected exit code 1 from a bad config, got $code"
             exit 1
           }
           Write-Host "OK: bad config exited 1 cleanly"
+          # End the step successfully — GitHub's pwsh wrapper appends `exit $LASTEXITCODE`,
+          # which would otherwise still be 1 from the CLI call above.
+          exit 0
 
   e2e:
     name: End-to-end (Playwright)
