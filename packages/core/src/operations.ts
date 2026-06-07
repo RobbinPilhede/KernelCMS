@@ -63,6 +63,7 @@ import {
   joinFields,
   relationshipFields,
   serializeDoc,
+  storageFields,
   validateFields,
 } from './fields'
 import { evalAccess, isAllowed, asWhere } from './access'
@@ -463,6 +464,42 @@ export function createOperations(ctx: OperationCtx) {
     return resolveVersions(collection.versions).drafts
   }
 
+  /** The columns a caller may filter on — mirrors the adapter's allow-list exactly
+   *  (system columns + storage fields + draft columns). */
+  function filterableFields(collection: CollectionConfig): Set<string> {
+    const set = new Set<string>(['id', 'createdAt', 'updatedAt'])
+    for (const f of storageFields(collection.fields)) set.add(f.name)
+    if (draftsOn(collection)) {
+      set.add('_status')
+      set.add('_scheduled_at')
+    }
+    return set
+  }
+
+  /**
+   * Reject a `where` that references a field the collection does not have, with a
+   * 400 rather than letting the adapter raise a generic 500. Walks `and`/`or`
+   * groups recursively. Validates the caller-supplied filter only, so legitimate
+   * access-rule internals are never second-guessed.
+   */
+  function assertWhereFields(collection: CollectionConfig, where: Where | undefined): void {
+    if (!where) return
+    const allowed = filterableFields(collection)
+    const walk = (node: Where): void => {
+      for (const [key, value] of Object.entries(node)) {
+        if (key === 'and' || key === 'or') {
+          if (Array.isArray(value)) for (const sub of value) walk(sub as Where)
+          continue
+        }
+        if (value === undefined) continue
+        if (!allowed.has(key)) {
+          throw new BadRequestError(`Cannot filter on unknown field "${key}" of "${collection.slug}".`)
+        }
+      }
+    }
+    walk(where)
+  }
+
   function statusFromData(data: Row | undefined, fallback: string): 'draft' | 'published' {
     const s = data?._status as string | undefined
     if (s === 'published') return 'published'
@@ -696,6 +733,7 @@ export function createOperations(ctx: OperationCtx) {
     const req = buildReq(opts.req)
     const override = opts.overrideAccess ?? false
 
+    assertWhereFields(collection, opts.where)
     let where = opts.where
     if (!override) {
       const access = await evalAccess(collection.access?.read, { req })
@@ -862,6 +900,7 @@ export function createOperations(ctx: OperationCtx) {
     override: boolean,
     limit: number,
   ): Promise<string[]> {
+    assertWhereFields(collection, where)
     let scoped = where
     if (!override) {
       const result = await evalAccess(collection.access?.[access], { req })
@@ -916,6 +955,7 @@ export function createOperations(ctx: OperationCtx) {
   async function count(opts: CountOptions): Promise<number> {
     const collection = collectionOrThrow(opts.collection)
     const req = buildReq(opts.req)
+    assertWhereFields(collection, opts.where)
     let where = opts.where
     if (!(opts.overrideAccess ?? false)) {
       const access = await evalAccess(collection.access?.read, { req })

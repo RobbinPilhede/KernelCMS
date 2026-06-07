@@ -5,7 +5,7 @@
  */
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { AuthUser, Kernel, Row, Where } from '@kernel/core'
@@ -103,6 +103,60 @@ function adminShell(options: HandlerOptions): string {
   return ADMIN_HTML.includes('</body>') ? ADMIN_HTML.replace('</body>', `${tags}</body>`) : ADMIN_HTML + tags
 }
 
+/** sha256-base64 CSP source tokens for every inline `<script>` in the admin shell.
+ *  Computed once from the built HTML so the policy allows exactly those scripts
+ *  without `'unsafe-inline'`/`'unsafe-eval'` (the bundle uses neither eval nor
+ *  `new Function`). External `<script src>` blocks carry no body and are covered
+ *  by `'self'` / their origin instead. */
+const ADMIN_SCRIPT_HASHES: string[] = (() => {
+  const out: string[] = []
+  const re = /<script\b[^>]*>([\s\S]*?)<\/script>/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(ADMIN_HTML))) {
+    const body = m[1] ?? ''
+    if (!body.trim()) continue
+    out.push(`'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`)
+  }
+  return out
+})()
+
+/** Same-origin custom scripts are covered by `'self'`; absolute URLs need their
+ *  origin allow-listed in `script-src` so injected field components still load. */
+function extraScriptOrigins(options: HandlerOptions): string[] {
+  const scripts = typeof options.admin === 'object' ? (options.admin.scripts ?? []) : []
+  const origins = new Set<string>()
+  for (const src of scripts) {
+    try {
+      origins.add(new URL(src).origin)
+    } catch {
+      // Relative URL — same-origin, already covered by 'self'.
+    }
+  }
+  return [...origins]
+}
+
+/**
+ * Content-Security-Policy for the admin HTML shell. `script-src` is locked to
+ * `'self'` plus the inline bundle's hash (XSS defense-in-depth — no inline/eval).
+ * `style-src` keeps `'unsafe-inline'` (the inlined stylesheet + runtime style
+ * injection; far lower risk than scripts) and allows the Google Fonts stylesheet.
+ * No `default-src` is set, so images, API (`connect`), and the live-preview
+ * iframe (`frame-src`) stay unrestricted and keep working across origins.
+ */
+function adminCsp(options: HandlerOptions): string {
+  const scriptSrc = ["'self'", ...ADMIN_SCRIPT_HASHES, ...extraScriptOrigins(options)].join(' ')
+  return [
+    `script-src ${scriptSrc}`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    // The admin can only be framed by its own origin (live preview iframe), never
+    // by a third party (clickjacking); plugin <base>/<object> tricks are blocked.
+    "frame-ancestors 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+  ].join('; ')
+}
+
 // Env keys the first-run setup is allowed to write — the connector settings only.
 const ALLOWED_ENV_KEYS = new Set([
   'DATABASE_URL',
@@ -198,10 +252,7 @@ export function createRequestHandler(kernel: Kernel, options: HandlerOptions = {
       const { pathname } = new URL(request.url)
       if (pathname === '/login' || pathname === adminBase || pathname.startsWith(adminBase + '/')) {
         const shell = html(adminShell(options))
-        // The admin can only be framed by its own origin (live preview iframe),
-        // never embedded by a third party (clickjacking); plugin <base>/<object>
-        // tricks are blocked too.
-        shell.headers.set('content-security-policy', "frame-ancestors 'self'; object-src 'none'; base-uri 'self'")
+        shell.headers.set('content-security-policy', adminCsp(options))
         return finish(shell, request)
       }
     }
@@ -372,7 +423,13 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   }
 
   // /openapi -> machine-readable contract; /docs -> Scalar API reference UI.
-  if (options.openapi !== false && segments.length === 1 && method === 'GET') {
+  // The path stays reserved whether or not the feature is on: when disabled it
+  // 404s (rather than disclosing the spec) instead of falling through to a
+  // collection lookup. Disable in production — it maps every collection + field.
+  if (segments.length === 1 && method === 'GET' && (segments[0] === 'openapi' || segments[0] === 'docs')) {
+    if (options.openapi === false) {
+      return json({ error: { code: 'NOT_FOUND', message: 'Not found.' } }, 404)
+    }
     if (segments[0] === 'openapi') {
       return json(buildOpenApiSpec(kernel, { apiBase, title: 'KernelCMS API' }))
     }
@@ -1062,6 +1119,10 @@ function toNum(value: string | null): number | undefined {
 /** Default ceiling on a single request body (covers uploads); overridable. */
 export const DEFAULT_MAX_BODY_BYTES = 50 * 1024 * 1024
 
+// Methods the WHATWG Request constructor refuses to build (a TypeError), which
+// must be answered with 405 rather than bubbling up as a 500.
+const FORBIDDEN_METHODS = new Set(['TRACE', 'TRACK', 'CONNECT'])
+
 export function toNodeListener(handler: RequestHandler, opts: { maxBodyBytes?: number } = {}) {
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   return (req: IncomingMessage, res: ServerResponse): void => {
@@ -1097,6 +1158,17 @@ export function toNodeListener(handler: RequestHandler, opts: { maxBodyBytes?: n
         }
         const url = `http://${req.headers.host ?? 'localhost'}${req.url ?? '/'}`
         const method = req.method ?? 'GET'
+        // The WHATWG Request constructor throws on the forbidden methods
+        // (TRACE/TRACK/CONNECT), which would otherwise surface as a 500. Reject
+        // them up front with a proper 405 (no body is ever echoed, so no XST).
+        if (FORBIDDEN_METHODS.has(method.toUpperCase())) {
+          res.statusCode = 405
+          res.setHeader('content-type', 'application/json')
+          res.setHeader('x-content-type-options', 'nosniff')
+          res.setHeader('allow', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS')
+          res.end(JSON.stringify({ error: { code: 'BAD_REQUEST', message: 'Method not allowed.' } }))
+          return
+        }
         // Expose the socket peer address for rate limiting. A client cannot set
         // this header itself (we overwrite any incoming value); x-forwarded-for is
         // only consulted when the operator opts into trustProxy.

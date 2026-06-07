@@ -322,6 +322,10 @@ export async function run(argv: string[]): Promise<void> {
         cors: process.env.KERNEL_CORS ? process.env.KERNEL_CORS.split(',') : false,
         admin: true,
         graphql: true,
+        // The OpenAPI spec + Scalar docs map every collection and field, so they
+        // are off by default in production (they would hand an attacker a full API
+        // blueprint, unauthenticated). Opt back in with KERNEL_OPENAPI=true.
+        openapi: process.env.KERNEL_OPENAPI === 'true',
       })
       console.log(`KernelCMS listening on ${server.url} (production)`)
       const shutdown = async () => {
