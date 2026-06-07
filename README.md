@@ -236,6 +236,8 @@ logic lives in one place and stays read-only in the admin:
 - Scrypt password hashing and stateless, JWT-compatible tokens.
 - Per-document API keys for machine clients.
 - Brute-force protection on login.
+- Authority fields (`roles`, `permissions`, …) on auth collections are admin-write by
+  default, so self-service privilege escalation is blocked out of the box.
 - Email-based password reset and email verification, powered by a pluggable email
   adapter (console, memory, or HTTP, all dependency-free).
 - TOTP two-factor auth, implemented on `node:crypto` with no extra dependencies.
@@ -329,6 +331,11 @@ pnpm kernel -- --help                 # the CLI
 
 - Secure by default: writes require authentication unless a collection opts into public
   access.
+- No accidental privilege escalation: on an auth collection, authority fields (`roles`,
+  `role`, `permissions`, `is_admin`, `is_staff`, `is_superuser`) are admin-write by
+  default — even a user who can update their own record cannot promote themselves. An
+  explicit field-level `access` rule overrides the default; trusted server paths
+  (seed, first-admin setup, OAuth provisioning) still set them.
 - SQL identifiers are validated and all values are parameterized.
 - Passwords are scrypt-hashed and never returned. Reset, verification, and TOTP secrets
   are never exposed through the API, and their field names are kept out of the OpenAPI
