@@ -21,3 +21,20 @@ export function isSuppressedWarning(warning: string | Error, args: unknown[]): b
   if (code === 'MODULE_TYPELESS_PACKAGE_JSON') return true
   return false
 }
+
+/**
+ * Install the warning filter on `process.emitWarning`. Call this once at CLI start
+ * (before the user config is dynamically imported). Idempotent. Both the bundled
+ * `kernelcms` bin and the workspace `@kernel/cli` bin use it, so the published CLI
+ * gets the same quiet output as dev.
+ */
+let installed = false
+export function installWarningFilter(): void {
+  if (installed) return
+  installed = true
+  const original = process.emitWarning.bind(process)
+  process.emitWarning = ((warning: string | Error, ...args: unknown[]) => {
+    if (isSuppressedWarning(warning, args)) return
+    return (original as (w: string | Error, ...a: unknown[]) => void)(warning, ...args)
+  }) as typeof process.emitWarning
+}

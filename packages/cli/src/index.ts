@@ -20,6 +20,8 @@ import type { Kernel, KernelConfig, KernelSchema } from '@kernel/core'
 import { serve } from '@kernel/server'
 import { configTemplate, moduleTemplate, toSlug } from './templates'
 
+export { installWarningFilter, isSuppressedWarning } from './warnings'
+
 interface Flags {
   [key: string]: string | boolean
 }

@@ -47,6 +47,17 @@ jobs:
       - name: Build all packages
         run: pnpm -r run build
 
+      # Guard #11: the PUBLISHED bin (kernelcms/dist/bin.js) must suppress Node's
+      # config-load noise. A unit test can't catch a fix that lands only in the dev
+      # bin, so exercise the built bin against a typeless-package.json config.
+      - name: Published CLI is quiet on a typeless config
+        run: |
+          out=$(node packages/kernelcms/dist/bin.js doctor --config e2e/fixtures/typeless/kernel.config.ts 2>&1) || true
+          echo "$out"
+          if echo "$out" | grep -Eiq "MODULE_TYPELESS_PACKAGE_JSON|ExperimentalWarning"; then
+            echo "::error::CLI leaked a suppressed warning"; exit 1
+          fi
+
   windows:
     name: Windows (typecheck, tests & clean CLI exit)
     runs-on: windows-latest
