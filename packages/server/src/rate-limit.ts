@@ -55,6 +55,14 @@ export interface RateLimitOptions {
   authMax?: number
   /** Trust `x-forwarded-for` for the client IP (only behind a trusted proxy). Default false. */
   trustProxy?: boolean
+  /** Resolve the client identifier (usually an IP) from the request yourself.
+   *  Use this when embedding the handler behind a platform/proxy (Next.js, Vercel,
+   *  Cloudflare) where the socket peer address never reaches the handler — return,
+   *  e.g., `request.headers.get('x-real-ip')`. Takes precedence over `trustProxy`.
+   *  Return `null`/`undefined` to fall through to the built-in resolution. Without
+   *  it (and outside the bundled Node listener), every client collapses into a
+   *  single shared bucket — the limiter warns once so that trap is visible. */
+  clientKey?: (request: Request) => string | null | undefined
   /** Shared store (e.g. Redis-backed) for multi-node; defaults to in-memory. */
   store?: RateLimitStore
 }
@@ -65,6 +73,7 @@ export interface ResolvedRateLimit {
   max: number
   authMax: number
   trustProxy: boolean
+  clientKey?: (request: Request) => string | null | undefined
   store: RateLimitStore
 }
 
@@ -75,20 +84,39 @@ export function resolveRateLimit(opts: RateLimitOptions | undefined): ResolvedRa
     max: opts?.max ?? 300,
     authMax: opts?.authMax ?? 20,
     trustProxy: opts?.trustProxy ?? false,
+    clientKey: opts?.clientKey,
     store: opts?.store ?? memoryRateLimitStore(),
   }
 }
 
 const HEADER_REMOTE_ADDR = 'x-kernel-remote-addr'
 
-/** Best-effort client identifier. Prefers the socket address the listener
- *  attaches; only trusts `x-forwarded-for` when explicitly behind a proxy. */
-export function clientKey(request: Request, trustProxy: boolean): string {
-  if (trustProxy) {
+// Warn at most once per process when the client identifier collapses to a shared
+// value — otherwise rate limiting silently degrades into one global bucket.
+let warnedCollapse = false
+
+/** Best-effort client identifier. Prefers a caller-supplied resolver, then
+ *  `x-forwarded-for` (only when `trustProxy`), then the socket address the bundled
+ *  listener attaches. Returns `'unknown'` (shared bucket) as a last resort. */
+export function clientKey(request: Request, cfg: Pick<ResolvedRateLimit, 'trustProxy' | 'clientKey'>): string {
+  const custom = cfg.clientKey?.(request)
+  if (custom) return custom
+  if (cfg.trustProxy) {
     const fwd = request.headers.get('x-forwarded-for')
     if (fwd) return fwd.split(',')[0]!.trim()
   }
-  return request.headers.get(HEADER_REMOTE_ADDR) ?? 'unknown'
+  const remote = request.headers.get(HEADER_REMOTE_ADDR)
+  if (remote) return remote
+  if (!warnedCollapse) {
+    warnedCollapse = true
+    console.warn(
+      '[kernel] rate limiting cannot identify the client: no socket address is present ' +
+        '(handler is embedded outside the bundled Node listener). All requests share one ' +
+        'bucket. Pass rateLimit.clientKey to resolve the IP from your platform headers, or ' +
+        'set rateLimit.trustProxy behind a trusted proxy that sets x-forwarded-for.',
+    )
+  }
+  return 'unknown'
 }
 
 const AUTH_ACTIONS = new Set([
@@ -122,7 +150,7 @@ export async function rateLimitCheck(
   const auth = isAuthRoute(pathname, apiBase)
   const limit = auth ? cfg.authMax : cfg.max
   const bucket = auth ? 'auth' : 'gen'
-  const key = `${bucket}:${clientKey(request, cfg.trustProxy)}`
+  const key = `${bucket}:${clientKey(request, cfg)}`
   const { count, resetAt } = await cfg.store.hit(key, cfg.windowMs)
   const remaining = Math.max(0, limit - count)
   if (count > limit) {

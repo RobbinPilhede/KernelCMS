@@ -1139,6 +1139,11 @@ export interface RunningServer {
   close: () => Promise<void>
 }
 
+// Rate-limiting types and helpers, surfaced so embedders can supply a shared
+// store (multi-node) or a custom client-key resolver (behind a proxy/platform).
+export { memoryRateLimitStore } from './rate-limit'
+export type { RateLimitOptions, RateLimitStore, RateLimitResult } from './rate-limit'
+
 export async function serve(kernel: Kernel, options: ServeOptions = {}): Promise<RunningServer> {
   const handler = createRequestHandler(kernel, options)
   const server = createServer(toNodeListener(handler, { maxBodyBytes: options.maxBodyBytes }))

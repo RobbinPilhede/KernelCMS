@@ -1413,7 +1413,13 @@ export function ListView() {
   const [filters, setFilters] = useState<FilterClause[]>([])
   const [filterOpen, setFilterOpen] = useState(false)
   const [colsOpen, setColsOpen] = useState(false)
-  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null)
+  // Seed the sort indicator from the collection's configured default so the column
+  // arrow matches the order the backend returns; null means "backend default".
+  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(() => {
+    const token = collection?.defaultSort?.split(',')[0]?.trim()
+    if (!token) return null
+    return token.startsWith('-') ? { key: token.slice(1), dir: 'desc' } : { key: token, dir: 'asc' }
+  })
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   // Admins manage drafts too, so include them in the list for drafts collections.
@@ -1930,8 +1936,9 @@ export function EditView() {
   const tab = tabs[Math.min(activeTab, tabs.length - 1)] ?? tabs[0]
 
   const busy = save.isPending
-  // Live preview is for content — account records and media files skip it.
-  const canPreview = !collection.auth && !collection.upload
+  // Live preview is for content — account records and media files skip it, and a
+  // collection can opt out entirely with `admin.livePreview: false`.
+  const canPreview = !collection.auth && !collection.upload && collection.livePreview !== false
   const showPreview = canPreview && previewOpen
   // You can't delete the account you're currently signed in as.
   const isOwnProfile = Boolean(collection.auth && id && currentUser && String(currentUser.id) === String(id))
@@ -2085,7 +2092,9 @@ export function EditView() {
             ))}
           </motion.div>
         </div>
-        {showPreview && <LivePreview slug={slug} form={form} url={collection.livePreview?.url} />}
+        {showPreview && (
+          <LivePreview slug={slug} form={form} url={collection.livePreview ? collection.livePreview.url : undefined} />
+        )}
       </div>
     </div>
   )

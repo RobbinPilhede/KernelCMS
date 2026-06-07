@@ -362,12 +362,17 @@ export interface CollectionConfig {
   admin?: {
     useAsTitle?: string
     defaultColumns?: string[]
+    /** Default ordering for the list view and for `find()` calls that pass no
+     *  `sort` (Payload-style: "title" asc, "-createdAt" desc, comma-separated for
+     *  tie-breakers). Falls back to newest-first by `createdAt` (or `id`). */
+    defaultSort?: string
     group?: string
     description?: string
     hidden?: boolean
     /** Point live preview at your frontend; the admin iframes this URL and posts
-     *  the live document data to it. Omit to use the built-in preview renderer. */
-    livePreview?: { url: string }
+     *  the live document data to it. Omit to use the built-in preview renderer.
+     *  Set `false` to disable the preview pane entirely for this collection. */
+    livePreview?: { url: string } | false
   }
   access?: CollectionAccess
   hooks?: CollectionHooks

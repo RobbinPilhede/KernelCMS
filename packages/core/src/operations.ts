@@ -708,7 +708,9 @@ export function createOperations(ctx: OperationCtx) {
     }
 
     const timestamps = collection.timestamps ?? true
-    const sort: SortSpec[] = parseSort(opts.sort)
+    // Caller sort wins; then the collection's configured default; then newest-first.
+    let sort: SortSpec[] = parseSort(opts.sort)
+    if (sort.length === 0) sort = parseSort(collection.admin?.defaultSort)
     if (sort.length === 0) {
       sort.push(timestamps ? { field: 'createdAt', direction: 'desc' } : { field: 'id', direction: 'asc' })
     }

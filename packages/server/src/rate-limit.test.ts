@@ -62,6 +62,32 @@ describe('rate limit unit', () => {
     expect((await rateLimitCheck(cfg, read, '/api')).allowed).toBe(true)
   })
 
+  it('keys by a custom clientKey resolver when supplied (embedded behind a proxy)', async () => {
+    // No socket-addr header (the embedded path); the resolver pulls the IP from
+    // a platform header so clients are still bucketed independently.
+    const cfg = resolveRateLimit({
+      max: 1,
+      store: memoryRateLimitStore(),
+      clientKey: (req) => req.headers.get('x-real-ip') ?? undefined,
+    })
+    const a = new Request('http://localhost/api/posts', { headers: { 'x-real-ip': '20.0.0.1' } })
+    const b = new Request('http://localhost/api/posts', { headers: { 'x-real-ip': '20.0.0.2' } })
+    expect((await rateLimitCheck(cfg, a, '/api')).allowed).toBe(true)
+    expect((await rateLimitCheck(cfg, a, '/api')).allowed).toBe(false)
+    expect((await rateLimitCheck(cfg, b, '/api')).allowed).toBe(true)
+  })
+
+  it('falls back to the built-in resolution when the custom resolver returns nothing', async () => {
+    const cfg = resolveRateLimit({
+      max: 1,
+      store: memoryRateLimitStore(),
+      clientKey: () => undefined,
+    })
+    const req = new Request('http://localhost/api/posts', { headers: { [HEADER_REMOTE_ADDR]: '21.0.0.1' } })
+    expect((await rateLimitCheck(cfg, req, '/api')).allowed).toBe(true)
+    expect((await rateLimitCheck(cfg, req, '/api')).allowed).toBe(false)
+  })
+
   it('ignores x-forwarded-for unless trustProxy is set', async () => {
     const cfg = resolveRateLimit({ max: 1, store: memoryRateLimitStore() })
     // Same socket addr, different spoofed XFF: still the same bucket (XFF ignored).

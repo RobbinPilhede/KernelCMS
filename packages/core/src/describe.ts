@@ -61,12 +61,15 @@ export interface AdminCollection {
   labels: { singular: string; plural: string }
   useAsTitle: string
   defaultColumns?: string[]
+  defaultSort?: string
   group?: string
   description?: string
   auth: boolean
   hidden: boolean
   upload: boolean
-  livePreview?: { url: string }
+  /** `{ url }` points the preview iframe at a custom frontend; `false` disables
+   *  the preview pane for this collection. Absent = built-in preview renderer. */
+  livePreview?: { url: string } | false
   /** Present when the collection keeps a version history; `drafts` toggles the
    *  draft/published lifecycle (status pill, Save draft vs Publish). */
   versions?: { enabled: boolean; drafts: boolean }
@@ -194,12 +197,14 @@ function describeCollection(collection: CollectionConfig): AdminCollection {
     },
     useAsTitle: collection.admin?.useAsTitle ?? effectiveFields(collection.fields)[0]?.name ?? 'id',
     defaultColumns: collection.admin?.defaultColumns,
+    defaultSort: collection.admin?.defaultSort,
     group: collection.admin?.group,
     description: collection.admin?.description,
     auth: Boolean(collection.auth),
     hidden: Boolean(collection.admin?.hidden),
     upload: Boolean(collection.upload),
-    ...(collection.admin?.livePreview ? { livePreview: collection.admin.livePreview } : {}),
+    // Pass `false` through (disable the pane); pass `{ url }` through; omit otherwise.
+    ...(collection.admin?.livePreview !== undefined ? { livePreview: collection.admin.livePreview } : {}),
     ...(() => {
       const v = resolveVersions(collection.versions)
       return v.enabled ? { versions: { enabled: true, drafts: v.drafts } } : {}

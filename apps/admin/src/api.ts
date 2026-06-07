@@ -62,12 +62,13 @@ export interface AdminCollection {
   labels: { singular: string; plural: string }
   useAsTitle: string
   defaultColumns?: string[]
+  defaultSort?: string
   group?: string
   description?: string
   auth: boolean
   hidden: boolean
   upload: boolean
-  livePreview?: { url: string }
+  livePreview?: { url: string } | false
   versions?: { enabled: boolean; drafts: boolean }
   fields: AdminFieldMeta[]
 }
