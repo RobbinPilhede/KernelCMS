@@ -96,6 +96,71 @@ export interface KernelClient {
   health: () => Promise<{ status: string; db: { status: string } }>
 }
 
+/**
+ * The shape of the generated `KernelTypes` registry (from `kernel generate:types`):
+ * `{ collections: { <slug>: Interface }, globals: { <slug>: Interface } }`. The
+ * member types are plain interfaces with no index signature, so the constraint is
+ * `object` (not `Row`) — this is exactly why the untyped client's `<T extends Row>`
+ * rejected them. See {@link createTypedClient}.
+ */
+export interface KernelTypeRegistry {
+  collections: object
+  globals: object
+}
+
+/**
+ * A slug-inferred client: `find('matches')` returns `PaginatedResult<Matches>` and
+ * `findGlobal('hero')` returns `Hero`, straight from the generated `KernelTypes` —
+ * no per-call generic and no `as unknown as` cast. Slugs are checked against the
+ * registry, so a typo is a compile error.
+ */
+export interface TypedKernelClient<T extends KernelTypeRegistry> {
+  find: <S extends keyof T['collections'] & string>(
+    collection: S,
+    query?: FindQuery,
+  ) => Promise<PaginatedResult<T['collections'][S]>>
+  findByID: <S extends keyof T['collections'] & string>(
+    collection: S,
+    id: string,
+    query?: ByIdQuery,
+  ) => Promise<T['collections'][S]>
+  create: <S extends keyof T['collections'] & string>(
+    collection: S,
+    data: Partial<T['collections'][S]>,
+    query?: ByIdQuery,
+  ) => Promise<T['collections'][S]>
+  update: <S extends keyof T['collections'] & string>(
+    collection: S,
+    id: string,
+    data: Partial<T['collections'][S]>,
+    query?: ByIdQuery,
+  ) => Promise<T['collections'][S]>
+  remove: <S extends keyof T['collections'] & string>(collection: S, id: string) => Promise<T['collections'][S]>
+  findGlobal: <S extends keyof T['globals'] & string>(slug: S, query?: ByIdQuery) => Promise<T['globals'][S]>
+  updateGlobal: <S extends keyof T['globals'] & string>(
+    slug: S,
+    data: Partial<T['globals'][S]>,
+  ) => Promise<T['globals'][S]>
+  endpoint: KernelClient['endpoint']
+  health: KernelClient['health']
+}
+
+/**
+ * Like {@link createClient}, but typed against your generated `KernelTypes`:
+ *
+ * ```ts
+ * import type { KernelTypes } from './kernel-types'
+ * const client = createTypedClient<KernelTypes>({ baseURL })
+ * const hero = await client.findGlobal('hero')   // Hero
+ * const { docs } = await client.find('matches')  // Matches[]
+ * ```
+ *
+ * Runtime behaviour is identical to `createClient`; this only refines the types.
+ */
+export function createTypedClient<T extends KernelTypeRegistry>(options: ClientOptions): TypedKernelClient<T> {
+  return createClient(options) as unknown as TypedKernelClient<T>
+}
+
 export function createClient(options: ClientOptions): KernelClient {
   const doFetch = options.fetch ?? globalThis.fetch
   const apiRoute = options.apiRoute ?? '/api'

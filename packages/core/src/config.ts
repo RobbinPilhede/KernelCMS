@@ -221,6 +221,35 @@ export function defineConfig(config: KernelConfig): KernelConfig {
   return config
 }
 
+/**
+ * Fail closed on an unsafe production secret. In `NODE_ENV=production` this throws
+ * when the resolved secret (config.secret ?? KERNEL_SECRET) is missing/empty, the
+ * public dev default, or shorter than {@link MIN_PRODUCTION_SECRET_LENGTH} — any of
+ * which would let an attacker forge admin sessions. No-op outside production.
+ *
+ * Called by `sanitizeConfig` (so `initKernel`, including the embedded path, is
+ * gated) and again by `kernel start`. Embedders rely on this; do not bypass it.
+ */
+export function assertProductionSecret(config: Pick<KernelConfig, 'secret'>): void {
+  if (process.env.NODE_ENV !== 'production') return
+  const secret = config.secret ?? process.env.KERNEL_SECRET
+  if (!secret) {
+    throw new Error(
+      '[KernelCMS] No `secret` or KERNEL_SECRET is set. A strong secret is required in production ' +
+        '(NODE_ENV=production); the built-in development secret is public and would let anyone forge sessions.',
+    )
+  }
+  if (secret === DEV_SECRET) {
+    throw new Error('[KernelCMS] The development secret must not be used in production. Set a unique KERNEL_SECRET.')
+  }
+  if (secret.length < MIN_PRODUCTION_SECRET_LENGTH) {
+    throw new Error(
+      `[KernelCMS] The configured secret is too short (<${MIN_PRODUCTION_SECRET_LENGTH} chars) for production. ` +
+        'Set KERNEL_SECRET to a long, random value.',
+    )
+  }
+}
+
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`KernelCMS config error: ${message}`)
 }
@@ -326,33 +355,11 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     localization = { locales, defaultLocale, fallback: fallback ?? true }
   }
 
-  const configuredSecret = config.secret ?? process.env.KERNEL_SECRET
-  // Refuse to boot in production with no real secret: the dev fallback is a public
-  // constant, so anyone could forge a valid admin session JWT against it.
-  if (!configuredSecret && process.env.NODE_ENV === 'production') {
-    throw new Error(
-      '[KernelCMS] No `secret` or KERNEL_SECRET is set. A strong secret is required in production ' +
-        '(NODE_ENV=production); the built-in development secret is public and would let anyone forge sessions.',
-    )
-  }
-  // Also reject explicitly pinning the known-insecure constant in production.
-  if (configuredSecret === DEV_SECRET && process.env.NODE_ENV === 'production') {
-    throw new Error('[KernelCMS] The development secret must not be used in production. Set a unique KERNEL_SECRET.')
-  }
-  // And reject a weak secret in production: a short value is brute-forceable, so
-  // signing sessions with it is little better than the dev constant. This also
-  // closes the embed path, which calls initKernel() directly without doctor.
-  if (
-    configuredSecret &&
-    configuredSecret.length < MIN_PRODUCTION_SECRET_LENGTH &&
-    process.env.NODE_ENV === 'production'
-  ) {
-    throw new Error(
-      `[KernelCMS] The configured secret is too short (<${MIN_PRODUCTION_SECRET_LENGTH} chars) for production. ` +
-        'Set KERNEL_SECRET to a long, random value.',
-    )
-  }
-  const secret = configuredSecret ?? devSecret()
+  // Gate the production secret. This runs inside sanitizeConfig, so every boot
+  // path — including the embedded `initKernel()` recipe that never calls doctor —
+  // is protected: a missing/dev/weak secret fails closed in production.
+  assertProductionSecret(config)
+  const secret = config.secret ?? process.env.KERNEL_SECRET ?? devSecret()
 
   const adminUser = config.admin?.user ?? collections.find((c) => c.auth)?.slug ?? 'users'
 

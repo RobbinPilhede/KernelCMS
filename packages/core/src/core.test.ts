@@ -19,7 +19,7 @@ import {
   systemInfo,
   verifyToken,
 } from './index'
-import type { AuthUser, Kernel, KernelPlugin } from './index'
+import type { AuthUser, Doc, Kernel, KernelPlugin } from './index'
 
 const isAdmin = ({ req }: { req: { user: AuthUser | null } }): boolean => Boolean(req.user?.roles?.includes('admin'))
 
@@ -1047,6 +1047,21 @@ describe('importData (migration)', () => {
   it('reports an unknown collection without throwing', async () => {
     const report = await importData(kernel, { ghosts: [{ x: 1 }] })
     expect(report.errors[0]?.message).toMatch(/unknown collection/i)
+  })
+
+  it('parses an HTML string in a richText field into the node tree', async () => {
+    const report = await importData(kernel, {
+      builder: [{ title: 'Imported', body: '<h2>Title</h2><p>Hello <strong>world</strong></p>' }],
+    })
+    expect(report.ok).toBe(true)
+    const { docs } = await kernel.find<Doc & { title?: string; body: { type: string; children: unknown[] } }>({
+      collection: 'builder',
+      ...admin,
+    })
+    const body = docs.find((d) => d.title === 'Imported')!.body
+    // Not a plain-text shim of the raw HTML — a real document with a heading.
+    expect(body.type).toBe('doc')
+    expect((body.children as Array<{ type: string }>).some((n) => n.type === 'heading')).toBe(true)
   })
 })
 

@@ -47,6 +47,42 @@ jobs:
       - name: Build all packages
         run: pnpm -r run build
 
+  windows:
+    name: Windows (typecheck, tests & clean CLI exit)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      # Regression for the libuv UV_HANDLE_CLOSING abort: a config that fails to
+      # load must print the error and exit with code 1 — not crash on teardown.
+      - name: CLI exits 1 on a bad config (no libuv abort)
+        shell: pwsh
+        run: |
+          pnpm kernel doctor --config ./e2e/fixtures/bad.config.ts
+          if ($LASTEXITCODE -ne 1) {
+            Write-Error "Expected exit code 1 from a bad config, got $LASTEXITCODE"
+            exit 1
+          }
+          Write-Host "OK: bad config exited 1 cleanly"
+
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 // Public surface of @kernel/core.
 
-export { defineConfig, sanitizeConfig, defaultLocaleOf } from './config'
+export { defineConfig, sanitizeConfig, defaultLocaleOf, assertProductionSecret } from './config'
 export { defineEndpoint, matchEndpoint, parseEndpointInput } from './endpoints'
 export { initKernel, createLogger } from './kernel'
 export type { InitOptions } from './kernel'

@@ -118,6 +118,28 @@ bundlers don't try to statically resolve it, but forcing `runtime = 'nodejs'`
 (step 3) is still required — the Edge runtime has no `node:sqlite`, no `pg`, and no
 filesystem for local uploads.
 
+## 4b. tsconfig: let TypeScript accept the config's `.ts` imports
+
+Node runs `kernel.config.ts` natively and requires **`.ts` extensions on relative
+imports** (`import { X } from './x.ts'`). TypeScript under Next's default
+`moduleResolution: "bundler"` rejects those extensions unless you opt in. Set this
+in the tsconfig that covers your config and schema:
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+  },
+}
+```
+
+Do **not** add the config/schema to `exclude` to silence the error — you'd lose
+type-checking on exactly the files that define your content model. `npx kernel init`
+prints these settings in its next-steps output.
+
 ## 5. Rate limiting behind a proxy or platform
 
 The bundled Node listener (`serve()` / `toNodeListener()`) attaches the socket

@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   EMPTY_SCHEMA,
+  assertProductionSecret,
   diffSchema,
   formatDoctorReport,
   formatSystemInfo,
@@ -116,7 +117,14 @@ export async function run(argv: string[]): Promise<void> {
         break
       }
       writeFileSync(out, configTemplate())
-      console.log(`✓ Wrote ${out}\n\nNext steps:\n  npm install kernelcms\n  npx kernel dev`)
+      console.log(
+        `✓ Wrote ${out}\n\n` +
+          `Next steps:\n  npm install kernelcms\n  npx kernel dev\n\n` +
+          `Embedding in a TS/Next app? Node runs this .ts config natively and needs\n` +
+          `.ts import extensions, so set in your tsconfig (don't exclude the config —\n` +
+          `you'd lose type-checking):\n` +
+          `  "compilerOptions": { "moduleResolution": "bundler", "allowImportingTsExtensions": true, "noEmit": true }`,
+      )
       break
     }
 
@@ -307,6 +315,9 @@ export async function run(argv: string[]): Promise<void> {
       // Production serve: never auto-migrate (run `kernel migrate` as a discrete
       // deploy step first) and require an explicit secret + API key.
       const { config } = await loadConfig(flags)
+      // Fail closed on a missing/dev/weak secret before anything else (initKernel
+      // enforces this too; the explicit call keeps the guarantee visible here).
+      assertProductionSecret(config)
       const kernel = await initKernel(config)
       const report = runDoctor(kernel.config, { env: 'production' })
       if (!report.ok) {

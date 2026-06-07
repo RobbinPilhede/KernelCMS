@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { sqliteAdapter } from '@kernel/db-sqlite'
-import { sanitizeConfig } from './index'
+import { assertProductionSecret, initKernel, sanitizeConfig } from './index'
 
 const db = () => sqliteAdapter({ url: ':memory:' })
 const ok = 'a-sufficiently-long-secret-value'
@@ -31,6 +31,21 @@ describe('production secret hardening (embed path)', () => {
     process.env.NODE_ENV = 'development'
     expect(() => sanitizeConfig({ secret: 'short', db: db(), collections: [] })).not.toThrow()
   })
+
+  it('exposes assertProductionSecret as a reusable guard', () => {
+    process.env.NODE_ENV = 'production'
+    delete process.env.KERNEL_SECRET
+    expect(() => assertProductionSecret({ secret: undefined })).toThrow(/secret/i)
+    expect(() => assertProductionSecret({ secret: ok })).not.toThrow()
+    process.env.NODE_ENV = 'development'
+    expect(() => assertProductionSecret({ secret: undefined })).not.toThrow()
+  })
+
+  it('initKernel (the embed path) fails closed in production with no secret', async () => {
+    process.env.NODE_ENV = 'production'
+    delete process.env.KERNEL_SECRET
+    await expect(initKernel({ db: db(), collections: [] })).rejects.toThrow(/secret/i)
+  })
 })
 
 describe('naming validation', () => {
@@ -43,6 +58,22 @@ describe('naming validation', () => {
         globals: [{ slug: 'site', fields: [{ name: 'siteTitle', type: 'text' }] }],
       }),
     ).toThrow(/site\.siteTitle/)
+  })
+
+  it('validates nested group/array fields inside a global', () => {
+    expect(() =>
+      sanitizeConfig({
+        secret: ok,
+        db: db(),
+        collections: [],
+        globals: [
+          {
+            slug: 'site',
+            fields: [{ name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'text' }] }],
+          },
+        ],
+      }),
+    ).toThrow(/site\.seo\.metaTitle/)
   })
 
   it('reports a nested (group) field-name violation with its path', () => {
