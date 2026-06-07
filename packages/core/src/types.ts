@@ -138,13 +138,21 @@ export interface FieldBase {
   admin?: FieldAdmin
   access?: FieldAccess
   validate?: ValidateFn
-  /** A computed (virtual) field: not stored as a column, not validated as input.
-   *  Its value is derived on every read by `compute`. This is "views as contract"
-   *  at the field level — derive business logic in one place so it can't drift.
-   *  Rendered read-only in the admin. */
+  /** Mark a `compute` field as virtual: derived on every read, not stored as a
+   *  column, and not validated as input. Because it is not persisted, a virtual
+   *  field cannot be sorted or filtered on. Omit (or set false) to get a STORED
+   *  computed field instead — see `compute`. Rendered read-only in the admin. */
   virtual?: boolean
-  /** Compute the virtual field's value from the resolved document. Required (and
-   *  only used) when `virtual` is true. May be async. */
+  /** Derive this field's value instead of taking it from input. Two modes:
+   *
+   *  - With `virtual: true` — derived on every READ from the resolved document.
+   *    Lives only in memory, so it is never stored and cannot be sorted/filtered.
+   *  - Without `virtual` (the default) — a STORED computed field: derived at WRITE
+   *    time (create/update), persisted to a real column, and therefore sortable
+   *    and filterable. The computed value always overrides any client input.
+   *
+   *  Either way the logic lives in one place so it can't drift ("views as
+   *  contract" at the field level). May be async. */
   compute?: (args: { doc: Doc; req: RequestContext }) => unknown | Promise<unknown>
 }
 

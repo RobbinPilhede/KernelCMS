@@ -103,9 +103,12 @@ function describeField(field: AnyField): AdminField {
     out.admin = rest
   }
   // Computed fields are server-derived: surface as read-only so the admin never
-  // tries to edit (or persist) them.
+  // tries to edit (or persist) them. Virtual ones are read-derived (not stored);
+  // a `compute` without `virtual` is a stored computed field (still read-only).
   if (field.virtual) {
     out.virtual = true
+    out.admin = { ...(out.admin ?? {}), readOnly: true }
+  } else if (typeof field.compute === 'function') {
     out.admin = { ...(out.admin ?? {}), readOnly: true }
   }
   // Expose literal defaults so the admin can initialise new documents. Function

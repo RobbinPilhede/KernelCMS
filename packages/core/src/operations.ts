@@ -231,6 +231,22 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   /**
+   * Stored computed fields: a field with a `compute` function but `virtual !== true`.
+   * Unlike a virtual field (derived on every read, never stored, not sortable), the
+   * value is derived here at WRITE time and persisted to a real column — so it is
+   * sortable and filterable. The computed value always wins over any client-supplied
+   * value, so it cannot be forged. Mutates `doc` in place; call after beforeChange
+   * hooks (so hooks can influence the inputs) and before validate/serialize.
+   */
+  async function applyStoredComputed(fields: ConfigField[], doc: Row, req: RequestContext): Promise<void> {
+    for (const field of effectiveFields(fields)) {
+      if (!field.virtual && typeof field.compute === 'function') {
+        doc[field.name] = await field.compute({ doc: doc as Doc, req })
+      }
+    }
+  }
+
+  /**
    * Field-level READ access. After a document is read, strip any field the
    * current user may not see (rule present and not allowed). Recurses into
    * group/array/blocks sub-fields. Skipped when access is overridden. Without
@@ -645,6 +661,9 @@ export function createOperations(ctx: OperationCtx) {
     // creates (e.g. first-admin setup) pass `email_verified: true` and skip this.
     const pendingVerification = maybeStartVerification(collection, data)
     data = await runHooks(collection.hooks?.beforeChange, { req, operation: 'create', data }, 'data')
+    // Stored computed fields are derived from the post-hook document and overwrite
+    // any client value, so they persist (and stay sortable/filterable).
+    await applyStoredComputed(collection.fields, data, req)
 
     const errors = await validateFields(collection.fields, data, { req, operation: 'create' })
     if (errors.length) throw new ValidationError(errors)
@@ -772,10 +791,16 @@ export function createOperations(ctx: OperationCtx) {
       'data',
     )
 
+    // Stored computed fields are derived from the post-hook document and overwrite
+    // any client value, so they persist (and stay sortable/filterable) on update.
+    await applyStoredComputed(collection.fields, merged, req)
+
     const errors = await validateFields(collection.fields, merged, { req, operation: 'update' })
     if (errors.length) throw new ValidationError(errors)
 
-    const row = serializeDoc(collection.fields, input, { locale: req.locale, existingRow: existing })
+    // Serialize the post-hook, post-compute document — NOT the raw input — so any
+    // field a beforeChange hook (or a stored compute) added/changed is persisted.
+    const row = serializeDoc(collection.fields, merged, { locale: req.locale, existingRow: existing })
     if (draftsOn(collection)) {
       row._status = statusFromData(opts.data as Row, (existing._status as string) ?? 'draft')
       // Scheduled-publish time is a system column; let publish()/processScheduled set it.
@@ -1472,11 +1497,13 @@ export function createOperations(ctx: OperationCtx) {
 
     let merged: Row = { ...existingDoc, ...incoming }
     merged = await runHooks(global.hooks?.beforeChange, { req, operation: 'update', data: merged }, 'data')
+    await applyStoredComputed(global.fields, merged, req)
 
     const errors = await validateFields(global.fields, merged, { req, operation: 'update' })
     if (errors.length) throw new ValidationError(errors)
 
-    const row = serializeDoc(global.fields, incoming, { locale: req.locale, existingRow: existing })
+    // Persist the post-hook, post-compute document (see collection update).
+    const row = serializeDoc(global.fields, merged, { locale: req.locale, existingRow: existing })
     let saved: Row | null
     if (existing) {
       saved = await db.update({ collection: table, id: GLOBAL_ROW_ID, data: row })

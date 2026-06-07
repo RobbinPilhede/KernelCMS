@@ -168,7 +168,8 @@ function timingEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb)
 }
 
-type RequestHandler = (request: Request) => Promise<Response>
+/** A web-standard request handler: the value returned by `createRequestHandler`. */
+export type RequestHandler = (request: Request) => Promise<Response>
 
 export function createRequestHandler(kernel: Kernel, options: HandlerOptions = {}): RequestHandler {
   const apiBase = kernel.config.routes.api

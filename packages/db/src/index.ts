@@ -152,6 +152,14 @@ export interface DatabaseCapabilities {
 export interface DatabaseAdapter extends Adapter {
   readonly kind: 'db'
   readonly capabilities: DatabaseCapabilities
+  /**
+   * Load the schema's table registry WITHOUT touching the database. This is what
+   * lets reads and writes resolve their tables when migrations are managed
+   * out-of-band (i.e. `initKernel` was called without `autoMigrate`). `migrate`
+   * implies `register`. Optional for backward compatibility with third-party
+   * adapters; the bundled adapters implement it and `initKernel` calls it on boot.
+   */
+  register?(schema: KernelSchema): void
   /** Diff the schema against the live database and apply the changes. */
   migrate(schema: KernelSchema): Promise<MigrationReport>
   find(args: FindArgs): Promise<PaginatedResult<Row>>

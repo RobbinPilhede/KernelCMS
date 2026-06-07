@@ -115,20 +115,31 @@ class SQLiteAdapter implements DatabaseAdapter {
 
   private table(name: string): TableSchema {
     const t = this.tables.get(name)
-    if (!t) throw new Error(`Unknown table "${name}". Run migrations first.`)
+    if (!t) {
+      throw new Error(
+        `Unknown table "${name}". Register the schema first — initKernel() does this on boot; ` +
+          `if you construct the adapter directly, call register(schema) (or migrate(schema)).`,
+      )
+    }
     return t
   }
 
-  async migrate(schema: KernelSchema): Promise<MigrationReport> {
-    const db = this.conn()
-    const report: MigrationReport = { createdTables: [], addedColumns: [], statements: [] }
-
+  register(schema: KernelSchema): void {
     for (const table of schema.tables) {
       this.tables.set(table.table, table)
       const allowed = new Set<string>(['id', 'createdAt', 'updatedAt'])
       for (const c of table.columns) allowed.add(c.name)
       this.allowedCols.set(table.table, allowed)
+    }
+  }
 
+  async migrate(schema: KernelSchema): Promise<MigrationReport> {
+    const db = this.conn()
+    const report: MigrationReport = { createdTables: [], addedColumns: [], statements: [] }
+    // Registering up front means reads/writes resolve tables even mid-migration.
+    this.register(schema)
+
+    for (const table of schema.tables) {
       const existing = db.prepare(`PRAGMA table_info(${quote(table.table)})`).all() as Array<{ name: string }>
       if (existing.length === 0) {
         const sql = this.createTableSql(table)

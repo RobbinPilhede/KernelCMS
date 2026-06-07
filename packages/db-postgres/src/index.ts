@@ -125,8 +125,22 @@ class PostgresAdapter implements DatabaseAdapter {
 
   private table(name: string): TableSchema {
     const t = this.tables.get(name)
-    if (!t) throw new Error(`Unknown table "${name}". Run migrations first.`)
+    if (!t) {
+      throw new Error(
+        `Unknown table "${name}". Register the schema first — initKernel() does this on boot; ` +
+          `if you construct the adapter directly, call register(schema) (or migrate(schema)).`,
+      )
+    }
     return t
+  }
+
+  register(schema: KernelSchema): void {
+    for (const table of schema.tables) {
+      this.tables.set(table.table, table)
+      const allowed = new Set<string>(['id', 'createdAt', 'updatedAt'])
+      for (const c of table.columns) allowed.add(c.name)
+      this.allowedCols.set(table.table, allowed)
+    }
   }
 
   private allowed(table: string): Set<string> {
@@ -136,13 +150,10 @@ class PostgresAdapter implements DatabaseAdapter {
   async migrate(schema: KernelSchema): Promise<MigrationReport> {
     const pool = this.requirePool()
     const report: MigrationReport = { createdTables: [], addedColumns: [], statements: [] }
+    // Registering up front means reads/writes resolve tables even mid-migration.
+    this.register(schema)
 
     for (const table of schema.tables) {
-      this.tables.set(table.table, table)
-      const allowed = new Set<string>(['id', 'createdAt', 'updatedAt'])
-      for (const c of table.columns) allowed.add(c.name)
-      this.allowedCols.set(table.table, allowed)
-
       const existing = await pool.query(
         `SELECT column_name FROM information_schema.columns
          WHERE table_schema = current_schema() AND table_name = $1`,

@@ -52,6 +52,10 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   const schema = compileSchema(sanitized)
 
   await sanitized.db.init({ logger })
+  // Always register the schema's table registry so reads/writes resolve their
+  // tables even when migrations are managed out-of-band (no autoMigrate). Without
+  // this, find()/create() would throw "Unknown table" until a migration ran.
+  sanitized.db.register?.(schema)
   if (options.autoMigrate) await sanitized.db.migrate(schema)
 
   // Optional read-through cache. The operation core runs against `opDb`; when a
