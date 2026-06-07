@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'framer-motion'
 import { EASE, EASE_OUT, itemVariants, listContainer, navSpring, pageVariants } from './motion'
@@ -26,6 +26,7 @@ import {
 import type {
   AdminCollection,
   AdminFieldMeta,
+  AdminGlobal,
   Doc,
   FieldErrorDetail,
   SetupRuntime,
@@ -1079,6 +1080,22 @@ function NavItem({
   )
 }
 
+/** Group globals by their `admin.group`; ungrouped ones fall under "Globals".
+ *  Preserves config order: each group heading appears where it first occurs. */
+function groupGlobals(globals: AdminGlobal[]): Array<{ heading: string; globals: AdminGlobal[] }> {
+  const order: string[] = []
+  const byHeading = new Map<string, AdminGlobal[]>()
+  for (const g of globals) {
+    const heading = g.group ?? 'Globals'
+    if (!byHeading.has(heading)) {
+      byHeading.set(heading, [])
+      order.push(heading)
+    }
+    byHeading.get(heading)!.push(g)
+  }
+  return order.map((heading) => ({ heading, globals: byHeading.get(heading)! }))
+}
+
 function Shell() {
   const schema = useSchema()
   const collections = schema.collections.filter((c) => !c.hidden)
@@ -1105,16 +1122,20 @@ function Shell() {
               active={isActive(`/collections/${c.slug}`)}
             />
           ))}
-          {schema.globals.length > 0 && <div className="nav-section">Globals</div>}
-          {schema.globals.map((g) => (
-            <NavItem
-              key={g.slug}
-              to="/globals/$slug"
-              params={{ slug: g.slug }}
-              icon={<NavIcon global />}
-              label={g.label}
-              active={isActive(`/globals/${g.slug}`)}
-            />
+          {groupGlobals(schema.globals).map(({ heading, globals }) => (
+            <Fragment key={heading}>
+              <div className="nav-section">{heading}</div>
+              {globals.map((g) => (
+                <NavItem
+                  key={g.slug}
+                  to="/globals/$slug"
+                  params={{ slug: g.slug }}
+                  icon={<NavIcon global />}
+                  label={g.label}
+                  active={isActive(`/globals/${g.slug}`)}
+                />
+              ))}
+            </Fragment>
           ))}
         </nav>
         <div className="sidebar-foot">

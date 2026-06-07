@@ -20,6 +20,19 @@ compiling it, so the config must use only erasable TypeScript:
 nothing else. Export the config as the **default export** (or a named `config`
 export); the CLI looks for `default` first, then `config`.
 
+**Importing the config from a TS/Next app.** Node runs `kernel.config.ts` natively
+and requires **`.ts` extensions on relative imports** (`import { x } from './x.ts'`).
+TypeScript under `moduleResolution: "bundler"` (Next.js's default) rejects those
+extensions unless you allow them — so set, in the tsconfig that covers your config
+and its imports:
+
+```jsonc
+{ "compilerOptions": { "allowImportingTsExtensions": true, "noEmit": true } }
+```
+
+That keeps the files type-checked (don't `exclude` them — you'd lose checking).
+`npx kernel init` scaffolds a config that already follows this.
+
 ## Environment variables
 
 | Variable           | Used by                          | Notes                                                                                                             |
@@ -134,6 +147,30 @@ storage: localStorage({ rootDir: './.uploads', servePath: '/files' })
 restart and not shared across nodes**. Doctor warns when an upload collection is
 backed by memory storage (and errors in production). For production use
 `localStorage`, S3, or R2.
+
+## Join (reverse-relationship) fields
+
+A `join` field is a **virtual reverse relationship** — nothing is stored; it's
+resolved at read time by querying the related collection for documents that point
+back at the current one:
+
+```ts
+// on `authors`: list the author's posts (posts.author → this author)
+{ type: 'join', name: 'posts', collection: 'posts', on: 'author', limit: 100 }
+```
+
+Population semantics:
+
+- **When:** populated only when the request `depth` is `> 0` (REST: `?depth=1`).
+  Each level decrements depth, so nested joins/relationships keep expanding while
+  depth remains. At `depth: 0` the field is absent.
+- **Order:** the related query runs with no explicit sort, so it follows the
+  **related collection's `admin.defaultSort`**, falling back to newest-first by
+  `createdAt` (or `id`). Set `admin.defaultSort` on the related collection to make
+  join order deterministic.
+- **Limit:** at most `limit` rows (default **100**).
+- **Access:** related rows are fetched through the normal access-checked read path;
+  if the caller can't read them, the field resolves to `[]` rather than erroring.
 
 ## The `seed` convention
 

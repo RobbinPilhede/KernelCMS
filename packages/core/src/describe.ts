@@ -79,6 +79,8 @@ export interface AdminCollection {
 export interface AdminGlobal {
   slug: string
   label: string
+  group?: string
+  description?: string
   fields: AdminField[]
 }
 
@@ -217,6 +219,8 @@ function describeGlobal(global: GlobalConfig): AdminGlobal {
   return {
     slug: global.slug,
     label: global.label ?? humanize(global.slug),
+    ...(global.admin?.group ? { group: global.admin.group } : {}),
+    ...(global.admin?.description ? { description: global.admin.description } : {}),
     fields: effectiveFields(global.fields).map(describeField),
   }
 }

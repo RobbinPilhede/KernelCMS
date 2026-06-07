@@ -76,6 +76,8 @@ export interface AdminCollection {
 export interface AdminGlobal {
   slug: string
   label: string
+  group?: string
+  description?: string
   fields: AdminFieldMeta[]
 }
 

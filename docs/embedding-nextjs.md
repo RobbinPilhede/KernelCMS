@@ -86,9 +86,8 @@ async function handler(request: Request): Promise<Response> {
   const handle = createRequestHandler(kernel, {
     apiKey: process.env.KERNEL_API_KEY,
     admin: true,
-    graphql: true,
-    // See §5 — resolve the real client IP from your platform's headers.
-    rateLimit: { clientKey: (req) => req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() },
+    // See §5 — resolve the client IP from a header your platform sets and you trust.
+    rateLimit: { clientKey: (req) => req.headers.get('x-real-ip') ?? undefined },
   })
   return handle(request)
 }
@@ -128,18 +127,25 @@ handler. Without help, every visitor collapses into one shared rate-limit bucket
 so the limiter silently throttles your whole site as if it were a single client.
 KernelCMS warns once on the server console when this happens.
 
-Fix it by telling the limiter how to read the client IP from your platform's
-headers:
+Fix it by telling the limiter how to read the client IP from a header your platform
+sets and **overwrites** (so a client can't spoof it):
 
 ```ts
 rateLimit: {
-  // Vercel/most proxies set x-forwarded-for; Cloudflare also sets cf-connecting-ip.
-  clientKey: (req) =>
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-    req.headers.get('x-real-ip') ??
-    undefined,
+  // Use the single-value header your platform controls:
+  //   Vercel      → x-real-ip
+  //   Cloudflare  → cf-connecting-ip
+  clientKey: (req) => req.headers.get('x-real-ip') ?? undefined,
 }
 ```
+
+> ⚠️ **Don't trust `x-forwarded-for`'s first hop unless a proxy you control
+> overwrites it.** If your app is also reachable directly (not only through the
+> proxy), a client can send a forged `x-forwarded-for` and rotate it to bypass the
+> rate limit / brute-force protection. Prefer a platform header that's always set
+> server-side; only fall back to `x-forwarded-for` behind a proxy that replaces it.
+> If you're not behind a proxy at all, omit `clientKey` and let the built-in socket
+> resolution handle it.
 
 `clientKey` takes precedence over `trustProxy`. Returning `undefined` falls through
 to the built-in resolution. For multi-node deploys, also pass a shared
@@ -149,6 +155,46 @@ instances instead of per-process:
 ```ts
 import type { RateLimitStore } from 'kernelcms/server'
 ```
+
+## 5b. Revalidating Next.js ISR on publish
+
+KernelCMS fires signed outbound webhooks on change; point one at a Next route that
+revalidates the affected tags/paths, so published edits show up without waiting for
+the ISR window.
+
+```ts
+// kernel.config.ts — fire a webhook on writes to content collections.
+export default defineConfig({
+  /* … */
+  webhooks: [{ url: 'https://your-site/api/revalidate', secret: process.env.REVALIDATE_SECRET! }],
+})
+```
+
+```ts
+// app/api/revalidate/route.ts
+import { revalidateTag } from 'next/cache'
+import { createHmac, timingSafeEqual } from 'node:crypto'
+
+export const runtime = 'nodejs'
+
+export async function POST(request: Request): Promise<Response> {
+  const raw = await request.text()
+  // KernelCMS signs the body as `x-kernel-signature: sha256=<hex>`. Verify it so
+  // only your CMS can trigger a revalidation.
+  const sig = request.headers.get('x-kernel-signature') ?? ''
+  const expected = `sha256=${createHmac('sha256', process.env.REVALIDATE_SECRET!).update(raw).digest('hex')}`
+  if (sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+    return new Response('bad signature', { status: 401 })
+  }
+  // Payload: { event, collection, id, doc?, timestamp }
+  const { collection } = JSON.parse(raw) as { collection: string }
+  revalidateTag(collection)
+  return Response.json({ revalidated: true })
+}
+```
+
+Tag your fetches with the collection slug (`fetch(url, { next: { tags: ['posts'] } })`)
+so `revalidateTag('posts')` invalidates exactly the pages that read it.
 
 ## 6. Authentication
 

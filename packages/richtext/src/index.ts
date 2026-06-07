@@ -32,3 +32,6 @@ export { toPlainText, toHTML, escapeHtml } from './convert'
 
 export type { CreateElement, RenderResolvers, RenderOptions } from './render'
 export { renderNodes, toReact } from './render'
+
+export type { ImportOptions } from './import'
+export { fromMarkdown, fromHTML } from './import'

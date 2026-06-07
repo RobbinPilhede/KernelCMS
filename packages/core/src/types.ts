@@ -440,6 +440,8 @@ export interface GlobalConfig {
   slug: string
   label?: string
   fields: ConfigField[]
+  /** Admin presentation: group globals under a sidebar heading and describe them. */
+  admin?: { group?: string; description?: string }
   access?: { read?: AccessFn; update?: AccessFn }
   hooks?: Pick<CollectionHooks, 'beforeChange' | 'afterChange' | 'afterRead'>
 }

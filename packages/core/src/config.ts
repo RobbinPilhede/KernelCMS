@@ -213,6 +213,9 @@ function cacheCollection(): CollectionConfig {
 
 const IDENT_RE = /^[a-z][a-z0-9_]*$/
 
+/** Minimum length for a production token-signing secret (a short one is brute-forceable). */
+const MIN_PRODUCTION_SECRET_LENGTH = 16
+
 /** Identity helper that gives `kernel.config.ts` full type-checking and inference. */
 export function defineConfig(config: KernelConfig): KernelConfig {
   return config
@@ -222,29 +225,45 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`KernelCMS config error: ${message}`)
 }
 
-function validateCollection(collection: CollectionConfig): void {
-  assert(
-    IDENT_RE.test(collection.slug),
-    `collection slug "${collection.slug}" must be snake_case starting with a letter`,
-  )
+const NAMING_RULE = 'snake_case (lowercase letter, then letters/digits/underscores)'
+
+/** Collect snake_case + duplicate violations for a field list, recursing into
+ *  group/array/blocks children so nested names are validated too. */
+function collectFieldNameErrors(fields: ConfigField[], path: string, errors: string[]): void {
   const seen = new Set<string>()
-  // Validate the effective (storage-bearing) fields — `row`/`tabs` are flattened,
-  // `ui` is dropped — so presentational containers don't need a `name`.
-  for (const field of effectiveFields(collection.fields)) {
-    assert(IDENT_RE.test(field.name), `field "${field.name}" in "${collection.slug}" must be snake_case`)
-    assert(!seen.has(field.name), `duplicate field "${field.name}" in collection "${collection.slug}"`)
+  for (const field of effectiveFields(fields)) {
+    const fp = `${path}.${field.name}`
+    if (!IDENT_RE.test(field.name)) errors.push(`field "${fp}" must be ${NAMING_RULE}`)
+    if (seen.has(field.name)) errors.push(`duplicate field "${fp}"`)
     seen.add(field.name)
+    if (field.type === 'group' || field.type === 'array') {
+      collectFieldNameErrors(field.fields, fp, errors)
+    } else if (field.type === 'blocks') {
+      for (const block of field.blocks) collectFieldNameErrors(block.fields, `${fp}.${block.slug}`, errors)
+    }
   }
-  // Virtual `join` (reverse-relationship) fields: valid, non-colliding names.
-  for (const join of joinFields(collection.fields)) {
-    assert(IDENT_RE.test(join.name), `join field "${join.name}" in "${collection.slug}" must be snake_case`)
-    assert(!seen.has(join.name), `join field "${join.name}" collides with a stored field in "${collection.slug}"`)
+  for (const join of joinFields(fields)) {
+    const jp = `${path}.${join.name}`
+    if (!IDENT_RE.test(join.name)) errors.push(`join field "${jp}" must be ${NAMING_RULE}`)
+    if (seen.has(join.name)) errors.push(`join field "${jp}" collides with a stored field`)
     seen.add(join.name)
   }
 }
 
-function validateGlobal(global: GlobalConfig): void {
-  assert(IDENT_RE.test(global.slug), `global slug "${global.slug}" must be snake_case starting with a letter`)
+/** Validate slugs + field names across the whole config, returning ALL violations
+ *  at once (with field paths) so every offender is fixable in one pass. */
+function collectNamingErrors(collections: CollectionConfig[], globals: GlobalConfig[]): string[] {
+  const errors: string[] = []
+  for (const c of collections) {
+    if (!IDENT_RE.test(c.slug)) errors.push(`collection slug "${c.slug}" must be ${NAMING_RULE}`)
+    collectFieldNameErrors(c.fields, c.slug, errors)
+  }
+  for (const g of globals) {
+    if (!IDENT_RE.test(g.slug)) errors.push(`global slug "${g.slug}" must be ${NAMING_RULE}`)
+    // Globals are validated the same as collections (previously slug-only).
+    collectFieldNameErrors(g.fields, g.slug, errors)
+  }
+  return errors
 }
 
 export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
@@ -277,16 +296,23 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   })
   const globals = config.globals ?? []
 
+  // Report every naming violation (slugs + field names, collections + globals) in
+  // one shot, with field paths — instead of failing one error at a time.
+  const namingErrors = collectNamingErrors(collections, globals)
+  if (namingErrors.length > 0) {
+    throw new Error(
+      `KernelCMS config error: ${namingErrors.length} naming violation(s):\n  - ${namingErrors.join('\n  - ')}`,
+    )
+  }
+
   const collectionsBySlug: Record<string, CollectionConfig> = {}
   for (const collection of collections) {
-    validateCollection(collection)
     assert(!collectionsBySlug[collection.slug], `duplicate collection slug "${collection.slug}"`)
     collectionsBySlug[collection.slug] = collection
   }
 
   const globalsBySlug: Record<string, GlobalConfig> = {}
   for (const global of globals) {
-    validateGlobal(global)
     assert(!globalsBySlug[global.slug], `duplicate global slug "${global.slug}"`)
     assert(!collectionsBySlug[global.slug], `global "${global.slug}" collides with a collection slug`)
     globalsBySlug[global.slug] = global
@@ -312,6 +338,19 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   // Also reject explicitly pinning the known-insecure constant in production.
   if (configuredSecret === DEV_SECRET && process.env.NODE_ENV === 'production') {
     throw new Error('[KernelCMS] The development secret must not be used in production. Set a unique KERNEL_SECRET.')
+  }
+  // And reject a weak secret in production: a short value is brute-forceable, so
+  // signing sessions with it is little better than the dev constant. This also
+  // closes the embed path, which calls initKernel() directly without doctor.
+  if (
+    configuredSecret &&
+    configuredSecret.length < MIN_PRODUCTION_SECRET_LENGTH &&
+    process.env.NODE_ENV === 'production'
+  ) {
+    throw new Error(
+      `[KernelCMS] The configured secret is too short (<${MIN_PRODUCTION_SECRET_LENGTH} chars) for production. ` +
+        'Set KERNEL_SECRET to a long, random value.',
+    )
   }
   const secret = configuredSecret ?? devSecret()
 
