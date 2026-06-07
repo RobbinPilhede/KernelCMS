@@ -7,7 +7,7 @@ import type { Kernel } from './types'
 import { DEV_SECRET, JOBS_SLUG } from './config'
 
 /** Published engine version. Bump in lockstep with the `kernelcms` package. */
-export const KERNEL_VERSION = '0.2.3'
+export const KERNEL_VERSION = '0.2.4'
 
 /**
  * Non-sensitive runtime facts for the first-run welcome screen. Deliberately only
