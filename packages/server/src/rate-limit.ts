@@ -53,7 +53,11 @@ export interface RateLimitOptions {
   max?: number
   /** Max requests per window per client for auth-sensitive routes. Default 20. */
   authMax?: number
-  /** Trust `x-forwarded-for` for the client IP (only behind a trusted proxy). Default false. */
+  /** Trust `x-forwarded-for` for the client IP (only behind a trusted proxy).
+   *  Default false. NOTE: this takes the *first* hop of `x-forwarded-for`, which a
+   *  client can spoof if your proxy *appends* rather than *overwrites* the header.
+   *  Behind a platform that sets a trusted single-value header (e.g. `x-real-ip`,
+   *  `cf-connecting-ip`), prefer `clientKey` to pin to that header instead. */
   trustProxy?: boolean
   /** Resolve the client identifier (usually an IP) from the request yourself.
    *  Use this when embedding the handler behind a platform/proxy (Next.js, Vercel,

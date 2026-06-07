@@ -22,16 +22,17 @@ export); the CLI looks for `default` first, then `config`.
 
 ## Environment variables
 
-| Variable           | Used by                          | Notes                                                                                                        |
-| ------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `KERNEL_SECRET`    | token signing                    | Set a long random value in production; doctor errors if unset.                                               |
-| `DATABASE_URL`     | Postgres adapter (and templates) | Scaffolded configs use Postgres when set, else local SQLite.                                                 |
-| `KERNEL_API_KEY`   | `serve()` / `start`              | `Authorization: Bearer <key>` runs as a trusted system caller.                                               |
-| `KERNEL_CORS`      | `kernel start`                   | Comma-separated origin allow-list.                                                                           |
-| `KERNEL_OPENAPI`   | `kernel start`                   | `true` re-enables the OpenAPI spec + Scalar docs (off in prod by default — they map every collection/field). |
-| `KERNEL_LOG_LEVEL` | logger                           | `debug` \| `info` \| `warn` \| `error` (default `info`).                                                     |
-| `PORT`             | `dev` / `start`                  | Default `3000`. Overridable with `--port`.                                                                   |
-| `NODE_ENV`         | doctor                           | `production` escalates several warnings to errors.                                                           |
+| Variable           | Used by                          | Notes                                                                                                             |
+| ------------------ | -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `KERNEL_SECRET`    | token signing                    | Set a long random value in production; doctor errors if unset.                                                    |
+| `DATABASE_URL`     | Postgres adapter (and templates) | Scaffolded configs use Postgres when set, else local SQLite.                                                      |
+| `KERNEL_API_KEY`   | `serve()` / `start`              | `Authorization: Bearer <key>` runs as a trusted system caller.                                                    |
+| `KERNEL_CORS`      | `kernel start`                   | Comma-separated origin allow-list.                                                                                |
+| `KERNEL_OPENAPI`   | `kernel start`                   | `true` re-enables the OpenAPI spec + Scalar docs (off in prod by default — they map every collection/field).      |
+| `KERNEL_GRAPHQL`   | `kernel start`                   | `true` re-enables the GraphQL endpoint (off in prod by default — unused, unbounded attack surface for most apps). |
+| `KERNEL_LOG_LEVEL` | logger                           | `debug` \| `info` \| `warn` \| `error` (default `info`).                                                          |
+| `PORT`             | `dev` / `start`                  | Default `3000`. Overridable with `--port`.                                                                        |
+| `NODE_ENV`         | doctor                           | `production` escalates several warnings to errors.                                                                |
 
 A project `.env` is loaded automatically by the CLI before the config is imported.
 

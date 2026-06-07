@@ -53,6 +53,25 @@ describe('GraphQL hardening', () => {
     expect(res.errors?.[0]?.message).toMatch(/maximum depth/i)
   })
 
+  it('rejects a shallow but alias-amplified query (breadth/complexity guard)', async () => {
+    // 200 aliases of the same list is shallow (passes depth) but huge — exactly the
+    // amplification the depth cap misses. The field-count cap must reject it.
+    const aliases = Array.from({ length: 200 }, (_, i) => `a${i}: posts { docs { id } }`).join(' ')
+    const res = await gql({ query: `{ ${aliases} }`, context: sys })
+    expect(res.errors?.some((e) => /too complex/i.test(e.message))).toBe(true)
+  })
+
+  it('honours a custom maxFields limit', async () => {
+    const tight = createGraphQL(kernel, { maxFields: 5 })
+    const ok = await tight({ query: '{ posts { docs { id } } }', context: sys })
+    expect(ok.errors?.some((e) => /too complex/i.test(e.message))).toBeFalsy()
+    const tooMany = await tight({
+      query: '{ a: posts { docs { id } } b: posts { docs { id } } c: posts { docs { id } } }',
+      context: sys,
+    })
+    expect(tooMany.errors?.some((e) => /too complex/i.test(e.message))).toBe(true)
+  })
+
   it('can disable introspection', async () => {
     const noIntrospect = createGraphQL(kernel, { disableIntrospection: true })
     const res = await noIntrospect({ query: '{ __schema { types { name } } }', context: sys })

@@ -321,7 +321,10 @@ export async function run(argv: string[]): Promise<void> {
         apiKey: process.env.KERNEL_API_KEY,
         cors: process.env.KERNEL_CORS ? process.env.KERNEL_CORS.split(',') : false,
         admin: true,
-        graphql: true,
+        // GraphQL is extra, unbounded attack surface that most deployments never
+        // use, so it is off by default in production. Opt back in with
+        // KERNEL_GRAPHQL=true (depth + field-count limits still apply).
+        graphql: process.env.KERNEL_GRAPHQL === 'true',
         // The OpenAPI spec + Scalar docs map every collection and field, so they
         // are off by default in production (they would hand an attacker a full API
         // blueprint, unauthenticated). Opt back in with KERNEL_OPENAPI=true.

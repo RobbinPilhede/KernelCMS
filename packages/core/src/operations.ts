@@ -112,6 +112,22 @@ const SYSTEM_AUTH_FIELDS = [
   'oauth_subject',
 ] as const
 
+// The complete set of query operators the adapters understand. A `where` using
+// anything else is a client error (400), not an adapter crash (500).
+const WHERE_OPERATORS = new Set([
+  'equals',
+  'not_equals',
+  'in',
+  'not_in',
+  'greater_than',
+  'greater_than_equal',
+  'less_than',
+  'less_than_equal',
+  'like',
+  'contains',
+  'exists',
+])
+
 export function createOperations(ctx: OperationCtx) {
   const { config, db } = ctx
 
@@ -477,10 +493,11 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   /**
-   * Reject a `where` that references a field the collection does not have, with a
-   * 400 rather than letting the adapter raise a generic 500. Walks `and`/`or`
-   * groups recursively. Validates the caller-supplied filter only, so legitimate
-   * access-rule internals are never second-guessed.
+   * Reject a `where` that references a field the collection does not have, or uses
+   * an operator the adapters do not implement, with a 400 rather than letting the
+   * adapter raise a generic 500. Walks `and`/`or` groups recursively. Validates the
+   * caller-supplied filter only, so legitimate access-rule internals are never
+   * second-guessed.
    */
   function assertWhereFields(collection: CollectionConfig, where: Where | undefined): void {
     if (!where) return
@@ -494,6 +511,14 @@ export function createOperations(ctx: OperationCtx) {
         if (value === undefined) continue
         if (!allowed.has(key)) {
           throw new BadRequestError(`Cannot filter on unknown field "${key}" of "${collection.slug}".`)
+        }
+        // The condition is `{ <operator>: value }`; reject unknown operators.
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          for (const op of Object.keys(value)) {
+            if (!WHERE_OPERATORS.has(op)) {
+              throw new BadRequestError(`Unsupported filter operator "${op}" on "${key}".`)
+            }
+          }
         }
       }
     }

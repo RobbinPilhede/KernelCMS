@@ -28,11 +28,16 @@ export interface ExecuteOptions {
 export interface GraphQLOptions {
   /** Max selection-set nesting allowed in a query (DoS guard). Default 10. */
   maxDepth?: number
+  /** Max total field selections — including aliases — allowed in one request. A
+   *  shallow query can still fan out enormously through aliasing (e.g. 200 aliases
+   *  of the same list), so depth alone is not enough. Default 100. */
+  maxFields?: number
   /** Disable schema introspection. Defaults to true when NODE_ENV=production. */
   disableIntrospection?: boolean
 }
 
 const DEFAULT_MAX_DEPTH = 10
+const DEFAULT_MAX_FIELDS = 100
 
 /**
  * Validation rule that rejects queries nested deeper than `maxDepth`. Recursive
@@ -48,6 +53,27 @@ function depthLimitRule(maxDepth: number): (context: ValidationContext) => ASTVi
       }
     },
   })
+}
+
+/**
+ * Validation rule that rejects a request selecting more than `maxFields` fields in
+ * total (aliases included). Closes the breadth/aliasing amplification a depth cap
+ * misses: 200 aliases of one list is shallow but huge.
+ */
+function complexityLimitRule(maxFields: number): (context: ValidationContext) => ASTVisitor {
+  return (context: ValidationContext): ASTVisitor => {
+    let count = 0
+    let reported = false
+    return {
+      Field() {
+        count += 1
+        if (count > maxFields && !reported) {
+          reported = true
+          context.reportError(new GraphQLError(`Query is too complex: more than ${maxFields} fields selected.`))
+        }
+      },
+    }
+  }
 }
 
 /** Deepest selection-set nesting under (and including) a field. */
@@ -72,8 +98,9 @@ export function createGraphQL(
 ): (opts: ExecuteOptions) => Promise<ExecutionResult> {
   const schema = buildGraphQLSchema(kernel)
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
+  const maxFields = options.maxFields ?? DEFAULT_MAX_FIELDS
   const disableIntrospection = options.disableIntrospection ?? process.env.NODE_ENV === 'production'
-  const rules = [...specifiedRules, depthLimitRule(maxDepth)]
+  const rules = [...specifiedRules, depthLimitRule(maxDepth), complexityLimitRule(maxFields)]
   if (disableIntrospection) rules.push(NoSchemaIntrospectionCustomRule)
 
   return async (opts) => {

@@ -73,6 +73,14 @@ describe('L2 — unknown where field is a 400, not a 500', () => {
     const res = await handler(new Request('http://localhost/api/posts?where[title][equals]=hello'))
     expect(res.status).toBe(200)
   })
+
+  it('rejects an unsupported operator with 400 (not 500)', async () => {
+    const handler = createRequestHandler(kernel, {})
+    const res = await handler(new Request('http://localhost/api/posts?where[title][regex]=^h'))
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error?: { code?: string } }
+    expect(body.error?.code).toBe('BAD_REQUEST')
+  })
 })
 
 describe('L3 — forbidden HTTP methods return 405, not 500', () => {
