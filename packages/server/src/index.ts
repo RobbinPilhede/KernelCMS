@@ -72,6 +72,15 @@ export interface HandlerOptions {
    *  `{ enabled: false }` to disable, or tune `windowMs`/`max`/`authMax`. Set
    *  `trustProxy: true` only behind a trusted proxy that sets `x-forwarded-for`. */
   rateLimit?: RateLimitOptions
+  /**
+   * Issue the session token as an `HttpOnly` cookie on login/setup (and accept it
+   * from that cookie on later requests), so the admin never keeps the token in
+   * `localStorage` — closing the XSS token-theft vector. The token is still
+   * returned in the login response and `Authorization: Bearer` keeps working for
+   * API clients. CSRF is mitigated by `SameSite=Lax` plus a same-origin check on
+   * cookie-authenticated unsafe requests. Default true; set false to opt out.
+   */
+  cookieAuth?: boolean
 }
 
 /** The auth collection the admin UI logs into: configured admin.user, else the first auth collection. */
@@ -270,6 +279,50 @@ export function createRequestHandler(kernel: Kernel, options: HandlerOptions = {
   }
 }
 
+// The admin session cookie. HttpOnly so JS (and thus XSS) can never read it.
+const SESSION_COOKIE = 'kernel_token'
+
+/** True when the request reached us over TLS (directly or via a trusted proxy),
+ *  so the `Secure` cookie attribute is safe to set without breaking http://localhost. */
+function isHttps(request: Request): boolean {
+  const proto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim()
+  if (proto) return proto === 'https'
+  try {
+    return new URL(request.url).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/** Build the Set-Cookie value for the session (`maxAgeSec <= 0` clears it). */
+function sessionCookie(token: string, request: Request, apiBase: string, maxAgeSec: number): string {
+  const attrs = [
+    `${SESSION_COOKIE}=${maxAgeSec > 0 ? encodeURIComponent(token) : ''}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    `Path=${apiBase || '/'}`,
+    `Max-Age=${Math.max(0, Math.floor(maxAgeSec))}`,
+  ]
+  // Secure only over HTTPS, so local http dev still receives the cookie.
+  if (isHttps(request)) attrs.push('Secure')
+  return attrs.join('; ')
+}
+
+/** Attach the session cookie to a login/setup response when cookie auth is on. */
+function attachSessionCookie(
+  res: Response,
+  result: { token: string; exp?: number },
+  options: HandlerOptions,
+  request: Request,
+  apiBase: string,
+): Response {
+  if (options.cookieAuth === false) return res
+  const nowSec = Math.floor(Date.now() / 1000)
+  const maxAge = typeof result.exp === 'number' ? result.exp - nowSec : 3600
+  res.headers.append('set-cookie', sessionCookie(result.token, request, apiBase, maxAge))
+  return res
+}
+
 /** Baseline hardening headers applied to every response. */
 function withSecurityHeaders(response: Response): Response {
   if (!response.headers.has('x-content-type-options')) response.headers.set('x-content-type-options', 'nosniff')
@@ -390,7 +443,11 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   }
 
   const segments = url.pathname.slice(apiBase.length).split('/').filter(Boolean)
-  const { user, overrideAccess } = await resolveAuth(kernel, options, request)
+  const { user, overrideAccess, viaCookie } = await resolveAuth(kernel, options, request)
+  // CSRF: a cookie-authenticated state-changing request must be same-origin.
+  if (!passesCsrf(request, viaCookie)) {
+    return json({ error: { code: 'FORBIDDEN', message: 'Cross-origin request rejected.' } }, 403)
+  }
   const locale = url.searchParams.get('locale') ?? undefined
   const depth = toNum(url.searchParams.get('depth'))
   const draft = url.searchParams.get('draft') === 'true'
@@ -545,7 +602,8 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       // The bootstrap admin is trusted — skip email verification so setup can sign in.
       if (hasField('email_verified')) data.email_verified = true
       await kernel.create({ collection: slug, data, overrideAccess: true })
-      return json(await kernel.login({ collection: slug, email, password }), 201)
+      const result = await kernel.login({ collection: slug, email, password })
+      return attachSessionCookie(json(result, 201), result, options, request, apiBase)
     }
 
     return json({ error: { code: 'NOT_FOUND', message: `No route for ${url.pathname}` } }, 404)
@@ -576,6 +634,7 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   // Auth sub-routes for auth collections: login, me, and the email flows.
   const AUTH_ACTIONS = new Set([
     'login',
+    'logout',
     'me',
     'forgot-password',
     'reset-password',
@@ -591,14 +650,22 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       const action = segments[1]!
       if (action === 'login' && method === 'POST') {
         const body = await readBody(request)
-        return json(
-          await kernel.login({
-            collection,
-            email: String(body.email ?? ''),
-            password: String(body.password ?? ''),
-            ...(body.code !== undefined ? { code: String(body.code) } : {}),
-          }),
-        )
+        const result = await kernel.login({
+          collection,
+          email: String(body.email ?? ''),
+          password: String(body.password ?? ''),
+          ...(body.code !== undefined ? { code: String(body.code) } : {}),
+        })
+        return attachSessionCookie(json(result), result, options, request, apiBase)
+      }
+      if (action === 'logout' && method === 'POST') {
+        // Clear the session cookie. (JWTs are stateless; this ends the browser
+        // session — full revocation across devices is a password/epoch change.)
+        const res = json({ success: true })
+        if (options.cookieAuth !== false) {
+          res.headers.append('set-cookie', sessionCookie('', request, apiBase, 0))
+        }
+        return res
       }
       if (action === 'me' && method === 'GET') {
         if (!user) throw new UnauthorizedError()
@@ -612,13 +679,12 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       }
       if (action === 'reset-password' && method === 'POST') {
         const body = await readBody(request)
-        return json(
-          await kernel.resetPassword({
-            collection,
-            token: String(body.token ?? ''),
-            password: String(body.password ?? ''),
-          }),
-        )
+        const result = await kernel.resetPassword({
+          collection,
+          token: String(body.token ?? ''),
+          password: String(body.password ?? ''),
+        })
+        return attachSessionCookie(json(result), result, options, request, apiBase)
       }
       if (action === 'verify-email' && method === 'POST') {
         const body = await readBody(request)
@@ -898,26 +964,55 @@ async function resolveAuth(
   kernel: Kernel,
   options: HandlerOptions,
   request: Request,
-): Promise<{ user: AuthUser | null; overrideAccess: boolean }> {
+): Promise<{ user: AuthUser | null; overrideAccess: boolean; viaCookie: boolean }> {
   const auth = request.headers.get('authorization')
   if (options.apiKey && auth?.startsWith('Bearer ') && timingEqual(auth.slice('Bearer '.length), options.apiKey)) {
-    return { user: { id: 'system', roles: ['admin'], collection: 'system' }, overrideAccess: true }
+    return { user: { id: 'system', roles: ['admin'], collection: 'system' }, overrideAccess: true, viaCookie: false }
   }
   if (options.getUser) {
     const user = await options.getUser(request)
-    if (user) return { user, overrideAccess: false }
+    if (user) return { user, overrideAccess: false, viaCookie: false }
   }
   // Per-collection API keys: `Authorization: <collection> API-Key <key>`.
   const apiKeyMatch = auth?.match(/^(\w+) API-Key (\S{1,512})$/)
   if (apiKeyMatch) {
     const user = await kernel.authenticateAPIKey(apiKeyMatch[1]!, apiKeyMatch[2]!)
-    if (user) return { user, overrideAccess: false }
+    if (user) return { user, overrideAccess: false, viaCookie: false }
   }
   if (auth?.startsWith('Bearer ')) {
     const user = await kernel.authenticate(auth.slice('Bearer '.length))
-    if (user) return { user, overrideAccess: false }
+    if (user) return { user, overrideAccess: false, viaCookie: false }
   }
-  return { user: null, overrideAccess: false }
+  // Cookie session (admin). Tracked separately so unsafe cookie-auth requests can
+  // be CSRF-checked — a Bearer token cannot be sent cross-site, but a cookie can.
+  if (options.cookieAuth !== false) {
+    const cookieToken = readCookie(request, SESSION_COOKIE)
+    if (cookieToken) {
+      const user = await kernel.authenticate(cookieToken)
+      if (user) return { user, overrideAccess: false, viaCookie: true }
+    }
+  }
+  return { user: null, overrideAccess: false, viaCookie: false }
+}
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/**
+ * CSRF guard for cookie-authenticated mutations. A cross-site `fetch`/form POST
+ * carries the cookie (unless SameSite blocks it) but the browser always stamps an
+ * `Origin` from the attacker's site, so a present-and-mismatched Origin on an
+ * unsafe, cookie-authenticated request is rejected. Bearer/API-key callers are
+ * exempt (their credential can't be sent cross-site). Returns true if allowed.
+ */
+function passesCsrf(request: Request, viaCookie: boolean): boolean {
+  if (!viaCookie || SAFE_METHODS.has(request.method)) return true
+  const origin = request.headers.get('origin')
+  if (!origin) return true // SameSite=Lax already blocks cross-site cookie sends.
+  try {
+    return new URL(origin).host === new URL(request.url).host
+  } catch {
+    return false
+  }
 }
 
 /** Ceiling for JSON request bodies on the runtime-agnostic fetch path (the Node

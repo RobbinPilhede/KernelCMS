@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { adminStatus, getToken, login as apiLogin, logout as apiLogout, me, setupAdmin } from './api'
+import { adminStatus, login as apiLogin, logout as apiLogout, me, setupAdmin } from './api'
 import type { AdminSchema, Doc, SetupRuntime } from './api'
 
 interface AuthContextValue {
@@ -43,9 +43,15 @@ export function AuthProvider({ schema, children }: { schema: AdminSchema; childr
           setNeedsSetup(status.needsSetup)
           setRuntime(status.runtime ?? null)
         }
-        if (!status.needsSetup && authSlug && getToken()) {
-          const result = await me(authSlug)
-          if (active) setUser(result.user)
+        // Resume an existing session from the HttpOnly cookie: ask /me and accept
+        // the user if the cookie authenticates. A 401 just means "not signed in".
+        if (!status.needsSetup && authSlug) {
+          try {
+            const result = await me(authSlug)
+            if (active) setUser(result.user)
+          } catch {
+            if (active) setUser(null)
+          }
         }
       } catch {
         if (active) setUser(null)
@@ -87,7 +93,7 @@ export function AuthProvider({ schema, children }: { schema: AdminSchema; childr
   }
 
   const signOut = (): void => {
-    apiLogout()
+    void apiLogout(authSlug)
     setUser(null)
   }
 

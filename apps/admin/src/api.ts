@@ -104,42 +104,16 @@ export interface Paginated<T> {
 // remote server.
 const API_BASE = (import.meta.env.VITE_KERNEL_API ?? '').replace(/\/$/, '')
 const ROOT = `${API_BASE}/api`
-const TOKEN_KEY = 'kernel_token'
 
-// Token storage is best-effort and must never throw: localStorage can be full
-// (dev origins are shared across projects), disabled, or quota-exhausted. Keep
-// an in-memory copy so the session always works, and try localStorage then
-// sessionStorage for persistence across reloads.
+// The session lives in an HttpOnly cookie set by the server on login — never in
+// localStorage, so an XSS can't read or exfiltrate it. We keep an in-memory copy
+// of the token only as a same-session fallback `Authorization` header (e.g. when
+// the server runs with cookieAuth disabled); it is lost on reload, where the
+// cookie transparently re-establishes the session via `credentials: 'same-origin'`.
 let memToken: string | null = null
-export const getToken = (): string | null => {
-  if (memToken) return memToken
-  try {
-    const v = localStorage.getItem(TOKEN_KEY)
-    if (v) return v
-  } catch {
-    /* storage unavailable */
-  }
-  try {
-    return sessionStorage.getItem(TOKEN_KEY)
-  } catch {
-    return null
-  }
-}
+export const getToken = (): string | null => memToken
 export const setToken = (token: string | null): void => {
   memToken = token
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token)
-    else localStorage.removeItem(TOKEN_KEY)
-    return
-  } catch {
-    /* fall through to sessionStorage */
-  }
-  try {
-    if (token) sessionStorage.setItem(TOKEN_KEY, token)
-    else sessionStorage.removeItem(TOKEN_KEY)
-  } catch {
-    /* in-memory only */
-  }
 }
 
 export interface FieldErrorDetail {
@@ -167,6 +141,8 @@ async function req<T>(method: string, path: string, body?: Record<string, unknow
   const res = await fetch(ROOT + path, {
     method,
     headers,
+    // Send the HttpOnly session cookie on same-origin admin requests.
+    credentials: 'same-origin',
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const text = await res.text()
@@ -242,7 +218,17 @@ export async function login(
 }
 
 export const me = (collection: string): Promise<{ user: Doc }> => req('GET', `/${collection}/me`)
-export const logout = (): void => setToken(null)
+
+/** End the session: ask the server to clear the HttpOnly cookie, then drop the
+ *  in-memory token. Best-effort — the local token is cleared even if the call fails. */
+export async function logout(collection: string | null): Promise<void> {
+  try {
+    if (collection) await req('POST', `/${collection}/logout`)
+  } catch {
+    /* clear locally regardless */
+  }
+  setToken(null)
+}
 
 export const forgotPassword = (collection: string, email: string): Promise<{ success: true }> =>
   req('POST', `/${collection}/forgot-password`, { email })
@@ -306,7 +292,12 @@ export async function uploadFile(slug: string, file: File, data: Record<string, 
   const headers: Record<string, string> = {}
   const token = getToken()
   if (token) headers.authorization = `Bearer ${token}`
-  const res = await fetch(`${ROOT}/${slug}${localeQS('?')}`, { method: 'POST', headers, body: form })
+  const res = await fetch(`${ROOT}/${slug}${localeQS('?')}`, {
+    method: 'POST',
+    headers,
+    credentials: 'same-origin',
+    body: form,
+  })
   const text = await res.text()
   const parsed = text ? JSON.parse(text) : null
   if (!res.ok) {

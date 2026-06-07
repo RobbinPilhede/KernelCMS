@@ -164,19 +164,33 @@ on write. It won't double-add a field you already declared.
 
 Passed to `createRequestHandler(kernel, options)` / `serve(kernel, options)`:
 
-| Option      | Meaning                                                                                 |
-| ----------- | --------------------------------------------------------------------------------------- |
-| `apiKey`    | Bearer token that runs a request as a trusted system caller.                            |
-| `getUser`   | Resolve the authenticated user from the request (sessions/JWT).                         |
-| `cors`      | `true` reflects the request origin; an array allow-lists origins.                       |
-| `admin`     | `true` mounts the admin at `/admin`; `{ path, scripts }` to customise / inject scripts. |
-| `graphql`   | Expose `<api>/graphql` (POST).                                                          |
-| `openapi`   | Serve `<api>/openapi` + a Scalar reference at `<api>/docs` (default `true`).            |
-| `rateLimit` | `{ enabled, windowMs, max, authMax, trustProxy, clientKey, store }` — see below.        |
+| Option       | Meaning                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------- |
+| `apiKey`     | Bearer token that runs a request as a trusted system caller.                            |
+| `getUser`    | Resolve the authenticated user from the request (sessions/JWT).                         |
+| `cors`       | `true` reflects the request origin; an array allow-lists origins.                       |
+| `admin`      | `true` mounts the admin at `/admin`; `{ path, scripts }` to customise / inject scripts. |
+| `graphql`    | Expose `<api>/graphql` (POST).                                                          |
+| `openapi`    | Serve `<api>/openapi` + a Scalar reference at `<api>/docs` (default `true`).            |
+| `cookieAuth` | Issue the session as an `HttpOnly` cookie on login (default `true`).                    |
+| `rateLimit`  | `{ enabled, windowMs, max, authMax, trustProxy, clientKey, store }` — see below.        |
 
 `RequestHandler` (the return type of `createRequestHandler`) and the rate-limit
 types/helpers (`RateLimitOptions`, `RateLimitStore`, `memoryRateLimitStore`) are
 exported from `kernelcms/server`.
+
+## Admin session & CSRF
+
+By default (`cookieAuth: true`) login sets the session token in an **`HttpOnly`,
+`SameSite=Lax`** cookie (`Secure` over HTTPS), so the admin never keeps it in
+`localStorage` and an XSS cannot read it. The token is still returned in the login
+response and **`Authorization: Bearer <token>` keeps working** for API clients and
+scripts. CSRF is covered two ways: `SameSite=Lax` stops the cookie riding cross-site
+on unsafe requests, and a **same-origin `Origin` check** rejects any cookie-authed
+`POST`/`PUT`/`PATCH`/`DELETE` whose `Origin` doesn't match (Bearer callers are
+exempt — their credential can't be sent cross-site). `POST <api>/<auth>/logout`
+clears the cookie. For a cross-origin embedded admin, set `cors` to an explicit
+origin allow-list so the browser sends the cookie.
 
 ## Migrations are additive
 
