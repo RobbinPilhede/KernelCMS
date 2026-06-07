@@ -4,12 +4,11 @@
 //   - ExperimentalWarning: SQLite — the built-in node:sqlite adapter on load.
 //   - MODULE_TYPELESS_PACKAGE_JSON — reparsing a .ts/.js config without "type".
 // Everything else passes through unchanged.
+import { isSuppressedWarning } from './warnings'
+
 const emitWarning = process.emitWarning.bind(process)
 process.emitWarning = ((warning: string | Error, ...args: unknown[]) => {
-  const message = typeof warning === 'string' ? warning : warning.message
-  const name = typeof warning === 'string' ? (args[0] as string | undefined) : warning.name
-  if (name === 'ExperimentalWarning' && message.includes('SQLite')) return
-  if (message.includes('MODULE_TYPELESS_PACKAGE_JSON')) return
+  if (isSuppressedWarning(warning, args)) return
   return (emitWarning as (w: string | Error, ...a: unknown[]) => void)(warning, ...args)
 }) as typeof process.emitWarning
 
