@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { sqliteAdapter } from '@kernel/db-sqlite'
-import { memoryStorage } from '@kernel/storage'
+import { localStorage, memoryStorage } from '@kernel/storage'
 import {
   ForbiddenError,
   PluginConflictError,
@@ -1101,7 +1101,8 @@ describe('doctor', () => {
     const report = runDoctor(
       sanitizeConfig({
         secret: 'a-sufficiently-long-secret-value',
-        storage: memoryStorage(),
+        // Durable storage — memoryStorage would (correctly) raise ephemeral-storage.
+        storage: localStorage({ rootDir: './.uploads' }),
         db: sqliteAdapter({ url: ':memory:' }),
         collections: [
           { slug: 'users', auth: true, access: { read: () => true }, fields: [{ name: 'name', type: 'text' }] },

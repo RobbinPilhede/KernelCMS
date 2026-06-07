@@ -146,6 +146,18 @@ See [What is in the box](#what-is-in-the-box) for the full list.
 
 ---
 
+## Guides
+
+- **[Embedding in Next.js](docs/embedding-nextjs.md)** — mount the full CMS (REST,
+  GraphQL, admin) inside a Next.js app: the kernel singleton, the Node.js runtime,
+  external native packages, and rate limiting behind a platform proxy.
+- **[Conventions & defaults](docs/conventions.md)** — the small non-obvious rules:
+  deny-by-default access, `overrideAccess`, drafts→publish, stored vs. virtual
+  computed fields, `defaultSort`, the seed convention, env vars, CLI flags, and
+  the `.ts` type-stripping requirements for config files.
+
+---
+
 ## Build anything: modules & custom endpoints
 
 Collections give you typed CRUD for free. When you need real behavior, add **custom
@@ -186,12 +198,19 @@ export default defineConfig({ /* … */, plugins: [comments] })
 Scaffold one with `npx kernel generate:module comments`. Input validation accepts any
 Zod-compatible schema (`{ parse }`); no Zod dependency is forced on the core.
 
-**Computed (virtual) fields** derive a value on read without storing it, so business
-logic lives in one place and stays read-only in the admin:
+**Computed fields** derive a value from a single `compute` function, so business
+logic lives in one place and stays read-only in the admin. A `virtual` field is
+derived on read and not stored; drop `virtual` for a **stored** computed field
+that is persisted at write time and therefore sortable and filterable:
 
 ```ts
+// virtual: derived on read, not stored (not sortable)
 { name: 'word_count', type: 'number', virtual: true,
   compute: ({ doc }) => countWords(doc.body) }
+
+// stored: derived on write, persisted to a real column (sortable/filterable)
+{ name: 'sort_key', type: 'number', index: true,
+  compute: ({ doc }) => new Date(doc.starts_at).getTime() }
 ```
 
 ---

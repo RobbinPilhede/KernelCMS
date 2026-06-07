@@ -10,6 +10,7 @@ import {
   importData,
   initKernel,
   runDoctor,
+  sanitizeConfig,
   summarizePlan,
   systemInfo,
   type ImportPayload,
@@ -140,13 +141,27 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'migrate': {
-      const { config } = await loadConfig(flags)
+      const { config, path } = await loadConfig(flags)
       const kernel = await initKernel(config)
+      // The bundled adapters apply additive changes only — they create tables and
+      // add columns, but never drop or retype (no data loss by surprise). If a
+      // snapshot exists, surface destructive drift so it isn't silently skipped.
+      const snapshotPath = resolve(dirname(path), 'kernel', 'schema-snapshot.json')
+      if (existsSync(snapshotPath)) {
+        const current = JSON.parse(readFileSync(snapshotPath, 'utf8')) as KernelSchema
+        const destructive = diffSchema(current, kernel.schema).ops.filter((o) => o.class === 'destructive')
+        if (destructive.length) {
+          console.log('⚠  Destructive changes detected — NOT applied automatically:')
+          console.log(summarizePlan({ ops: destructive, hasDestructive: true, empty: false }))
+          console.log('   Apply these by hand before relying on the new schema, then re-run migrate:snapshot.\n')
+        }
+      }
       const report = await kernel.db.migrate(kernel.schema)
       console.log(
         `✓ Migration complete — ${report.createdTables.length} table(s) created, ${report.addedColumns.length} column(s) added.`,
       )
       if (report.createdTables.length) console.log(`  Created: ${report.createdTables.join(', ')}`)
+      console.log(`  Tip: run "kernel migrate:snapshot" to record this schema for future drift checks.`)
       await kernel.destroy()
       break
     }
@@ -186,11 +201,26 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'doctor': {
       const { config } = await loadConfig(flags)
-      const kernel = await initKernel(config)
-      const report = runDoctor(kernel.config)
+      // Static config checks first — these never touch the database, so they still
+      // run (and report) even when the database is unreachable.
+      const report = runDoctor(sanitizeConfig(config))
       console.log(formatDoctorReport(report))
-      await kernel.destroy()
-      if (!report.ok) process.exitCode = 1
+      // Then a runtime probe: can we actually open and query the database?
+      let dbOk = false
+      try {
+        const kernel = await initKernel(config)
+        const health = await kernel.db.health()
+        dbOk = health.status === 'ok'
+        console.log(
+          dbOk
+            ? '\n✓ Database reachable.'
+            : `\n✖ Database ${health.status}${health.detail ? `: ${health.detail}` : ''}`,
+        )
+        await kernel.destroy()
+      } catch (err) {
+        console.error(`\n✖ Database unreachable: ${err instanceof Error ? err.message : String(err)}`)
+      }
+      if (!report.ok || !dbOk) process.exitCode = 1
       break
     }
 

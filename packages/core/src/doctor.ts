@@ -36,6 +36,15 @@ function walkRelations(fields: ConfigField[], visit: (field: AnyField & { relati
   }
 }
 
+/** Names of the configured byte-storage adapters (single adapter or named map). */
+function storageAdapterNames(storage: SanitizedConfig['storage']): string[] {
+  if (!storage) return []
+  if (typeof (storage as { put?: unknown }).put === 'function') {
+    return [(storage as { name?: string }).name ?? '']
+  }
+  return Object.values(storage as Record<string, { name?: string }>).map((a) => a.name ?? '')
+}
+
 export interface DoctorOptions {
   /** Defaults to process.env.NODE_ENV. Production escalates some warnings to errors. */
   env?: string
@@ -73,6 +82,14 @@ export function runDoctor(config: SanitizedConfig, options: DoctorOptions = {}):
         c.slug,
       )
     }
+  } else if (uploadCollections.length > 0 && storageAdapterNames(config.storage).includes('memory')) {
+    // In-memory storage drops every uploaded byte on restart and is not shared
+    // across nodes — fine for tests/previews, data loss in production.
+    add(
+      isProd ? 'error' : 'warn',
+      'ephemeral-storage',
+      'Upload storage is in-memory (memoryStorage): uploaded files are lost on restart and not shared across nodes. Use localStorage/S3/R2 for anything you keep.',
+    )
   }
 
   // Relationship/upload targets must exist.
