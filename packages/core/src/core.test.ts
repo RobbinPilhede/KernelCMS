@@ -715,6 +715,96 @@ describe('field-level access control', () => {
   })
 })
 
+describe('authority fields are admin-write by default (no explicit field access)', () => {
+  // Mirrors the real-world footgun: an auth collection whose `update` lets a user
+  // edit their OWN record, and a `roles` field with NO field-level access rule.
+  // The framework must still block self-promotion without the developer doing
+  // anything — that is the secure-by-default contract.
+  function buildDefaultConfig() {
+    return defineConfig({
+      secret: 'test-secret',
+      db: sqliteAdapter({ url: ':memory:' }),
+      collections: [
+        {
+          slug: 'users',
+          auth: true,
+          access: {
+            read: () => true,
+            create: () => true,
+            // Self-scoped update — exactly the pattern that made escalation possible.
+            update: ({ req }) =>
+              Boolean(req.user?.roles?.includes('admin')) || (req.user ? { id: { equals: req.user.id } } : false),
+          },
+          // No field-level access anywhere — the framework supplies the default.
+          fields: [
+            { name: 'name', type: 'text' },
+            { name: 'roles', type: 'select', hasMany: true, options: ['user', 'admin'], defaultValue: ['user'] },
+          ],
+        },
+      ],
+    })
+  }
+
+  let secure: Kernel
+  beforeEach(async () => {
+    secure = await initKernel(buildDefaultConfig(), { logLevel: 'error' })
+    await secure.migrate()
+  })
+  afterEach(async () => {
+    await secure.destroy()
+  })
+
+  it('blocks a user from self-promoting their own roles with no explicit field rule', async () => {
+    const user = await secure.create({
+      collection: 'users',
+      data: { email: 'editor@example.com', password: 'password123', name: 'Editor' },
+      ...admin,
+    })
+    expect(user.roles).toEqual(['user'])
+
+    const updated = await secure.update({
+      collection: 'users',
+      id: user.id,
+      data: { name: 'Editor renamed', roles: ['admin'] },
+      req: { user: { id: user.id, roles: ['user'], collection: 'users' } },
+    })
+    expect(updated?.name).toBe('Editor renamed') // ordinary field still writable
+    expect(updated?.roles).toEqual(['user']) // privilege field rejected by default
+  })
+
+  it('strips roles a non-admin sets at create with no explicit field rule', async () => {
+    const created = await secure.create({
+      collection: 'users',
+      data: { email: 'new@example.com', password: 'password123', roles: ['admin'] },
+      req: { user: { id: 'someone', roles: ['user'], collection: 'users' } },
+    })
+    expect(created.roles).toEqual(['user'])
+  })
+
+  it('still lets an admin set roles, and trusted (overrideAccess) bootstrapping works', async () => {
+    const user = await secure.create({
+      collection: 'users',
+      data: { email: 'p@example.com', password: 'password123' },
+      ...admin,
+    })
+    const promoted = await secure.update({
+      collection: 'users',
+      id: user.id,
+      data: { roles: ['admin'] },
+      req: { user: { id: 'root', roles: ['admin'], collection: 'users' } },
+    })
+    expect(promoted?.roles).toEqual(['admin'])
+
+    // overrideAccess (seed / first-admin setup / OAuth) bypasses field access.
+    const seeded = await secure.create({
+      collection: 'users',
+      data: { email: 'admin@example.com', password: 'password123', roles: ['admin'] },
+      ...admin,
+    })
+    expect(seeded.roles).toEqual(['admin'])
+  })
+})
+
 describe('field-level read access', () => {
   let secure: Kernel
   const asUser = { req: { user: { id: 'u1', roles: ['user'], collection: 'users' } } }

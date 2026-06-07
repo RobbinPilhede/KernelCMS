@@ -1,4 +1,5 @@
 import type {
+  AccessFn,
   AnyField,
   CollectionConfig,
   ConfigField,
@@ -20,6 +21,47 @@ function consoleEmailFallback(): EmailAdapter {
     )
   }
   return consoleEmail()
+}
+
+/**
+ * Field names that confer privilege. On an auth collection these are write-locked
+ * to admins by default (see `guardAuthorityFields`) so a user can never edit their
+ * own record to escalate their authority.
+ */
+const AUTHORITY_FIELDS = new Set(['roles', 'role', 'permissions', 'is_admin', 'is_staff', 'is_superuser'])
+
+/** KernelCMS's built-in admin convention: a signed-in user whose `roles` includes 'admin'. */
+const isAdminUser: AccessFn = ({ req }) => Boolean(req.user?.roles?.includes('admin'))
+
+/**
+ * Secure-by-default privilege fields. Field-level access is the only thing that
+ * stops a row's owner from writing a given field — and auth collections almost
+ * always let a user update their OWN record. Without a default, an unguarded
+ * `roles` field would let any such user `PATCH` themselves to `{ roles: ['admin'] }`
+ * and self-promote (vertical privilege escalation).
+ *
+ * So: any authority-named field that doesn't already declare its own create/update
+ * access defaults to admin-only for those operations. Reads are left untouched
+ * (the admin UI still shows roles), and an explicit field `access` rule always
+ * wins. Trusted server paths (overrideAccess: seed, first-admin setup, OAuth
+ * provisioning) skip field access entirely, so bootstrapping still works.
+ */
+function guardAuthorityFields(fields: ConfigField[]): ConfigField[] {
+  return fields.map((field) => {
+    // Only real storage fields carry write access; skip ui/join containers.
+    if (field.type === 'ui' || field.type === 'join') return field
+    if (!('name' in field) || !AUTHORITY_FIELDS.has(field.name)) return field
+    const access = field.access
+    // Respect an explicit rule for an operation; only fill the gaps.
+    return {
+      ...field,
+      access: {
+        ...access,
+        create: access?.create ?? isAdminUser,
+        update: access?.update ?? isAdminUser,
+      },
+    }
+  })
 }
 
 /** Inject email + password-hash fields into auth-enabled collections. */
@@ -88,7 +130,8 @@ function withAuthFields(collection: CollectionConfig, hasOAuth = false): Collect
       fields.push({ name: 'oauth_subject', type: 'text', index: true, admin: { hidden: true } })
     }
   }
-  return { ...collection, fields }
+  // Write-lock privilege fields to admins unless the field opts out with its own rule.
+  return { ...collection, fields: guardAuthorityFields(fields) }
 }
 
 /** Inject the system fields every upload collection stores alongside user fields. */

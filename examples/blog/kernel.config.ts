@@ -28,6 +28,11 @@ export default defineConfig({
       },
       fields: [
         { name: 'name', type: 'text' },
+        // `roles` is a privilege field. Even though `access.update` above lets a
+        // user edit their own record, KernelCMS write-locks authority fields
+        // (roles/permissions/…) to admins by default — so a user can't
+        // `PATCH /api/users/<own-id> { "roles": ["admin"] }` to self-promote.
+        // Override with a field-level `access` rule if you need different behaviour.
         { name: 'roles', type: 'select', hasMany: true, options: ['admin', 'editor'], defaultValue: ['editor'] },
       ],
     },
