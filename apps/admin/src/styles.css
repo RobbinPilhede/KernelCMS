@@ -439,6 +439,9 @@ a {
   flex-direction: column;
   gap: 2px;
   flex: 1;
+  /* The sidebar is a 100vh column flex; min-height:0 lets this nav scroll a long
+   * collection list instead of overflowing past the brand/footer. */
+  min-height: 0;
   overflow-y: auto;
 }
 .nav-section {
@@ -1363,6 +1366,9 @@ a {
 }
 .preview-stage {
   flex: 1;
+  /* Without min-height:0 this flex child won't shrink below its content inside the
+   * height-capped, overflow:hidden .preview-pane, so tall previews would clip. */
+  min-height: 0;
   overflow: auto;
   display: flex;
   justify-content: center;
@@ -1616,6 +1622,8 @@ a {
   }
 }
 .lib-head {
+  /* Fixed header: the scroll body (.lib-body) is the only growing child. */
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1627,10 +1635,16 @@ a {
   font-size: 16px;
 }
 .lib-search {
+  flex: 0 0 auto;
   margin: 14px 18px 4px;
   width: calc(100% - 36px);
 }
 .lib-body {
+  /* Fill the remaining modal height and scroll. `min-height: 0` defeats the flex
+   * default of `min-height: auto`, which would otherwise let this grow past the
+   * height-capped, overflow:hidden .lib-modal and clip the bottom unreachably. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 14px 18px 20px;
   display: flex;
@@ -2102,6 +2116,8 @@ a {
   max-height: 80vh;
 }
 .modal-head {
+  /* Fixed header inside the column-flex .modal; the body is the growing child. */
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2113,6 +2129,11 @@ a {
   font-size: 16px;
 }
 .versions-body {
+  /* Fill remaining modal height and scroll. `min-height: 0` is required so this
+   * flex child can shrink below its content height inside the max-height-capped,
+   * overflow:hidden .modal instead of overflowing it (see .lib-body). */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 18px 18px;
 }
