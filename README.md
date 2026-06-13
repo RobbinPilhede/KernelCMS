@@ -236,6 +236,9 @@ that is persisted at write time and therefore sortable and filterable:
   relationship, and upload.
 - Reverse relationships through a virtual `join` field, plus polymorphic
   relationships with `relationTo: ['a', 'b']`.
+- Referential integrity per relationship/upload field: `onDelete: 'setNull' | 'cascade'
+| 'restrict'` (with cycle protection) decides what happens to references when a
+  document is deleted.
 - Presentational layout containers: rows, tabs, and UI slots.
 - Computed (virtual) fields: `virtual: true` + `compute({ doc, req })`, derived on read,
   never stored, read-only in the admin.
@@ -260,6 +263,9 @@ that is persisted at write time and therefore sortable and filterable:
   the request's locale at the boundary.
 - A fully typed in-process Local API with the exact same operations.
 - Versions and drafts, including a draft and publish lifecycle and scheduled publishing.
+  Publishing is a distinct, access-controlled transition: `access.publish` gates the
+  draft → published edge separately from `update` (and falls back to `update` when
+  omitted, so existing behavior is unchanged).
 
 ### Auth
 
@@ -272,6 +278,16 @@ that is persisted at write time and therefore sortable and filterable:
   adapter (console, memory, or HTTP, all dependency-free).
 - TOTP two-factor auth, implemented on `node:crypto` with no extra dependencies.
 - OAuth sign-in through a small provider adapter, with Google and GitHub presets.
+- An AI agent is a first-class, access-controlled principal: register
+  `agents: [{ id, token, roles, fieldScope }]` and it authenticates with its own
+  constant-time-checked token, is scoped by a field allow/deny list, is **draft-only**
+  (it physically cannot publish — a hard engine guarantee, never `overrideAccess`), and
+  is attributed in version history. It flows through the same per-operation access
+  pipeline as a human.
+- The kernel serves over the Model Context Protocol (`@kernel/mcp`): CRUD, `count`,
+  version-history, global, and opt-in custom-endpoint tools are auto-generated from the
+  same descriptor as the OpenAPI spec and gated by your access rules. See
+  [Go further](#go-further) for the CLI and transports.
 
 ### Media
 
@@ -334,6 +350,7 @@ storage, email, image processor, and auth all swappable adapters.
 | `@kernel/db-postgres`   | Pooled PostgreSQL adapter.                                                                             |
 | `@kernel/server`        | Web-standard `Request` to `Response` REST handler plus a Node http adapter.                            |
 | `@kernel/graphql`       | GraphQL schema generation and executor.                                                                |
+| `@kernel/mcp`           | MCP server: agent-safe, access-gated tools auto-generated from your model.                             |
 | `@kernel/client`        | Typed fetch client.                                                                                    |
 | `@kernel/cli`           | The `kernel` command-line tool.                                                                        |
 | `@kernel/storage`       | Storage adapter contract with local, S3 or R2, and memory adapters, plus the image-processor contract. |
@@ -376,6 +393,10 @@ pnpm kernel -- --help                 # the CLI
   or system routes.
 - Computed fields are evaluated after field-read access is applied, so they cannot leak
   a value the caller is not allowed to read.
+- AI agents are scoped, draft-only principals on the same access pipeline: every call
+  runs the collection's access rules with the agent's `fieldScope`, never sets
+  `overrideAccess`, and cannot publish. The MCP layer enforces nothing on its own — the
+  guarantees live in `@kernel/core`.
 - Set `KERNEL_SECRET` in any non-local environment. For production CORS, use an explicit
   origin allow-list rather than a wildcard with credentials.
 
