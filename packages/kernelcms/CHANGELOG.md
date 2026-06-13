@@ -1,5 +1,17 @@
 # kernelcms
 
+## 0.11.0
+
+### Minor Changes
+
+- **Migrations you can trust in production: preview, rollback, backfill, zero-downtime.** "I'm scared to change my schema" is the quiet reason teams stay on a CMS. This removes the fear.
+  - **Dry-run preview.** `kernel migrate --dry-run` (alias `migrate:plan`) prints the exact SQL it _would_ run — CREATE TABLE / ALTER ADD COLUMN / CREATE INDEX — alongside the risk-classified change plan, and touches the database **zero** times. See precisely what will happen before it happens.
+  - **Journaled rollback.** Every applied migration is recorded in a `_migrations` journal. `kernel migrate:rollback [--steps N] [--dry-run] [--force]` reverses the last migration — dropping exactly (and only) the tables and columns that migration added, in reverse order. It refuses to run without `--force`, and the safety invariant is absolute: it can only ever drop what it recorded as added, and **never** a system table. Rollback is wrapped in a transaction — a failure rolls back the rollback, leaving the journal entry intact to retry.
+  - **Backfills.** `kernel backfill --collection posts --field tier --value free` (or a computed `set(doc)`) populates a new field across **every** existing row — drafts included — in batches. This is the missing piece of the safe online change: add a nullable column → backfill it → tighten it to required, with no downtime and no half-populated rows.
+  - **Zero-downtime classification.** Real migrations run in a single transaction (all-or-nothing), and every change is labeled online-safe or not (add-nullable-column / create-table / create-index are safe to run live; add-required-column, drops, and retypes need the expand→backfill→contract flow), with the guidance printed right in the plan.
+
+  Backfill and rollback run as trusted maintenance with no access bypass into user data, reject system/authority fields and prototype-pollution keys, and quote every identifier (no SQL injection via table/column names). Red-teamed to **Risk: LOW** (33 attack vectors, zero bypasses — including forged-journal attempts to drop system tables). SQLite verified end-to-end; Postgres implemented by parity. Backward-compatible: existing `migrate`/`migrate:status`/`migrate:snapshot` are unchanged.
+
 ## 0.10.0
 
 ### Minor Changes
