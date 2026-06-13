@@ -18,6 +18,8 @@ import type {
   HealthStatus,
   KernelSchema,
   Logger,
+  MigrateOptions,
+  MigrationJournalEntry,
   MigrationReport,
   PaginatedResult,
   Row,
@@ -25,6 +27,7 @@ import type {
   Where,
   WhereCondition,
 } from '@kernel/db'
+import { type SqlDialect, downStatementsFor } from '@kernel/core'
 
 const { Pool } = pg
 
@@ -147,48 +150,110 @@ class PostgresAdapter implements DatabaseAdapter {
     return this.allowedCols.get(table) ?? new Set(['id'])
   }
 
-  async migrate(schema: KernelSchema): Promise<MigrationReport> {
+  async migrate(schema: KernelSchema, opts?: MigrateOptions): Promise<MigrationReport> {
     const pool = this.requirePool()
+    const dryRun = opts?.dryRun === true
     const report: MigrationReport = { createdTables: [], addedColumns: [], statements: [] }
-    // Registering up front means reads/writes resolve tables even mid-migration.
+    // Registering up front means reads/writes resolve tables even mid-migration (and a
+    // dry run still leaves the table registry usable for subsequent reads).
     this.register(schema)
 
-    for (const table of schema.tables) {
-      const existing = await pool.query(
-        `SELECT column_name FROM information_schema.columns
-         WHERE table_schema = current_schema() AND table_name = $1`,
-        [table.table],
-      )
+    // Atomicity: run the whole migration on a single checked-out client inside one
+    // transaction, so a mid-run failure rolls back to the pre-migration schema (Postgres
+    // DDL is transactional). A dry run opens no transaction and executes nothing.
+    const client = dryRun ? null : await pool.connect()
+    // Reads (information_schema lookups) run on the pool in a dry run, on the client
+    // otherwise, so they observe changes made earlier in the same transaction.
+    const reader: Queryable = (client as unknown as Queryable) ?? (pool as unknown as Queryable)
+    try {
+      if (client) await client.query('BEGIN')
+      for (const table of schema.tables) {
+        const existing = await reader.query(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_schema = current_schema() AND table_name = $1`,
+          [table.table],
+        )
 
-      if (existing.rows.length === 0) {
-        const sql = this.createTableSql(table)
-        await pool.query(sql)
-        report.createdTables.push(table.table)
-        report.statements.push(sql)
-      } else {
-        const have = new Set(existing.rows.map((r) => String(r.column_name)))
+        if (existing.rows.length === 0) {
+          const sql = this.createTableSql(table)
+          if (client) await client.query(sql)
+          report.createdTables.push(table.table)
+          report.statements.push(sql)
+        } else {
+          const have = new Set(existing.rows.map((r) => String(r.column_name)))
+          for (const col of table.columns) {
+            if (!have.has(col.name)) {
+              const sql = `ALTER TABLE ${quote(table.table)} ADD COLUMN ${this.columnSql(col)};`
+              if (client) await client.query(sql)
+              report.addedColumns.push(`${table.table}.${col.name}`)
+              report.statements.push(sql)
+            }
+          }
+        }
+
         for (const col of table.columns) {
-          if (!have.has(col.name)) {
-            const sql = `ALTER TABLE ${quote(table.table)} ADD COLUMN ${this.columnSql(col)};`
-            await pool.query(sql)
-            report.addedColumns.push(`${table.table}.${col.name}`)
+          if (col.indexed && !col.unique) {
+            const idx = `idx_${table.table}_${col.name}`
+            const sql = `CREATE INDEX IF NOT EXISTS ${quote(idx)} ON ${quote(table.table)} (${quote(col.name)});`
+            if (client) await client.query(sql)
             report.statements.push(sql)
           }
         }
       }
-
-      for (const col of table.columns) {
-        if (col.indexed && !col.unique) {
-          const idx = `idx_${table.table}_${col.name}`
-          await pool.query(`CREATE INDEX IF NOT EXISTS ${quote(idx)} ON ${quote(table.table)} (${quote(col.name)});`)
+      if (client) await client.query('COMMIT')
+    } catch (err) {
+      if (client) {
+        try {
+          await client.query('ROLLBACK')
+        } catch {
+          // The connection may be broken; the original error is what matters.
         }
       }
+      throw err
+    } finally {
+      client?.release()
     }
 
     this.logger?.info(
-      `migrated: ${report.createdTables.length} table(s) created, ${report.addedColumns.length} column(s) added`,
+      `${dryRun ? 'migrate (dry run): ' : 'migrated: '}${report.createdTables.length} table(s) ${
+        dryRun ? 'would be created' : 'created'
+      }, ${report.addedColumns.length} column(s) ${dryRun ? 'would be added' : 'added'}`,
     )
     return report
+  }
+
+  /** Postgres DROP-statement dialect for rollback. Postgres supports
+   *  `ALTER TABLE … DROP COLUMN` and `DROP INDEX IF EXISTS`. Identifiers are validated
+   *  by `quote`. */
+  private readonly dialect: SqlDialect = {
+    quote,
+    dropIndex: (table, column) => `DROP INDEX IF EXISTS ${quote(`idx_${table}_${column}`)};`,
+    dropColumn: (table, column) => `ALTER TABLE ${quote(table)} DROP COLUMN IF EXISTS ${quote(column)};`,
+    dropTable: (table) => `DROP TABLE IF EXISTS ${quote(table)};`,
+  }
+
+  async rollback(entries: MigrationJournalEntry[], opts?: MigrateOptions): Promise<{ statements: string[] }> {
+    const dryRun = opts?.dryRun === true
+    // Inverse SQL is generated by core (safety-checked) with this adapter's dialect.
+    const statements = entries.flatMap((entry) => downStatementsFor(entry, this.dialect))
+    if (!dryRun && statements.length > 0) {
+      const client = await this.requirePool().connect()
+      try {
+        await client.query('BEGIN')
+        for (const sql of statements) await client.query(sql)
+        await client.query('COMMIT')
+      } catch (err) {
+        try {
+          await client.query('ROLLBACK')
+        } catch {
+          // ignore — surface the original error
+        }
+        throw err
+      } finally {
+        client.release()
+      }
+    }
+    return { statements }
   }
 
   private columnSql(col: ColumnSchema): string {

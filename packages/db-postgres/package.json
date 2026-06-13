@@ -15,6 +15,7 @@
     "build": "tsup src/index.ts --format esm --dts --clean"
   },
   "dependencies": {
+    "@kernel/core": "workspace:*",
     "@kernel/db": "workspace:*",
     "pg": "^8.13.1"
   },

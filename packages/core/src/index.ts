@@ -5,7 +5,15 @@ export { defineEndpoint, matchEndpoint, parseEndpointInput, invokeEndpoint } fro
 export type { InvokeEndpointArgs } from './endpoints'
 export { initKernel, createLogger } from './kernel'
 export type { InitOptions } from './kernel'
-export { compileSchema, tableForCollection, tableForGlobal, GLOBAL_ROW_ID, AUDIT_TABLE, REVIEWS_TABLE } from './schema'
+export {
+  compileSchema,
+  tableForCollection,
+  tableForGlobal,
+  GLOBAL_ROW_ID,
+  AUDIT_TABLE,
+  REVIEWS_TABLE,
+  MIGRATIONS_TABLE,
+} from './schema'
 export { generateTypes } from './codegen'
 export type { CodegenInput } from './codegen'
 export { parseSort, mergeWhere, matchesWhere } from './query'
@@ -96,8 +104,8 @@ export {
 } from './plugins'
 export type { KernelPlugin, PluginContext, PluginExtensions, ModuleConfig } from './plugins'
 
-export { diffSchema, summarizePlan, EMPTY_SCHEMA } from './migrations'
-export type { MigrationPlan, MigrationOp, ChangeClass } from './migrations'
+export { diffSchema, summarizePlan, EMPTY_SCHEMA, isOnlineSafe, downStatementsFor, indexNameFor } from './migrations'
+export type { MigrationPlan, MigrationOp, ChangeClass, MigrationJournalEntry, SqlDialect } from './migrations'
 
 export { runDoctor, formatDoctorReport } from './doctor'
 export type { Diagnostic, DiagnosticLevel, DoctorReport, DoctorOptions } from './doctor'
@@ -128,6 +136,7 @@ export type {
   WhereCondition,
   SortSpec,
   MigrationReport,
+  MigrateOptions,
   Logger,
   Adapter,
   AdapterContext,

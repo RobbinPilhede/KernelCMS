@@ -107,9 +107,12 @@ Usage: kernel <command> [options]
 
 Commands:
   init               Scaffold a starter kernel.config.ts in the current directory
-  migrate            Create/update database tables from the config schema
-  migrate:status     Diff the config schema against the saved snapshot (risk-classified)
+  migrate            Create/update database tables from the config schema (--dry-run to preview SQL)
+  migrate:plan       Preview the exact SQL a migrate would run, without touching the DB (alias: migrate --dry-run)
+  migrate:rollback   Undo the last migration(s) — drops added columns/tables ([--steps N] [--dry-run] [--force])
+  migrate:status     Diff the config schema against the saved snapshot (risk + online-safety classified)
   migrate:snapshot   Save the compiled schema to kernel/schema-snapshot.json
+  backfill           Set a field across existing rows — --collection <slug> --field <name> --value <v> [--dry-run]
   info               Print a product overview of this KernelCMS instance
   doctor             Check the config + environment for misconfigurations
   import             Import content OUT of another CMS — --from <source> (dry-run by default)
@@ -135,6 +138,12 @@ Options:
   --agent <id>       Agent principal for "mcp" stdio (required if config has >1 agent)
   --http             Serve "mcp" over HTTP (multi-agent; principals come from the request token)
   --host <host>      Host to bind for "mcp --http" (default: 127.0.0.1)
+  --dry-run          "migrate"/"migrate:rollback"/"backfill": compute without writing
+  --force            "migrate:rollback": actually execute the (destructive) rollback
+  --steps <n>        "migrate:rollback": how many migrations to undo (default 1)
+  --collection <s>   "backfill": target collection slug
+  --field <name>     "backfill": field to populate
+  --value <v>        "backfill": value (parsed as JSON if it parses, else a string)
 `
 
 export async function run(argv: string[]): Promise<void> {
@@ -190,28 +199,128 @@ export async function run(argv: string[]): Promise<void> {
       break
     }
 
+    case 'migrate:plan':
     case 'migrate': {
       const { config, path } = await loadConfig(flags)
       const kernel = await initKernel(config)
-      // The bundled adapters apply additive changes only — they create tables and
-      // add columns, but never drop or retype (no data loss by surprise). If a
-      // snapshot exists, surface destructive drift so it isn't silently skipped.
+      // `--dry-run` (or the `migrate:plan` alias) previews the EXACT SQL without
+      // touching the database. The bundled adapters apply additive changes only —
+      // they create tables and add columns, but never drop or retype (no data loss by
+      // surprise). If a snapshot exists, surface destructive drift either way so it
+      // isn't silently skipped.
+      const dryRun = command === 'migrate:plan' || flags['dry-run'] === true || flags.plan === true
       const snapshotPath = resolve(dirname(path), 'kernel', 'schema-snapshot.json')
+      const current: KernelSchema = existsSync(snapshotPath)
+        ? (JSON.parse(readFileSync(snapshotPath, 'utf8')) as KernelSchema)
+        : EMPTY_SCHEMA
+      const plan = diffSchema(current, kernel.schema)
+      if (dryRun) {
+        console.log('— Migration plan (risk + online-safety classified) —')
+        console.log(summarizePlan(plan))
+        const report = await kernel.migrate({ dryRun: true })
+        console.log('\n— SQL that WOULD run (nothing was executed) —')
+        console.log(report.statements.length ? report.statements.join('\n') : '  (no statements — schema up to date)')
+        console.log(
+          `\nDry run: ${report.createdTables.length} table(s) would be created, ` +
+            `${report.addedColumns.length} column(s) would be added. The database was NOT modified.`,
+        )
+        if (plan.hasDestructive) {
+          console.log(
+            '\n⚠  Destructive changes are shown above but the additive migrate never applies them — ' +
+              'run them by hand (expand → backfill → contract for online safety).',
+          )
+        }
+        await kernel.destroy()
+        break
+      }
       if (existsSync(snapshotPath)) {
-        const current = JSON.parse(readFileSync(snapshotPath, 'utf8')) as KernelSchema
-        const destructive = diffSchema(current, kernel.schema).ops.filter((o) => o.class === 'destructive')
+        const destructive = plan.ops.filter((o) => o.class === 'destructive')
         if (destructive.length) {
           console.log('⚠  Destructive changes detected — NOT applied automatically:')
-          console.log(summarizePlan({ ops: destructive, hasDestructive: true, empty: false }))
+          console.log(summarizePlan({ ops: destructive, hasDestructive: true, onlineSafe: false, empty: false }))
           console.log('   Apply these by hand before relying on the new schema, then re-run migrate:snapshot.\n')
         }
       }
-      const report = await kernel.db.migrate(kernel.schema)
+      // Through kernel.migrate so a `_migrations` journal row is recorded (enables rollback).
+      const report = await kernel.migrate()
       console.log(
         `✓ Migration complete — ${report.createdTables.length} table(s) created, ${report.addedColumns.length} column(s) added.`,
       )
       if (report.createdTables.length) console.log(`  Created: ${report.createdTables.join(', ')}`)
       console.log(`  Tip: run "kernel migrate:snapshot" to record this schema for future drift checks.`)
+      await kernel.destroy()
+      break
+    }
+
+    case 'migrate:rollback': {
+      // Rollback DROPS schema (the columns/tables the last migration added), so it is
+      // destructive by definition and requires an explicit --force to actually run.
+      // Without --force it prints the inverse SQL and refuses.
+      const { config } = await loadConfig(flags)
+      const kernel = await initKernel(config)
+      const steps = typeof flags.steps === 'string' ? Math.max(1, Number(flags.steps) || 1) : 1
+      const force = flags.force === true
+      const dryRun = flags['dry-run'] === true || !force
+      const result = await kernel.rollbackMigration({ steps, dryRun })
+      if (result.reverted.length === 0) {
+        console.log('Nothing to roll back — the migration journal is empty.')
+        await kernel.destroy()
+        break
+      }
+      console.log(
+        `${dryRun ? '— Rollback plan (NOT executed) —' : '✓ Rolled back'} ` +
+          `${result.reverted.length} migration(s) (newest-first).`,
+      )
+      console.log('Inverse SQL:')
+      console.log(result.statements.length ? '  ' + result.statements.join('\n  ') : '  (no statements)')
+      if (dryRun && !force) {
+        console.log(
+          '\n⚠  This will DROP the columns/tables listed above and CANNOT be undone. ' +
+            'Re-run with --force to execute:\n   kernel migrate:rollback' +
+            (steps > 1 ? ` --steps ${steps}` : '') +
+            ' --force',
+        )
+      }
+      await kernel.destroy()
+      break
+    }
+
+    case 'backfill': {
+      // Populate a (typically newly-added, nullable) field across existing rows — the
+      // middle step of the safe online sequence: add nullable column → backfill →
+      // tighten to required in a later migration.
+      const { config } = await loadConfig(flags)
+      const collection = typeof flags.collection === 'string' ? flags.collection : undefined
+      const fieldName = typeof flags.field === 'string' ? flags.field : undefined
+      if (!collection || !fieldName) {
+        console.error('Usage: kernel backfill --collection <slug> --field <name> --value <v> [--dry-run]')
+        process.exitCode = 1
+        break
+      }
+      if (!('value' in flags)) {
+        console.error('Pass --value <v> (parsed as JSON if it parses, else treated as a string).')
+        process.exitCode = 1
+        break
+      }
+      // --value is parsed as JSON when it parses (so 42, true, null, ["a"] keep their
+      // type), otherwise treated as a literal string.
+      const raw = flags.value
+      let value: unknown = raw
+      if (typeof raw === 'string') {
+        try {
+          value = JSON.parse(raw)
+        } catch {
+          value = raw
+        }
+      }
+      const dryRun = flags['dry-run'] === true
+      const kernel = await initKernel(config)
+      const result = await kernel.backfill({ collection, field: fieldName, value, dryRun })
+      console.log(
+        dryRun
+          ? `Dry run: ${result.matched} document(s) match and WOULD be backfilled (nothing written).`
+          : `✓ Backfilled ${result.updated}/${result.matched} document(s) — set ${collection}.${fieldName}.`,
+      )
       await kernel.destroy()
       break
     }

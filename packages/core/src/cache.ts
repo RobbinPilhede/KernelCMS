@@ -206,7 +206,9 @@ export function createCachedDb(db: DatabaseAdapter, cache: CacheAdapter, opts: C
     init: (ctx) => db.init(ctx),
     health: () => db.health(),
     destroy: () => db.destroy(),
-    migrate: (schema) => db.migrate(schema),
+    ...(db.register ? { register: (schema) => db.register!(schema) } : {}),
+    migrate: (schema, opts) => db.migrate(schema, opts),
+    ...(db.rollback ? { rollback: (entries, opts) => db.rollback!(entries, opts) } : {}),
 
     find: (args: FindArgs): Promise<PaginatedResult<Row>> =>
       readThrough(

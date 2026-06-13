@@ -137,6 +137,27 @@ export interface MigrationReport {
   statements: string[]
 }
 
+export interface MigrateOptions {
+  /** Compute the migration (statements + report) without executing anything. The
+   *  database is left completely untouched — use it to preview the exact SQL. */
+  dryRun?: boolean
+}
+
+/** One recorded migration, as persisted in the `_migrations` journal table. A rollback
+ *  reads these newest-first and inverts ONLY what each one records as added. The storage
+ *  contract owns this shape so adapters can implement `rollback` without importing core. */
+export interface MigrationJournalEntry {
+  id: string
+  /** ISO timestamp the migration was applied. */
+  at: string
+  /** Tables this migration created (DROP TABLE on rollback). */
+  createdTables: string[]
+  /** `table.column` names this migration added (ALTER … DROP COLUMN on rollback). */
+  addedColumns: string[]
+  /** The exact statements that were executed (recorded for audit/preview). */
+  statements: string[]
+}
+
 // ---------------------------------------------------------------------------
 // Database adapter contract
 // ---------------------------------------------------------------------------
@@ -160,8 +181,18 @@ export interface DatabaseAdapter extends Adapter {
    * adapters; the bundled adapters implement it and `initKernel` calls it on boot.
    */
   register?(schema: KernelSchema): void
-  /** Diff the schema against the live database and apply the changes. */
-  migrate(schema: KernelSchema): Promise<MigrationReport>
+  /** Diff the schema against the live database and apply the changes. When
+   *  `opts.dryRun` is set, COMPUTE the statements/report but execute nothing — no
+   *  table is created, no column added, no index built (the database is untouched).
+   *  A dry run still registers the table registry so reads resolve. */
+  migrate(schema: KernelSchema, opts?: MigrateOptions): Promise<MigrationReport>
+  /**
+   * Apply the INVERSE of one or more recorded migrations: drop the columns and tables
+   * each entry added (per-adapter SQL dialect), atomically in a single transaction.
+   * Returns the exact statements run (or that WOULD run, when `opts.dryRun`). Only ever
+   * drops what the entries record as added; never a `_*` system table. Optional for
+   * third-party adapters — the bundled adapters implement it. */
+  rollback?(entries: MigrationJournalEntry[], opts?: MigrateOptions): Promise<{ statements: string[] }>
   find(args: FindArgs): Promise<PaginatedResult<Row>>
   findByID(args: { collection: string; id: string }): Promise<Row | null>
   create(args: { collection: string; data: Row }): Promise<Row>

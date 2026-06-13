@@ -1,17 +1,47 @@
-import type { DatabaseAdapter, Logger } from '@kernel/db'
-import type { Doc, Kernel, KernelConfig } from './types'
+import type { DatabaseAdapter, Logger, MigrationJournalEntry, MigrationReport } from '@kernel/db'
+import { randomUUID } from 'node:crypto'
+import type {
+  BackfillOptions,
+  BackfillResult,
+  Doc,
+  Kernel,
+  KernelConfig,
+  MigrateRunOptions,
+  RollbackOptions,
+  RollbackResult,
+} from './types'
 import { sanitizeConfig } from './config'
-import { compileSchema } from './schema'
+import { compileSchema, MIGRATIONS_TABLE } from './schema'
 import { createOperations } from './operations'
 import { createCachedDb } from './cache'
 import { CACHE_SLUG, JOBS_SLUG } from './config'
-import { isKernelError } from './errors'
+import { BadRequestError, isKernelError } from './errors'
 import { attachWebhooks } from './webhooks'
 import { attachSearch } from './search'
 import { applyPlugins } from './plugins'
 import { ROLES_TABLE, cloneRoleDef } from './rbac'
+import { storageFields } from './fields'
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const
+
+// Keys a backfill may never target: prototype-pollution vectors plus server-owned
+// system columns. The positive check (must be a real storage field) already excludes
+// these, but listing them keeps the guard explicit and fails closed.
+const FORBIDDEN_BACKFILL_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+  'id',
+  'createdAt',
+  'updatedAt',
+  '_status',
+  '_scheduled_at',
+])
+
+/** Coerce a journal column (stored as JSON, decoded to an array) into a string[]. */
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((v) => String(v)) : []
+}
 
 export function createLogger(level: keyof typeof LEVELS = 'info'): Logger {
   const min = LEVELS[level]
@@ -181,8 +211,128 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     findReviewQueue: ops.findReviewQueue,
     submitReview: ops.submitReview,
     composePage: ops.composePage,
-    async migrate() {
-      await sanitized.db.migrate(schema)
+    async migrate(opts?: MigrateRunOptions): Promise<MigrationReport> {
+      const dryRun = opts?.dryRun === true
+      const report = await sanitized.db.migrate(schema, { dryRun })
+      // Record ONE journal row per real, non-empty migration — the single chokepoint
+      // so every adapter gets journaling for free. A dry run writes nothing; an empty
+      // migration (no tables created, no columns added) is skipped so rollback never
+      // sees a no-op entry. The journal row is itself a normal insert into the always-
+      // provisioned `_migrations` table.
+      const applied = report.createdTables.length > 0 || report.addedColumns.length > 0
+      if (!dryRun && applied) {
+        try {
+          await sanitized.db.create({
+            collection: MIGRATIONS_TABLE,
+            data: {
+              id: randomUUID(),
+              at: new Date().toISOString(),
+              createdTables: report.createdTables,
+              addedColumns: report.addedColumns,
+              statements: report.statements,
+            },
+          })
+        } catch (err) {
+          // The schema change already succeeded; a journal-write failure must not
+          // unwind it. Warn loudly — rollback won't be able to undo this migration.
+          logger.warn('Migration applied but the journal row could not be written (rollback unavailable for it)', err)
+        }
+      }
+      return report
+    },
+    async rollbackMigration(opts?: RollbackOptions): Promise<RollbackResult> {
+      const dryRun = opts?.dryRun === true
+      // Clamp steps to a finite positive integer — a NaN/Infinity would otherwise reach
+      // the adapter as `limit` and throw an opaque datatype error before any drop.
+      const rawSteps = Math.floor(Number(opts?.steps))
+      const steps = Number.isFinite(rawSteps) ? Math.max(1, rawSteps) : 1
+      if (typeof sanitized.db.rollback !== 'function') {
+        throw new BadRequestError('The configured database adapter does not support rollback.')
+      }
+      // Read the last `steps` journal rows, newest-first. These are the ONLY source of
+      // truth for what may be dropped — rollback never infers drops from a schema diff.
+      const found = await sanitized.db.find({
+        collection: MIGRATIONS_TABLE,
+        sort: [{ field: 'at', direction: 'desc' }],
+        limit: steps,
+        page: 1,
+      })
+      const entries: MigrationJournalEntry[] = found.docs.map((row) => ({
+        id: String(row.id),
+        at: String(row.at ?? ''),
+        createdTables: asStringArray(row.createdTables),
+        addedColumns: asStringArray(row.addedColumns),
+        statements: asStringArray(row.statements),
+      }))
+      const { statements } = await sanitized.db.rollback(entries, { dryRun })
+      // Consume the journal rows only after a real (non-dry-run) rollback succeeds, so a
+      // dry run leaves the journal intact and a failed drop leaves the entry to retry.
+      if (!dryRun) {
+        for (const entry of entries) {
+          await sanitized.db.delete({ collection: MIGRATIONS_TABLE, id: entry.id })
+        }
+      }
+      return { reverted: entries.map((e) => e.id), statements }
+    },
+    async backfill<T extends Doc = Doc>(opts: BackfillOptions<T>): Promise<BackfillResult> {
+      const collection = sanitized.collectionsBySlug[opts.collection]
+      if (!collection) throw new BadRequestError(`Unknown collection "${opts.collection}".`)
+      // Validate the target field: it must be a real, storage-bearing field of the
+      // collection. This rejects system/internal columns (id, _status, timestamps, …)
+      // and prototype-pollution keys, so a backfill can never clobber server-owned state.
+      const field = opts.field
+      if (FORBIDDEN_BACKFILL_KEYS.has(field) || !storageFields(collection.fields).some((f) => f.name === field)) {
+        throw new BadRequestError(`"${field}" is not a writable field of "${opts.collection}".`)
+      }
+      if (opts.value === undefined && typeof opts.set !== 'function') {
+        throw new BadRequestError('Provide either `value` or a `set(doc)` function to backfill.')
+      }
+      const dryRun = opts.dryRun === true
+      const batchSize = Math.min(Math.max(Math.floor(opts.batchSize ?? 500), 1), 1000)
+
+      // Count up front for the `matched` total; on a dry run that's the whole answer.
+      const matched = await ops.count({ collection: opts.collection, where: opts.where, overrideAccess: true })
+      if (dryRun) return { matched, updated: 0 }
+
+      // Two phases, so the write phase can't perturb its own pagination: first read every
+      // matching doc id by paging the STABLE filter (a backfill update may or may not keep
+      // a row in the filter, so paging WHILE writing could skip or revisit). Then update
+      // each id via the trusted maintenance path. Memory is bounded by `matched`, itself a
+      // count the operator chose to backfill.
+      const targets: T[] = []
+      let page = 1
+      for (;;) {
+        const result = await ops.find<T>({
+          collection: opts.collection,
+          where: opts.where,
+          sort: 'id',
+          limit: batchSize,
+          page,
+          // Backfill is maintenance over ALL existing rows — include drafts, which the
+          // normal read path hides. Without this, draft rows are silently skipped and
+          // the add→backfill→tighten-to-NOT-NULL sequence breaks on the still-null drafts.
+          draft: true,
+          overrideAccess: true,
+          req: opts.req,
+        })
+        targets.push(...result.docs)
+        if (!result.hasNextPage || result.docs.length === 0) break
+        page++
+      }
+
+      let updated = 0
+      for (const doc of targets) {
+        const next = typeof opts.set === 'function' ? opts.set(doc) : opts.value
+        const res = await ops.update({
+          collection: opts.collection,
+          id: doc.id,
+          data: { [field]: next },
+          overrideAccess: true,
+          req: opts.req,
+        })
+        if (res) updated++
+      }
+      return { matched, updated }
     },
     async destroy() {
       if (sanitized.cache) await sanitized.cache.destroy()

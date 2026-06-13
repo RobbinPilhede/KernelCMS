@@ -186,6 +186,9 @@ importers:
 
   packages/db-postgres:
     dependencies:
+      '@kernel/core':
+        specifier: workspace:*
+        version: link:../core
       '@kernel/db':
         specifier: workspace:*
         version: link:../db

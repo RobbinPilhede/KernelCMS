@@ -36,6 +36,10 @@ export const AUDIT_TABLE = '_audit'
 /** Storage table holding agent-review decisions (the human approval inbox). */
 export const REVIEWS_TABLE = '_reviews'
 
+/** Storage table holding the migration journal — one row per applied migration,
+ *  recording exactly what was created so a rollback can invert only those changes. */
+export const MIGRATIONS_TABLE = '_migrations'
+
 /** Compile the sanitized config into the storage-facing schema for the adapter. */
 export function compileSchema(config: SanitizedConfig): KernelSchema {
   const tables: TableSchema[] = []
@@ -144,6 +148,23 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
       singleton: false,
     })
   }
+
+  // Migration journal: one row per applied (non-empty, non-dry-run) migration,
+  // recording the createdTables/addedColumns/statements so a rollback can invert
+  // ONLY what this tool added. Always provisioned — like a system table — so the
+  // engine can record/read it on any boot without a config opt-in.
+  tables.push({
+    table: MIGRATIONS_TABLE,
+    slug: MIGRATIONS_TABLE,
+    columns: [
+      { name: 'at', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
+      { name: 'createdTables', type: 'json', required: false, unique: false, indexed: false, localized: false },
+      { name: 'addedColumns', type: 'json', required: false, unique: false, indexed: false, localized: false },
+      { name: 'statements', type: 'json', required: false, unique: false, indexed: false, localized: false },
+    ],
+    timestamps: true,
+    singleton: false,
+  })
 
   for (const global of config.globals) {
     tables.push({

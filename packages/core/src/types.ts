@@ -3,6 +3,7 @@ import type {
   DatabaseAdapter,
   KernelSchema,
   Logger,
+  MigrationReport,
   PaginatedResult,
   Row,
   SearchAdapter,
@@ -1056,6 +1057,56 @@ export interface AuthResult {
   exp: number
 }
 
+// ---------------------------------------------------------------------------
+// Migration: dry-run, rollback, backfill
+// ---------------------------------------------------------------------------
+
+export interface MigrateRunOptions {
+  /** Compute the migration (the exact statements + report) without executing anything.
+   *  The database is left completely untouched — preview the SQL before applying it. */
+  dryRun?: boolean
+}
+
+export interface RollbackOptions {
+  /** How many recorded migrations to undo, newest-first. Default 1. */
+  steps?: number
+  /** Show the inverse SQL (DROP statements) WITHOUT executing it or consuming the
+   *  journal rows. Use it to preview a rollback before committing to it. */
+  dryRun?: boolean
+}
+
+export interface RollbackResult {
+  /** Journal entry ids that were (or would be) reverted, newest-first. */
+  reverted: string[]
+  /** The exact inverse statements run (or that would run on a dry run). */
+  statements: string[]
+}
+
+export interface BackfillOptions<T extends Doc = Doc> extends OperationBase {
+  /** Collection slug whose rows are backfilled. */
+  collection: string
+  /** The field to populate. Must be a real, storage-bearing field of the collection;
+   *  system/internal columns are rejected. */
+  field: string
+  /** A constant value to set on every matched row. Mutually exclusive with `set`. */
+  value?: unknown
+  /** Compute the value per document (overrides `value`). Receives the current doc. */
+  set?: (doc: T) => unknown
+  /** Restrict which rows are backfilled. Omit to backfill the whole collection. */
+  where?: Where
+  /** Rows updated per batch. Default 500. */
+  batchSize?: number
+  /** Report `matched` without writing anything. */
+  dryRun?: boolean
+}
+
+export interface BackfillResult {
+  /** How many documents matched the filter (and would be / were updated). */
+  matched: number
+  /** How many documents were actually written (0 on a dry run). */
+  updated: number
+}
+
 export interface Kernel {
   readonly config: SanitizedConfig
   readonly db: DatabaseAdapter
@@ -1141,7 +1192,22 @@ export interface Kernel {
    *  normal `create()` path (agent draft-only brake + field scope + access all apply),
    *  so it lands in the review queue. Rejects unknown block types / fields. */
   composePage<T extends Doc = Doc>(opts: ComposePageOptions): Promise<T>
-  migrate(): Promise<void>
+  /** Apply the schema to the database (create tables / add columns / build indexes),
+   *  recording a `_migrations` journal row when anything is applied. Pass
+   *  `{ dryRun: true }` to compute the exact SQL it WOULD run and return the report
+   *  WITHOUT touching the database or writing a journal row. */
+  migrate(opts?: MigrateRunOptions): Promise<MigrationReport>
+  /** Undo the last `steps` recorded migrations (newest-first): drop the columns and
+   *  tables they added, atomically, then consume those journal rows. Destructive by
+   *  definition — it drops schema. `{ dryRun: true }` returns the inverse SQL without
+   *  executing or consuming anything. Only ever drops what the journal records as added;
+   *  never a `_*` system table. */
+  rollbackMigration(opts?: RollbackOptions): Promise<RollbackResult>
+  /** Populate a field across existing documents — the safe online sequence's middle
+   *  step (add a nullable field → backfill it → make it required). Batches over matched
+   *  rows via trusted (`overrideAccess`) updates. `{ dryRun: true }` reports `matched`
+   *  without writing. */
+  backfill<T extends Doc = Doc>(opts: BackfillOptions<T>): Promise<BackfillResult>
   destroy(): Promise<void>
 }
 

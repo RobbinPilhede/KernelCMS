@@ -13,6 +13,8 @@ import type {
   HealthStatus,
   KernelSchema,
   Logger,
+  MigrateOptions,
+  MigrationJournalEntry,
   MigrationReport,
   PaginatedResult,
   Row,
@@ -20,6 +22,7 @@ import type {
   Where,
   WhereCondition,
 } from '@kernel/db'
+import { type SqlDialect, downStatementsFor } from '@kernel/core'
 
 // node:sqlite is a recent built-in; load it via createRequire so bundlers
 // (Vite/esbuild) never try to statically resolve the specifier.
@@ -133,43 +136,101 @@ class SQLiteAdapter implements DatabaseAdapter {
     }
   }
 
-  async migrate(schema: KernelSchema): Promise<MigrationReport> {
+  async migrate(schema: KernelSchema, opts?: MigrateOptions): Promise<MigrationReport> {
     const db = this.conn()
+    const dryRun = opts?.dryRun === true
     const report: MigrationReport = { createdTables: [], addedColumns: [], statements: [] }
-    // Registering up front means reads/writes resolve tables even mid-migration.
+    // Registering up front means reads/writes resolve tables even mid-migration (and so a
+    // dry run still leaves the table registry usable for subsequent reads).
     this.register(schema)
 
-    for (const table of schema.tables) {
-      const existing = db.prepare(`PRAGMA table_info(${quote(table.table)})`).all() as Array<{ name: string }>
-      if (existing.length === 0) {
-        const sql = this.createTableSql(table)
-        db.exec(sql)
-        report.createdTables.push(table.table)
-        report.statements.push(sql)
-      } else {
-        const have = new Set(existing.map((c) => c.name))
+    // Atomicity: wrap the whole run in one BEGIN/COMMIT so a failure halfway through
+    // leaves the schema exactly as it was — never half-migrated. A dry run executes
+    // nothing (not even the transaction) and so can never write.
+    const exec = (sql: string): void => {
+      if (!dryRun) db.exec(sql)
+    }
+    if (!dryRun) db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const table of schema.tables) {
+        // Reading PRAGMA table_info is a pure read; safe in a dry run and needed to know
+        // what already exists so we compute the SAME statements a real run would.
+        const existing = db.prepare(`PRAGMA table_info(${quote(table.table)})`).all() as Array<{ name: string }>
+        if (existing.length === 0) {
+          const sql = this.createTableSql(table)
+          exec(sql)
+          report.createdTables.push(table.table)
+          report.statements.push(sql)
+        } else {
+          const have = new Set(existing.map((c) => c.name))
+          for (const col of table.columns) {
+            if (!have.has(col.name)) {
+              const sql = `ALTER TABLE ${quote(table.table)} ADD COLUMN ${this.columnSql(col)};`
+              exec(sql)
+              report.addedColumns.push(`${table.table}.${col.name}`)
+              report.statements.push(sql)
+            }
+          }
+        }
+
         for (const col of table.columns) {
-          if (!have.has(col.name)) {
-            const sql = `ALTER TABLE ${quote(table.table)} ADD COLUMN ${this.columnSql(col)};`
-            db.exec(sql)
-            report.addedColumns.push(`${table.table}.${col.name}`)
+          if (col.indexed && !col.unique) {
+            const idx = `idx_${table.table}_${col.name}`
+            const sql = `CREATE INDEX IF NOT EXISTS ${quote(idx)} ON ${quote(table.table)} (${quote(col.name)});`
+            exec(sql)
             report.statements.push(sql)
           }
         }
       }
-
-      for (const col of table.columns) {
-        if (col.indexed && !col.unique) {
-          const idx = `idx_${table.table}_${col.name}`
-          const sql = `CREATE INDEX IF NOT EXISTS ${quote(idx)} ON ${quote(table.table)} (${quote(col.name)});`
-          db.exec(sql)
+      if (!dryRun) db.exec('COMMIT')
+    } catch (err) {
+      if (!dryRun) {
+        try {
+          db.exec('ROLLBACK')
+        } catch {
+          // The transaction may never have opened; the original error is what matters.
         }
       }
+      throw err
     }
     this.logger?.info(
-      `migrated: ${report.createdTables.length} table(s) created, ${report.addedColumns.length} column(s) added`,
+      `${dryRun ? 'migrate (dry run): ' : 'migrated: '}${report.createdTables.length} table(s) ${
+        dryRun ? 'would be created' : 'created'
+      }, ${report.addedColumns.length} column(s) ${dryRun ? 'would be added' : 'added'}`,
     )
     return report
+  }
+
+  /** SQLite DROP-statement dialect for rollback. node:sqlite / SQLite ≥ 3.35 support
+   *  `ALTER TABLE … DROP COLUMN`. Identifiers go through `quote` (validated). */
+  private readonly dialect: SqlDialect = {
+    quote,
+    dropIndex: (table, column) => `DROP INDEX IF EXISTS ${quote(`idx_${table}_${column}`)};`,
+    dropColumn: (table, column) => `ALTER TABLE ${quote(table)} DROP COLUMN ${quote(column)};`,
+    dropTable: (table) => `DROP TABLE IF EXISTS ${quote(table)};`,
+  }
+
+  async rollback(entries: MigrationJournalEntry[], opts?: MigrateOptions): Promise<{ statements: string[] }> {
+    const db = this.conn()
+    const dryRun = opts?.dryRun === true
+    // Generate the inverse SQL in core (the safety-checked logic) using this adapter's
+    // dialect. Newest-first: the kernel passes entries already ordered newest → oldest.
+    const statements = entries.flatMap((entry) => downStatementsFor(entry, this.dialect))
+    if (!dryRun && statements.length > 0) {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        for (const sql of statements) db.exec(sql)
+        db.exec('COMMIT')
+      } catch (err) {
+        try {
+          db.exec('ROLLBACK')
+        } catch {
+          // ignore — surface the original error
+        }
+        throw err
+      }
+    }
+    return { statements }
   }
 
   private columnSql(col: ColumnSchema): string {

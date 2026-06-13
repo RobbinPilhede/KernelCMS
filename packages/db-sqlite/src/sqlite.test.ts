@@ -71,6 +71,74 @@ describe('transactions', () => {
   })
 })
 
+describe('migrate dry run + rollback', () => {
+  const fresh: KernelSchema = {
+    tables: [
+      {
+        table: 'widgets',
+        slug: 'widgets',
+        columns: [{ name: 'label', type: 'text', required: false, unique: false, indexed: true, localized: false }],
+        timestamps: true,
+        singleton: false,
+      },
+    ],
+  }
+
+  it('computes statements but executes nothing on a dry run', async () => {
+    const report = await db.migrate(fresh, { dryRun: true })
+    expect(report.createdTables).toContain('widgets')
+    expect(report.statements.some((s) => /CREATE TABLE/.test(s))).toBe(true)
+    // Nothing was created — the physical table does not exist, so querying it throws
+    // ("no such table: widgets") even though the dry run registered it in the registry.
+    await expect(db.find({ collection: 'widgets', limit: 1, page: 1 })).rejects.toThrow()
+  })
+
+  it('actually creates the table on a real migrate after the dry run', async () => {
+    await db.migrate(fresh)
+    const res = await db.find({ collection: 'widgets', limit: 1, page: 1 })
+    expect(res.totalDocs).toBe(0)
+  })
+
+  it('rollback drops the column and table the entry recorded, never a system table', async () => {
+    await db.migrate(fresh)
+    await db.create({ collection: 'widgets', data: { id: 'w1', label: 'hi' } })
+    // Add a column via a second migrate so we can prove DROP COLUMN works.
+    const withCol: KernelSchema = {
+      tables: [
+        {
+          table: 'widgets',
+          slug: 'widgets',
+          columns: [
+            { name: 'label', type: 'text', required: false, unique: false, indexed: true, localized: false },
+            { name: 'extra', type: 'text', required: false, unique: false, indexed: false, localized: false },
+          ],
+          timestamps: true,
+          singleton: false,
+        },
+      ],
+    }
+    await db.migrate(withCol)
+
+    // Dry-run rollback shows DROP SQL without executing.
+    const preview = await db.rollback!(
+      [{ id: 'm', at: '', createdTables: [], addedColumns: ['widgets.extra'], statements: [] }],
+      {
+        dryRun: true,
+      },
+    )
+    expect(preview.statements.some((s) => /DROP COLUMN "extra"/.test(s))).toBe(true)
+    // Column still present after a dry run.
+    const stillThere = await db.find({ collection: 'widgets', where: { extra: { exists: false } }, limit: 1, page: 1 })
+    expect(stillThere.totalDocs).toBe(1)
+
+    // A real rollback that names a system table is refused by core's generator.
+    const sys = await db.rollback!([
+      { id: 'm', at: '', createdTables: ['_migrations'], addedColumns: [], statements: [] },
+    ])
+    expect(sys.statements).toEqual([])
+  })
+})
+
 describe('LIKE escaping', () => {
   it('matches wildcard characters literally', async () => {
     await db.create({ collection: 'items', data: { id: '1', name: '50% off' } })
