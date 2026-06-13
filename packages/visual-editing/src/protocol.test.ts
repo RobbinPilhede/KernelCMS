@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { isPreviewDataMessage, isPreviewHoverMessage, isPreviewReadyMessage, isPreviewSelectMessage } from './protocol'
+import {
+  isPreviewDataMessage,
+  isPreviewEditEndMessage,
+  isPreviewEditStartMessage,
+  isPreviewHoverMessage,
+  isPreviewPatchMessage,
+  isPreviewReadyMessage,
+  isPreviewSelectMessage,
+} from './protocol'
 
 describe('protocol type guards', () => {
   it('accepts a valid data message', () => {
@@ -30,5 +38,29 @@ describe('protocol type guards', () => {
     expect(isPreviewHoverMessage({ type: 'kernel-preview-hover', path: 'a.0' })).toBe(true)
     expect(isPreviewHoverMessage({ type: 'kernel-preview-hover', path: null })).toBe(true)
     expect(isPreviewHoverMessage({ type: 'kernel-preview-hover', path: 5 })).toBe(false)
+  })
+
+  it('accepts edit-start/edit-end with a string path', () => {
+    expect(isPreviewEditStartMessage({ type: 'kernel-preview-edit-start', path: 'layout.0.heading' })).toBe(true)
+    expect(isPreviewEditEndMessage({ type: 'kernel-preview-edit-end', path: 'layout.0.heading' })).toBe(true)
+  })
+
+  it('rejects edit-start/edit-end without a string path', () => {
+    expect(isPreviewEditStartMessage({ type: 'kernel-preview-edit-start' })).toBe(false)
+    expect(isPreviewEditStartMessage({ type: 'kernel-preview-edit-start', path: 7 })).toBe(false)
+    expect(isPreviewEditEndMessage({ type: 'kernel-preview-edit-end', path: null })).toBe(false)
+  })
+
+  it('accepts a patch message with a string or number value', () => {
+    expect(isPreviewPatchMessage({ type: 'kernel-preview-patch', path: 'a.0', value: 'hi' })).toBe(true)
+    expect(isPreviewPatchMessage({ type: 'kernel-preview-patch', path: 'a.0', value: 42 })).toBe(true)
+  })
+
+  it('rejects malformed patch messages', () => {
+    expect(isPreviewPatchMessage({ type: 'kernel-preview-patch', value: 'hi' })).toBe(false) // missing path
+    expect(isPreviewPatchMessage({ type: 'kernel-preview-patch', path: 'a.0', value: { a: 1 } })).toBe(false) // object value
+    expect(isPreviewPatchMessage({ type: 'kernel-preview-patch', path: 'a.0', value: true })).toBe(false) // wrong type
+    expect(isPreviewPatchMessage({ type: 'kernel-preview-patch', path: 5, value: 'hi' })).toBe(false) // wrong path type
+    expect(isPreviewPatchMessage(null)).toBe(false)
   })
 })

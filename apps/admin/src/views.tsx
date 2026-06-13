@@ -174,12 +174,14 @@ function LivePreview({
   url,
   onSelectPath,
   onHoverPath,
+  onPatchPath,
 }: {
   slug: string
   form: Record<string, unknown>
   url?: string
   onSelectPath?: (path: string) => void
   onHoverPath?: (path: string | null) => void
+  onPatchPath?: (path: string, value: string | number) => void
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [device, setDevice] = useState<(typeof DEVICES)[number]['id']>('desktop')
@@ -196,6 +198,15 @@ function LivePreview({
   selectRef.current = onSelectPath
   const hoverRef = useRef(onHoverPath)
   hoverRef.current = onHoverPath
+  const patchRef = useRef(onPatchPath)
+  patchRef.current = onPatchPath
+  // Paths the user is actively editing IN the preview. While non-empty we suppress
+  // echoing form data back down — re-rendering the edited node would reset the
+  // caret/clobber the in-flight value. Cleared on edit-end, which re-syncs once.
+  const editingRef = useRef<Set<string>>(new Set())
+  // Upper bound on concurrently-edited paths before we treat the suppression set
+  // as poisoned and reset it (anti-freeze; normal editing is one path at a time).
+  const MAX_CONCURRENT_EDITS = 16
 
   // When a frontend URL is configured, iframe the real site and post cross-origin
   // to its origin. Otherwise use the built-in same-origin preview renderer.
@@ -205,6 +216,9 @@ function LivePreview({
 
   // Serialize the latest doc and post it — but skip if it matches the last send.
   const post = () => {
+    // Don't echo while the user is inline-editing on the page; the incoming data
+    // would clobber the caret. edit-end clears the set and posts once to re-sync.
+    if (editingRef.current.size > 0) return
     const data = stripRowKeys(formRef.current)
     const payload = JSON.stringify(data)
     if (payload === lastSentRef.current) return
@@ -237,6 +251,20 @@ function LivePreview({
         selectRef.current?.(msg.path)
       } else if (msg.type === 'kernel-preview-hover') {
         hoverRef.current?.(typeof msg.path === 'string' ? msg.path : null)
+      } else if (msg.type === 'kernel-preview-edit-start' && typeof msg.path === 'string') {
+        // Pause echoing this path's data while it's being edited in the preview.
+        // Bound the set: real editing touches one path at a time, so a runaway
+        // count means unmatched edit-starts (a misbehaving/compromised frame) —
+        // drop the suppression and resume echo rather than freeze the pane forever.
+        if (editingRef.current.size >= MAX_CONCURRENT_EDITS) editingRef.current.clear()
+        else editingRef.current.add(msg.path)
+      } else if (msg.type === 'kernel-preview-patch' && typeof msg.path === 'string') {
+        const value = (msg as { value?: unknown }).value
+        if (typeof value === 'string' || typeof value === 'number') patchRef.current?.(msg.path, value)
+      } else if (msg.type === 'kernel-preview-edit-end' && typeof msg.path === 'string') {
+        editingRef.current.delete(msg.path)
+        // Re-sync canonical data once the user is done (resync only when idle).
+        if (editingRef.current.size === 0) post()
       }
     }
     window.addEventListener('message', onMessage)
@@ -291,6 +319,49 @@ function LivePreview({
       </div>
     </aside>
   )
+}
+
+/** Read a dot-path out of nested form state. Returns undefined for any missing
+ *  hop — the patch applier uses this to reject paths that aren't already present. */
+export function getFormPath(form: unknown, path: string): unknown {
+  let node: unknown = form
+  for (const seg of path.split('.')) {
+    if (node === null || typeof node !== 'object') return undefined
+    node = (node as Record<string, unknown>)[seg]
+  }
+  return node
+}
+
+/** Immutably set a primitive at a dot-path. UNTRUSTED-INPUT GUARD: only writes
+ *  when the full path already resolves to an existing leaf in `form` (no creating
+ *  arbitrary keys) and the value is a string|number primitive. Returns the same
+ *  reference unchanged when the path is unknown so React skips the re-render. */
+export function applyFormPatch(
+  form: Record<string, unknown>,
+  path: string,
+  value: string | number,
+): Record<string, unknown> {
+  if (typeof value !== 'string' && typeof value !== 'number') return form
+  const segs = path.split('.')
+  if (segs.some((s) => s.length === 0)) return form
+  const target = getFormPath(form, path)
+  if (target === undefined) return form // path must already exist (no key creation)
+  // The target must be a primitive leaf — a string patch must never collapse an
+  // existing object/array subtree into a scalar (data-integrity guard).
+  if (target !== null && typeof target === 'object') return form
+
+  // Clone the spine of plain objects/arrays down to the leaf, then set it.
+  const root: Record<string, unknown> = Array.isArray(form) ? ([...form] as never) : { ...form }
+  let node: Record<string, unknown> = root
+  for (let i = 0; i < segs.length - 1; i++) {
+    const child = node[segs[i]]
+    if (child === null || typeof child !== 'object') return form
+    const copy = Array.isArray(child) ? [...child] : { ...(child as Record<string, unknown>) }
+    node[segs[i]] = copy
+    node = copy as Record<string, unknown>
+  }
+  node[segs[segs.length - 1]] = value
+  return root
 }
 
 /** Progressively shorter prefixes of a dot-path, longest first:
@@ -2039,6 +2110,14 @@ export function EditView() {
     if (path) findFieldNode(path)?.classList.add('is-hover-target')
   }
 
+  // An inline edit in the preview writes straight into form state at the dot-path.
+  // applyFormPatch treats path/value as untrusted: it only writes to a path that
+  // already exists in `form` and keeps the value a string|number primitive, so a
+  // forged message can't create arbitrary keys or inject objects. Save is unchanged.
+  const patchFieldByPath = (path: string, value: string | number) => {
+    setForm((prev) => applyFormPatch(prev, path, value))
+  }
+
   const sidebarFields = fields.filter((f) => f.admin?.position === 'sidebar')
   const tabs = groupTabs(fields.filter((f) => f.admin?.position !== 'sidebar'))
   const tab = tabs[Math.min(activeTab, tabs.length - 1)] ?? tabs[0]
@@ -2207,6 +2286,7 @@ export function EditView() {
             url={collection.livePreview ? collection.livePreview.url : undefined}
             onSelectPath={focusFieldByPath}
             onHoverPath={hoverFieldByPath}
+            onPatchPath={patchFieldByPath}
           />
         )}
       </div>
