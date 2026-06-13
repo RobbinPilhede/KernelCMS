@@ -1,5 +1,15 @@
 # kernelcms
 
+## 0.8.0
+
+### Minor Changes
+
+- **Agent review inbox + AI page composition — hand the CMS to an AI, safely.** KernelCMS already makes an AI agent a first-class, access-controlled, draft-only principal. This adds the human approval layer that makes it production-safe, plus a one-call page composer.
+  - **Review inbox.** `kernel.findReviewQueue()` lists every agent-authored draft awaiting review (across all drafts-enabled collections, scoped to the reviewer's read access), and `kernel.submitReview({ collection, id, decision, note })` either **approves** (publishes) or **requests changes** (keeps it a draft and leaves a note the agent can act on). Approval reuses the existing publish access gate under the reviewer's own identity — a reviewer without publish rights is rejected, and an agent can never approve its own work. Admin-or-editor-gated HTTP routes at `/api/_admin/reviews`. Every decision is recorded in the audit log (`review.approve` / `review.request_changes`).
+  - **AI page composition.** `kernel.composePage({ collection, blocks: [{ type, data }], data? })` — and the matching `<collection>_compose_page` MCP tool — assemble a `blocks` page layout from a structured spec, validated against the collection schema (every block type and field must exist; prototype-pollution keys rejected), and create it through the normal pipeline. So an AI composes a whole page in a single call that **cannot** produce an invalid layout, and — because it runs as the agent — the result lands as a draft in the review inbox rather than going live.
+
+  Nothing an agent writes reaches production until a human approves it — a hard guarantee enforced by the core engine, not the surface. Security-reviewed and red-teamed to **Risk: LOW** (38 adversarial probes, zero bypasses; self-approval, draft-only-bypass, and prototype-pollution all defended), with bounds on compose size and note length. Verified end-to-end against a live kernel. Fully backward-compatible: the inbox provisions only when `agents` are configured or `review: true` is set.
+
 ## 0.7.0
 
 ### Minor Changes
