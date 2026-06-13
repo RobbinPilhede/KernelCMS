@@ -6,6 +6,26 @@
  * each transaction runs on its own checked-out client, so transactions are
  * genuinely concurrent and isolated by Postgres itself. Writes use `RETURNING *`
  * to read the row back in a single round trip.
+ *
+ * ## Serverless / connection-pool story
+ *
+ * The adapter owns exactly ONE pool, created once in `init()` and reused for
+ * every operation. In a serverless runtime (Vercel/Lambda) the recommended
+ * pattern is to construct the adapter once at module scope so that the warm
+ * container reuses the same pool across invocations rather than opening a new
+ * connection per request — the failure mode that exhausts Postgres connection
+ * limits behind a function platform.
+ *
+ * Defaults are tuned for that environment: a low `max` (10) caps how many
+ * clients one warm instance holds, and `idleTimeoutMillis` (10s) lets idle
+ * clients close between bursts so a scaled-out fleet doesn't pin the database's
+ * connection budget. Tune `max`/`idleTimeoutMillis` to your platform; an
+ * explicit `pool` config always wins over these defaults.
+ *
+ * Every `pool.connect()` path (the init probe, `migrate`, `rollback`, and
+ * `transaction`) releases its client in a `finally`, so a thrown error never
+ * leaks a checked-out client. Call `destroy()` on container drain to `end()`
+ * the pool; `destroy()` is idempotent (safe to call twice).
  */
 import pg from 'pg'
 import type { Pool as PgPool, PoolClient, PoolConfig } from 'pg'
@@ -40,10 +60,24 @@ export interface PostgresAdapterOptions {
    * object for stricter setups.
    */
   ssl?: boolean | PoolConfig['ssl']
-  /** Maximum pooled clients. Default 10. */
+  /** Maximum pooled clients. Default 10 (low by design for serverless). */
   max?: number
+  /**
+   * Milliseconds an idle client stays open before the pool closes it. Default
+   * 10_000. Letting idle clients drain between bursts keeps a scaled-out
+   * serverless fleet from pinning the database's connection budget.
+   */
+  idleTimeoutMillis?: number
   /** Escape hatch: a full pg PoolConfig, merged last. */
   pool?: PoolConfig
+  /**
+   * Test seam: supply the pool implementation instead of letting the adapter
+   * construct `new Pool(config)`. Receives the resolved `PoolConfig` and must
+   * return something satisfying pg's `Pool` surface (`connect`/`query`/`end`).
+   * Production code never sets this; it exists so unit tests can inject a fake
+   * pool that counts client checkouts vs releases.
+   */
+  poolFactory?: (config: PoolConfig) => PgPool
 }
 
 /** The subset of pg's Pool/PoolClient surface this adapter relies on. */
@@ -110,14 +144,23 @@ class PostgresAdapter implements DatabaseAdapter {
     const ssl = this.options.ssl === true ? { rejectUnauthorized: false } : this.options.ssl
     const config: PoolConfig = {
       connectionString: url,
+      // Serverless defaults: a low max caps clients per warm instance, and an
+      // idle timeout drains idle clients between bursts. An explicit `pool`
+      // config wins (it is spread last), so neither overrides a user's value.
       max: this.options.max ?? 10,
+      idleTimeoutMillis: this.options.idleTimeoutMillis ?? 10_000,
       ...(ssl === undefined ? {} : { ssl }),
       ...this.options.pool,
     }
-    this.pool = new Pool(config)
-    // Fail fast on a bad connection rather than on the first query.
+    this.pool = this.options.poolFactory ? this.options.poolFactory(config) : new Pool(config)
+    // Fail fast on a bad connection rather than on the first query. Release in a
+    // finally so a throw between connect and release can never leak the client.
     const probe = await this.pool.connect()
-    probe.release()
+    try {
+      // The probe just proves the pool can hand out a live client.
+    } finally {
+      probe.release()
+    }
     this.logger.info('postgres connected')
   }
 
@@ -634,8 +677,11 @@ class PostgresAdapter implements DatabaseAdapter {
   }
 
   async destroy(): Promise<void> {
-    await this.pool?.end()
+    // Idempotent: null the pool first so a concurrent/second destroy() is a
+    // no-op and end() is called exactly once on container drain.
+    const pool = this.pool
     this.pool = null
+    await pool?.end()
   }
 }
 
