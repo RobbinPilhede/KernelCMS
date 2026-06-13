@@ -38,6 +38,7 @@ import type {
 } from './types'
 import {
   BadRequestError,
+  ConflictError,
   ForbiddenError,
   NotFoundError,
   TooManyRequestsError,
@@ -953,7 +954,131 @@ export function createOperations(ctx: OperationCtx) {
     return doc as T
   }
 
-  async function deleteOne<T extends Doc = Doc>(opts: DeleteOptions): Promise<T | null> {
+  // -------------------------------------------------------------------------
+  // Referential integrity (onDelete)
+  //
+  // No adapter enforces real FK constraints — relationship ids live in TEXT/JSON
+  // columns — so deleting a referenced doc silently dangles every referrer. A
+  // relationship field may opt into a cleanup action via `onDelete`. The action is
+  // declared on the REFERRING field and governs what happens to its document when
+  // the target is removed. Unset = legacy behaviour (leave dangling).
+  // -------------------------------------------------------------------------
+
+  /** A referring field that opted into an onDelete action for `targetSlug`. */
+  interface ReferrerRule {
+    collection: CollectionConfig
+    field: { name: string; hasMany: boolean; polymorphic: boolean; onDelete: 'setNull' | 'cascade' | 'restrict' }
+  }
+
+  /** Every relationship/upload field across the config that points at `targetSlug`
+   *  and declares an `onDelete` action. Drives cleanup when a target is deleted. */
+  function referrerRules(targetSlug: string): ReferrerRule[] {
+    const rules: ReferrerRule[] = []
+    for (const coll of config.collections) {
+      for (const rel of relationshipFields(coll.fields)) {
+        if (!rel.onDelete) continue
+        const targets = Array.isArray(rel.relationTo) ? rel.relationTo : [rel.relationTo]
+        if (!targets.includes(targetSlug)) continue
+        rules.push({
+          collection: coll,
+          field: { name: rel.name, hasMany: rel.hasMany, polymorphic: rel.polymorphic, onDelete: rel.onDelete },
+        })
+      }
+    }
+    return rules
+  }
+
+  /** True when a stored relationship value (raw row column) references `targetSlug`/`id`.
+   *  Handles single + hasMany, monomorphic ids and polymorphic `{ relationTo, value }`. */
+  function refMatchesOne(ref: unknown, field: ReferrerRule['field'], targetSlug: string, id: string): boolean {
+    if (ref == null) return false
+    if (field.polymorphic) {
+      if (typeof ref !== 'object') return false
+      const r = ref as { relationTo?: unknown; value?: unknown }
+      return r.relationTo === targetSlug && String(r.value) === id
+    }
+    return String(ref) === id
+  }
+
+  function refMatches(value: unknown, field: ReferrerRule['field'], targetSlug: string, id: string): boolean {
+    if (field.hasMany) return Array.isArray(value) && value.some((ref) => refMatchesOne(ref, field, targetSlug, id))
+    return refMatchesOne(value, field, targetSlug, id)
+  }
+
+  /** A new field value with every reference to `targetSlug`/`id` removed: null for a
+   *  single ref, the id pulled from a hasMany list. */
+  function pullRef(value: unknown, field: ReferrerRule['field'], targetSlug: string, id: string): unknown {
+    if (field.hasMany) {
+      if (!Array.isArray(value)) return value
+      return value.filter((ref) => !refMatchesOne(ref, field, targetSlug, id))
+    }
+    return null
+  }
+
+  /**
+   * Enforce onDelete actions before a target document is removed. Scans the config
+   * for referring fields, finds the docs holding the reference, and applies their
+   * declared action: `restrict` aborts (ConflictError) if any referrer exists;
+   * `setNull` clears/pulls the reference via the Local API (hooks + versions fire);
+   * `cascade` deletes the referrer, recursing so ITS onDelete rules run too. `visited`
+   * tracks `slug:id` to break reference cycles (a self/mutual cascade can't loop).
+   *
+   * Atomicity caveat: the operations facade closes over a single `db` handle, so a
+   * multi-step cascade/setNull is NOT wrapped in `db.transaction` — an error partway
+   * through can leave some referrers cleaned and others not. Restrict is checked first
+   * (and aborts before any write), so the common guard is safe; a fully-atomic cascade
+   * would require threading a tx-bound facade and is left as a follow-up.
+   */
+  async function applyOnDelete(
+    targetSlug: string,
+    id: string,
+    req: RequestContext,
+    visited: Set<string>,
+  ): Promise<void> {
+    // Resolve every rule's matching referrers up front. Scan rows by raw stored value —
+    // works regardless of adapter JSON-query support and across single/hasMany/polymorphic
+    // shapes. Capped like other bulk ops.
+    const resolved: Array<{ rule: ReferrerRule; matches: Row[] }> = []
+    for (const rule of referrerRules(targetSlug)) {
+      const rows = await db.find({ collection: rule.collection.slug, where: undefined, limit: MAX_LIMIT, page: 1 })
+      const matches = rows.docs.filter((row) => refMatches(row[rule.field.name], rule.field, targetSlug, id))
+      if (matches.length) resolved.push({ rule, matches })
+    }
+
+    // Restrict is a hard pre-check across ALL rules: abort before any setNull/cascade
+    // write runs, so a blocking referrer can never leave a partial cleanup behind.
+    for (const { rule, matches } of resolved) {
+      if (rule.field.onDelete === 'restrict') {
+        throw new ConflictError(
+          `Cannot delete "${targetSlug}" ${id}: ${matches.length} document(s) in "${rule.collection.slug}" still reference it.`,
+        )
+      }
+    }
+
+    for (const { rule, matches } of resolved) {
+      for (const row of matches) {
+        const refId = String(row.id)
+        if (rule.field.onDelete === 'cascade') {
+          const key = `${rule.collection.slug}:${refId}`
+          if (visited.has(key)) continue // cycle guard: already being deleted
+          await deleteOne({ collection: rule.collection.slug, id: refId, req, overrideAccess: true }, visited)
+        } else {
+          // setNull: clear the single ref, or pull the id from a hasMany list. Routed
+          // through update() so hooks/versions fire and the value is re-validated.
+          const next = pullRef(row[rule.field.name], rule.field, targetSlug, id)
+          await update({
+            collection: rule.collection.slug,
+            id: refId,
+            data: { [rule.field.name]: next } as Row,
+            req,
+            overrideAccess: true,
+          })
+        }
+      }
+    }
+  }
+
+  async function deleteOne<T extends Doc = Doc>(opts: DeleteOptions, visited?: Set<string>): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
     const req = buildReq(opts.req)
     const override = opts.overrideAccess ?? false
@@ -967,6 +1092,14 @@ export function createOperations(ctx: OperationCtx) {
       const scope = asWhere(access)
       if (scope && !matchesWhere(existing, scope)) throw new ForbiddenError()
     }
+
+    // Referential integrity: settle referrers (restrict/setNull/cascade) BEFORE the
+    // row leaves, so `restrict` can still abort and a cascade sees the target intact.
+    // `visited` carries the in-flight delete set across a recursive cascade to break
+    // reference cycles; seed it with this doc so a back-reference can't loop into it.
+    const tracked = visited ?? new Set<string>()
+    tracked.add(`${collection.slug}:${opts.id}`)
+    await applyOnDelete(collection.slug, opts.id, req, tracked)
 
     for (const hook of collection.hooks?.beforeDelete ?? []) await hook({ req, id: opts.id })
     const removed = await db.delete({ collection: collection.slug, id: opts.id })
@@ -1024,13 +1157,20 @@ export function createOperations(ctx: OperationCtx) {
     const limit = opts.limit ?? 1000
     const ids = await matchingIds(collection, 'delete', opts.where, req, override, limit)
     const docs: T[] = []
+    // Share one visited set across the batch so a cascade triggered by an earlier id
+    // (which may have already removed a later id in this same list) doesn't re-delete it.
+    const visited = new Set<string>()
     for (const id of ids) {
-      const doc = await deleteOne<T>({
-        collection: opts.collection,
-        id,
-        req: opts.req,
-        overrideAccess: override,
-      })
+      if (visited.has(`${collection.slug}:${id}`)) continue
+      const doc = await deleteOne<T>(
+        {
+          collection: opts.collection,
+          id,
+          req: opts.req,
+          overrideAccess: override,
+        },
+        visited,
+      )
       if (doc) docs.push(doc)
     }
     return { docs, count: docs.length }

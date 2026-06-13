@@ -232,12 +232,22 @@ export interface SelectField extends FieldBase {
   hasMany?: boolean
 }
 
+/** Referential-integrity action applied to THIS referring field when a document it
+ *  points at is deleted. Unset = no action (legacy behaviour): the reference is left
+ *  dangling and `populate` tolerates it. `setNull` clears the ref (or pulls the id
+ *  from a hasMany list); `cascade` deletes the referring document; `restrict` blocks
+ *  the delete while any referrer exists. */
+export type OnDeleteAction = 'setNull' | 'cascade' | 'restrict'
+
 export interface RelationshipField extends FieldBase {
   type: 'relationship' | 'upload'
   /** A single collection, or several for a polymorphic relationship. Polymorphic
    *  values are stored/returned as `{ relationTo, value }` so the target is explicit. */
   relationTo: string | string[]
   hasMany?: boolean
+  /** What happens to documents holding this reference when the target is deleted.
+   *  Defaults to no action (dangling reference) when omitted — non-breaking. */
+  onDelete?: OnDeleteAction
 }
 
 /** A resolved polymorphic relationship reference. */

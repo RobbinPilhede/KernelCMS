@@ -7,7 +7,7 @@ import {
   type KernelRichText,
   type ResolvedRichTextSchema,
 } from '@kernel/richtext'
-import type { AnyField, ConfigField, RequestContext, RichTextField, SelectOption } from './types'
+import type { AnyField, ConfigField, OnDeleteAction, RequestContext, RichTextField, SelectOption } from './types'
 import type { FieldError } from './errors'
 
 /** Resolve the allow-list schema for a richText field (cached per field object). */
@@ -431,13 +431,19 @@ export function deserializeDoc(fieldsIn: ConfigField[], row: Row, opts: Deserial
   return doc
 }
 
+export interface RelationshipFieldInfo {
+  name: string
+  relationTo: string | string[]
+  hasMany: boolean
+  polymorphic: boolean
+  onDelete?: OnDeleteAction
+}
+
 /** Top-level relationship fields that can be populated. `polymorphic` is true when
  *  `relationTo` is a list — those values are stored as `{ relationTo, value }`. */
-export function relationshipFields(
-  fieldsIn: ConfigField[],
-): Array<{ name: string; relationTo: string | string[]; hasMany: boolean; polymorphic: boolean }> {
+export function relationshipFields(fieldsIn: ConfigField[]): RelationshipFieldInfo[] {
   const fields = effectiveFields(fieldsIn)
-  const out: Array<{ name: string; relationTo: string | string[]; hasMany: boolean; polymorphic: boolean }> = []
+  const out: RelationshipFieldInfo[] = []
   for (const field of fields) {
     if (field.type === 'relationship' || field.type === 'upload') {
       out.push({
@@ -445,6 +451,7 @@ export function relationshipFields(
         relationTo: field.relationTo,
         hasMany: Boolean(field.hasMany),
         polymorphic: Array.isArray(field.relationTo),
+        onDelete: field.onDelete,
       })
     }
   }
