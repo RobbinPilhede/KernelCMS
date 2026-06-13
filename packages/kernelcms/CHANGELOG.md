@@ -1,5 +1,17 @@
 # kernelcms
 
+## 0.9.0
+
+### Minor Changes
+
+- **One-command importers — leave any CMS without the pain.** `kernel import --from wordpress|contentful|sanity|strapi|payload --file <export>` pulls your content out of another CMS and into KernelCMS in a single command. Migration is the lock-in moat competitors rely on; this dissolves it.
+  - **Dry-run by default.** The command previews exactly what it would do — docs to create per collection, fields it will drop (anything not in your schema), and any relationships that won't resolve — and writes **nothing** until you pass `--apply`. No surprise mutations.
+  - **Real relationship resolution.** A two-pass, id-mapped engine creates every record, then rewires references (post→author, entry→linked entry, document→`_ref`) to the newly-created ids. Unresolvable references are reported, never silently dropped.
+  - **Five adapters, fixture-verified end-to-end:** WordPress (WXR XML export), Contentful (`contentful-export` JSON, locale-aware), Sanity (NDJSON export), Strapi (v4 JSON export), Payload (JSON export). Each parses the source's real export format — no new runtime dependencies, a dependency-free XML reader that resolves no external entities (XXE-safe).
+  - **Safe by construction.** Imports validate every target collection against your config (unknown types are skipped, never auto-created), guard against prototype-pollution keys, refuse to steer references into authority/system fields, cap file size, and never log a source `--token`. Hardened and red-teamed to **Risk: LOW** (XXE, entity-expansion, nested prototype pollution, target spoofing, and `_status` injection all attempted and blocked).
+
+  The previous portable-JSON importer is preserved as `kernel import:json`. Verified end-to-end against a live kernel.
+
 ## 0.8.0
 
 ### Minor Changes
