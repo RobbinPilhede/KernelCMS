@@ -463,7 +463,12 @@ export function createOperations(ctx: OperationCtx) {
 
   /** Strip read-restricted fields + run computed fields on a finished doc (the tail of
    *  the read pipeline). Mirrors the strip→compute→strip order used everywhere else. */
-  async function applyReadTail(collection: CollectionConfig, doc: Doc, req: RequestContext, override: boolean): Promise<void> {
+  async function applyReadTail(
+    collection: CollectionConfig,
+    doc: Doc,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<void> {
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     await applyComputed(collection.fields, doc, req)
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
@@ -1207,7 +1212,10 @@ export function createOperations(ctx: OperationCtx) {
         if (rule.field.onDelete === 'cascade') {
           const key = `${rule.collection.slug}:${refId}`
           if (visited.has(key)) continue // cycle guard: already being deleted
-          await deleteOne({ collection: rule.collection.slug, id: refId, req, overrideAccess: overrideCascade }, visited)
+          await deleteOne(
+            { collection: rule.collection.slug, id: refId, req, overrideAccess: overrideCascade },
+            visited,
+          )
         } else {
           // setNull: clear the single ref, or pull the id from a hasMany list. Routed
           // through update() so hooks/versions fire and the value is re-validated.

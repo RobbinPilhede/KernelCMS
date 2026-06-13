@@ -10,8 +10,7 @@ import type { Kernel } from './index'
 // A collection where ONLY editors may publish, but anyone may update. This is the
 // "agents can only write drafts" shape: the `update` rule is permissive, the
 // `publish` rule is strict.
-const isEditor = (req: { user: { roles?: string[] } | null }): boolean =>
-  Boolean(req.user?.roles?.includes('editor'))
+const isEditor = (req: { user: { roles?: string[] } | null }): boolean => Boolean(req.user?.roles?.includes('editor'))
 
 function gatedConfig() {
   return defineConfig({

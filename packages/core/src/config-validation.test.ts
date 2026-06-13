@@ -126,9 +126,9 @@ describe('agent validation', () => {
   const base = { secret: ok, db: db(), collections: [] }
 
   it("rejects an agent granted the 'admin' role (privilege-escalation footgun)", () => {
-    expect(() =>
-      sanitizeConfig({ ...base, agents: [{ id: 'bot', token: 'tok-1', roles: ['admin'] }] }),
-    ).toThrow(/admin/i)
+    expect(() => sanitizeConfig({ ...base, agents: [{ id: 'bot', token: 'tok-1', roles: ['admin'] }] })).toThrow(
+      /admin/i,
+    )
   })
 
   it("rejects 'admin' even when mixed with other roles", () => {
