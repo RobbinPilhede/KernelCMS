@@ -1,5 +1,17 @@
 # kernelcms
 
+## 0.20.0
+
+### Minor Changes
+
+- **Real-time content: a durable change feed + live SSE stream.** Make your CMS reactive — frontends that update the instant content changes, AI agents that act on new content, and downstream systems that stay in sync (real-time indexing is increasingly a requirement for agent workflows).
+  - **Pull (durable CDC).** `kernel.changes({ since, collection })` returns ordered change events after a cursor — `{ seq, at, collection, documentId, event, principalType }` — and a `cursor` to poll from. Over REST: `GET /api/changes?since=&collection=`. Perfect for a change-data-capture pipeline or a reliable catch-up after downtime.
+  - **Push (SSE).** `GET /api/changes/stream` is a `text/event-stream` that emits change events as they happen, with heartbeats and `Last-Event-ID` resume — wire it straight to an `EventSource` for a live UI, no polling.
+  - **In-process.** `kernel.subscribe(fn)` gives server code, workflows, and live re-indexers a direct subscription (returns an unsubscribe fn).
+  - **Metadata-only and access-filtered by construction.** Events carry only metadata — never document bodies — and every event is filtered per subscriber: you are **never** told that a document you can't read changed (the event is dropped entirely, fail-closed; the client re-fetches the doc through the normal access-checked API). Both endpoints require auth; retention and concurrent-stream counts are bounded; a feed write can never break or roll back the content write that triggered it. Red-teamed with 38 attacks across pull, SSE, and the in-process bus — **Risk: LOW, zero leaks** — verified by a live harness and a Playwright end-to-end test driving the real feed over HTTP.
+
+  Opt in with `realtime: { enabled: true }`; fully backward-compatible. (Current scope: the hook-based feed emits create/update/delete — a publish reads as `update`; the sequence counter is per-node.)
+
 ## 0.19.0
 
 ### Minor Changes
