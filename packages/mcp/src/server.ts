@@ -18,7 +18,16 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { CallToolResult, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js'
-import type { AdminCollection, AdminSchema, AuthUser, EndpointConfig, FieldScope, Kernel, RequestContext, Where } from '@kernel/core'
+import type {
+  AdminCollection,
+  AdminSchema,
+  AuthUser,
+  EndpointConfig,
+  FieldScope,
+  Kernel,
+  RequestContext,
+  Where,
+} from '@kernel/core'
 import { describeConfig, invokeEndpoint, isKernelError } from '@kernel/core'
 import { generateTools, type ToolDef } from './generate'
 
@@ -62,7 +71,11 @@ export function resolveAgentPrincipal(kernel: Kernel, token: string): AuthUser |
     // No early-out on the first hit: keep scanning so total work (and thus timing)
     // doesn't depend on WHICH agent matched.
     if (timingEqual(token, agent.token) && !matched) {
-      matched = { id: agent.id, roles: agent.roles ?? [], ...(agent.fieldScope ? { fieldScope: agent.fieldScope } : {}) }
+      matched = {
+        id: agent.id,
+        roles: agent.roles ?? [],
+        ...(agent.fieldScope ? { fieldScope: agent.fieldScope } : {}),
+      }
     }
   }
   if (!matched) return null
@@ -276,12 +289,7 @@ function endpointInput(
 
 /** Route a generated tool to its Local API op (or custom endpoint). `req` carries
  *  the agent principal; `overrideAccess` is never passed, so access is enforced. */
-async function dispatch(
-  kernel: Kernel,
-  tool: ToolDef,
-  args: ToolArgs,
-  req: Partial<RequestContext>,
-): Promise<unknown> {
+async function dispatch(kernel: Kernel, tool: ToolDef, args: ToolArgs, req: Partial<RequestContext>): Promise<unknown> {
   const { op, target } = tool
   switch (op) {
     case 'find':

@@ -149,9 +149,10 @@ describe('serveHttp — per-request agent auth', () => {
       name: 'posts_create',
       arguments: { title: 'T1', body: 'B1' },
     })
-    const aDoc = JSON.parse(
-      (a.content as Array<{ text?: string }>).find((c) => c.text)?.text ?? '{}',
-    ) as Record<string, unknown>
+    const aDoc = JSON.parse((a.content as Array<{ text?: string }>).find((c) => c.text)?.text ?? '{}') as Record<
+      string,
+      unknown
+    >
     expect(aDoc.title).toBe('T1')
     expect(aDoc.body ?? null).toBeNull()
     await contentClient.close()
@@ -162,9 +163,10 @@ describe('serveHttp — per-request agent auth', () => {
       name: 'posts_create',
       arguments: { title: 'T2', body: 'B2' },
     })
-    const bDoc = JSON.parse(
-      (b.content as Array<{ text?: string }>).find((c) => c.text)?.text ?? '{}',
-    ) as Record<string, unknown>
+    const bDoc = JSON.parse((b.content as Array<{ text?: string }>).find((c) => c.text)?.text ?? '{}') as Record<
+      string,
+      unknown
+    >
     expect(bDoc.body).toBe('B2')
     expect(bDoc.title ?? null).toBeNull()
     await tagsClient.close()

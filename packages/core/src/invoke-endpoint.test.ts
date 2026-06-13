@@ -98,21 +98,21 @@ describe('invokeEndpoint', () => {
       access: () => false,
       handler: () => ({ ok: true }),
     })
-    await expect(
-      invokeEndpoint(kernel, denied, { req: userReq() }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 })
+    await expect(invokeEndpoint(kernel, denied, { req: userReq() })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      status: 403,
+    })
   })
 
   it('throws UnauthorizedError (secure-by-default) for an anonymous caller', async () => {
-    await expect(
-      invokeEndpoint(kernel, get('/secret'), { req: anonReq() }),
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', status: 401 })
+    await expect(invokeEndpoint(kernel, get('/secret'), { req: anonReq() })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      status: 401,
+    })
   })
 
   it('throws a ValidationError with the HTTP error shape on invalid input', async () => {
-    await expect(
-      invokeEndpoint(kernel, get('/notes'), { input: { body: {} }, req: userReq() }),
-    ).rejects.toMatchObject({
+    await expect(invokeEndpoint(kernel, get('/notes'), { input: { body: {} }, req: userReq() })).rejects.toMatchObject({
       code: 'VALIDATION',
       status: 400,
       errors: [{ path: 'body.title', message: 'Required' }],

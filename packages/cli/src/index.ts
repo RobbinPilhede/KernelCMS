@@ -20,6 +20,30 @@ import type { Kernel, KernelConfig, KernelSchema } from '@kernel/core'
 import { serve } from '@kernel/server'
 import { configTemplate, moduleTemplate, toSlug } from './templates'
 
+/** Pick the stdio agent principal: explicit --agent, else the sole configured
+ *  agent. Ambiguous / empty / unknown is a hard, explained error. Pure so it's
+ *  testable without loading a config file. */
+export function selectStdioAgent<A extends { id: string }>(
+  agents: A[],
+  agentId: string | undefined,
+): { agent: A } | { error: string } {
+  if (agentId) {
+    const found = agents.find((a) => a.id === agentId)
+    return found ? { agent: found } : { error: `No agent with id "${agentId}" found in kernel.config.agents.` }
+  }
+  if (agents.length === 0) {
+    return {
+      error:
+        'No agents configured. Add an `agents: [...]` entry to your kernel.config (id + token) ' +
+        'so the MCP server has a principal to act as.',
+    }
+  }
+  if (agents.length === 1) return { agent: agents[0]! }
+  return {
+    error: `Multiple agents configured (${agents.map((a) => a.id).join(', ')}). Pick one with --agent <id>.`,
+  }
+}
+
 export { installWarningFilter, isSuppressedWarning } from './warnings'
 
 interface Flags {
@@ -366,9 +390,7 @@ export async function run(argv: string[]): Promise<void> {
       try {
         mcp = await import('@kernel/mcp')
       } catch {
-        console.error(
-          'MCP support needs @modelcontextprotocol/sdk — install it: npm install @modelcontextprotocol/sdk',
-        )
+        console.error('MCP support needs @modelcontextprotocol/sdk — install it: npm install @modelcontextprotocol/sdk')
         process.exitCode = 1
         break
       }
@@ -405,27 +427,15 @@ export async function run(argv: string[]): Promise<void> {
 
       // Pick the single agent principal for this stdio session: explicit --agent,
       // else the sole configured agent. Ambiguous/empty is a hard, explained error.
-      const agents = kernel.config.agents
       const agentId = typeof flags.agent === 'string' ? flags.agent : undefined
-      const agent = agentId ? agents.find((a) => a.id === agentId) : agents.length === 1 ? agents[0] : undefined
-      if (!agent) {
+      const picked = selectStdioAgent(kernel.config.agents, agentId)
+      if ('error' in picked) {
         await kernel.destroy()
-        if (agentId) {
-          console.error(`No agent with id "${agentId}" found in kernel.config.agents.`)
-        } else if (agents.length === 0) {
-          console.error(
-            'No agents configured. Add an `agents: [...]` entry to your kernel.config (id + token) ' +
-              'so the MCP server has a principal to act as.',
-          )
-        } else {
-          console.error(
-            `Multiple agents configured (${agents.map((a) => a.id).join(', ')}). ` +
-              'Pick one with --agent <id>.',
-          )
-        }
+        console.error(picked.error)
         process.exitCode = 1
         break
       }
+      const agent = picked.agent
 
       const principal = mcp.resolveAgentPrincipal(kernel, agent.token)
       // resolveAgentPrincipal can't realistically miss here (we read the token from
