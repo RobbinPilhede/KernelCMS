@@ -1,5 +1,17 @@
 # kernelcms
 
+## 0.19.0
+
+### Minor Changes
+
+- **Content time-machine: view, diff, and restore your content as it existed at any point in time.** KernelCMS already snapshots every change — now that history is a navigable timeline (a top "git-for-content" ask).
+  - **Point-in-time reads.** Pass `asOf: <ISO timestamp>` to `kernel.findByID` or `kernel.find` (and `GET /api/:collection/:id?asOf=` / `GET /api/:collection?asOf=`) to reconstruct a document — or an entire collection — exactly as it existed at that instant. `null` if it didn't exist yet; the live document when omitted.
+  - **Change timeline + field-level diffs.** `kernel.history({ collection, id })` returns the ordered change log (who, when, status, and the `changedFields` versus the previous snapshot); `kernel.diffVersions({ collection, id, from, to })` gives a field-level before/after between any two points (each a version id or a timestamp). Over REST: `GET /api/:collection/:id/history` and `/diff?from=&to=`.
+  - **One-call reversion.** `kernel.restoreAsOf({ collection, id, asOf })` (or `POST /api/:collection/:id/restore-as-of?asOf=`) restores a document to a past state by writing that content through the normal validated update path — content fields only, so a restore is never a sneaky publish, the agent draft-only brake still applies, and it records a new version.
+  - **Not a read-access bypass.** Every historical read and diff goes through the same access check + field redaction as a live read: if you can't read the document now, you can't read its history, diffs, or past states (the check is against current access — no time-travelling around revoked permissions), read-denied fields never appear in an `asOf` read or a `changedFields`/diff, and historical drafts stay hidden unless `draft:true`. Red-teamed exhaustively — **Risk: LOW, zero historical leaks** — verified by a live harness and a Playwright end-to-end test.
+
+  Works on any collection with `versions` enabled. Fully backward-compatible.
+
 ## 0.18.0
 
 ### Minor Changes
