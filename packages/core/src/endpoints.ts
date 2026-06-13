@@ -8,8 +8,10 @@
  * envelope as core routes. The HTTP glue (access, handler invocation, response)
  * lives in `@kernel/server`; everything here is unit-testable without a server.
  */
-import { ValidationError } from './errors'
-import type { EndpointConfig } from './types'
+import { ForbiddenError, UnauthorizedError, ValidationError } from './errors'
+import type { Logger } from '@kernel/db'
+import { createLogger } from './kernel'
+import type { EndpointConfig, Kernel, RequestContext } from './types'
 
 /** Identity helper. The argument is fully type-checked — `params`/`query`/`body`
  *  are inferred from the validators and the handler must consume them correctly —
@@ -84,4 +86,66 @@ export function parseEndpointInput(
     query: input?.query ? runParser(input.query, raw.query, 'query') : undefined,
     body: input?.body ? runParser(input.body, raw.body, 'body') : undefined,
   }
+}
+
+/** Args for {@link invokeEndpoint}. `input` is the *raw* (pre-validation) parts —
+ *  exactly what the HTTP path feeds `parseEndpointInput` — so in-process callers
+ *  go through the same validation/error envelope. `req` carries the principal and
+ *  locale; the access rule and handler see it unchanged. */
+export interface InvokeEndpointArgs {
+  input?: { params?: Record<string, string>; query?: Record<string, unknown>; body?: unknown }
+  req: RequestContext
+  logger?: Logger
+  /** The real web Request, when one exists (the HTTP path supplies it so access
+   *  rules and handlers can read headers/body). Omitted by non-HTTP callers, who
+   *  get a minimal in-process shim instead. */
+  request?: Request
+}
+
+// A non-HTTP caller has no real `Request`, but the endpoint contract types both the
+// `access` arg and `ctx.request` as `Request`. We pass a minimal web-standard shim
+// so the contract holds and handlers that only read headers/url degrade gracefully
+// rather than crashing on a null. Handlers that consume the *body* of `ctx.request`
+// (e.g. signed-webhook endpoints) are HTTP-only by nature and not meant for this path.
+const inProcessRequest = (): Request => new Request('kernel://in-process')
+
+/**
+ * Invoke a custom endpoint's business logic in-process — transport-agnostic.
+ *
+ * Runs the same pure pipeline as the HTTP path: authorize (explicit access rule,
+ * else secure-by-default authenticated-only), validate the declared input into a
+ * `ValidationError` on failure, then call the handler with a full typed context
+ * whose Local API is `kernel`. No HTTP Request/Response is touched — body plumbing,
+ * serialization, status codes and CORS stay in `@kernel/server`'s `runEndpoint`.
+ *
+ * Lives in `@kernel/core` (not `@kernel/server`) so non-HTTP callers such as the
+ * MCP server can drive endpoints without depending on the HTTP layer.
+ */
+export async function invokeEndpoint(
+  kernel: Kernel,
+  endpoint: EndpointConfig,
+  args: InvokeEndpointArgs,
+): Promise<unknown> {
+  const { req } = args
+  const user = req.user
+  const request = args.request ?? inProcessRequest()
+
+  // Authorize: explicit access rule, else secure-by-default (authenticated only).
+  // Identical semantics to runEndpoint — deny maps to 403 when a principal exists,
+  // 401 otherwise.
+  const allowed = endpoint.access ? await endpoint.access({ req, request }) : Boolean(user)
+  if (!allowed) throw user ? new ForbiddenError() : new UnauthorizedError()
+
+  // Validate through the endpoint's declared parsers — same ValidationError shape
+  // the HTTP path emits. Missing parts default to empty so omitted validators pass.
+  const input = parseEndpointInput(endpoint, {
+    params: args.input?.params ?? {},
+    query: args.input?.query ?? {},
+    body: args.input?.body,
+  }) as { params: unknown; query: unknown; body: unknown }
+
+  return endpoint.handler({
+    input,
+    ctx: { req, user, local: kernel, logger: args.logger ?? createLogger(), request },
+  })
 }

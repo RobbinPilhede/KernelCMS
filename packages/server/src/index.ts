@@ -20,7 +20,7 @@ import {
   connectorStatus,
   isKernelError,
   matchEndpoint,
-  parseEndpointInput,
+  invokeEndpoint,
   renderErrorMessage,
   setupRuntime,
   KERNEL_VERSION,
@@ -933,14 +933,10 @@ async function runEndpoint(
     context: { requestId },
   }
 
-  // Authorize: explicit access rule, else secure-by-default (authenticated only).
-  const allowed = endpoint.access ? await endpoint.access({ req, request }) : Boolean(user)
-  if (!allowed) throw user ? new ForbiddenError() : new UnauthorizedError()
-
-  // Read the JSON body only when the endpoint declares a body validator. Enforce
-  // the same size ceiling core JSON routes use — check the declared Content-Length
-  // first, then the actual bytes (a chunked request omits Content-Length, so the
-  // header alone isn't enough on the fetch/edge path).
+  // HTTP-bound: read the JSON body only when the endpoint declares a body validator.
+  // Enforce the same size ceiling core JSON routes use — check the declared
+  // Content-Length first, then the actual bytes (a chunked request omits
+  // Content-Length, so the header alone isn't enough on the fetch/edge path).
   let body: unknown
   if (endpoint.input?.body) {
     assertBodyWithinLimit(request, MAX_JSON_BODY_BYTES)
@@ -960,15 +956,16 @@ async function runEndpoint(
     }
   }
   const query = Object.fromEntries(url.searchParams.entries())
-  const input = parseEndpointInput(endpoint, { params, query, body }) as {
-    params: unknown
-    query: unknown
-    body: unknown
-  }
 
-  const result = await endpoint.handler({
-    input,
-    ctx: { req, user, local: kernel, logger, request },
+  // Authorize + validate input + run the handler via the shared transport-agnostic
+  // core. The handler still sees the real `request` because we route through ctx
+  // below — here we pass the parsed parts and let invokeEndpoint enforce access and
+  // re-validate (identical ValidationError shape).
+  const result = await invokeEndpoint(kernel, endpoint, {
+    input: { params, query, body },
+    req,
+    logger,
+    request,
   })
   if (result instanceof Response) return result
   return json(result ?? null)
