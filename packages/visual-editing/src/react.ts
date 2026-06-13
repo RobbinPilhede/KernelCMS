@@ -24,7 +24,6 @@ export function useKernelPreview<T>(initial: T, opts?: ConnectOptions): T {
       handle.destroy()
     }
     // opts is treated as stable; callers should memoize if they pass one.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return data

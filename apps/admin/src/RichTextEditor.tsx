@@ -357,7 +357,7 @@ export function RichTextEditor({ meta, value, onChange, readOnly }: Props) {
   // Reflect readOnly without remounting.
   useEffect(() => {
     readOnlyRef.current = Boolean(readOnly)
-    viewRef.current?.setProps({ editable: () => !Boolean(readOnly) })
+    viewRef.current?.setProps({ editable: () => !readOnly })
   }, [readOnly])
 
   // External value sync: reset the doc only when the incoming value is genuinely
