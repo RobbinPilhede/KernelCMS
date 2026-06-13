@@ -232,6 +232,9 @@ importers:
       pg:
         specifier: ^8.13.1
         version: 8.21.0
+      react:
+        specifier: '>=18'
+        version: 18.3.1
     devDependencies:
       '@kernel/cli':
         specifier: workspace:*
@@ -269,9 +272,15 @@ importers:
       '@kernel/testing':
         specifier: workspace:*
         version: link:../testing
+      '@kernel/visual-editing':
+        specifier: workspace:*
+        version: link:../visual-editing
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
+      '@types/react':
+        specifier: ^18.3.18
+        version: 18.3.29
       tsup:
         specifier: ^8.3.5
         version: 8.5.1(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)
