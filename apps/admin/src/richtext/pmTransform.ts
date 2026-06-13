@@ -141,9 +141,7 @@ function pmInlineToKernel(node: PMNode): RichInlineNode[] {
         ]
       }
       return [
-        newTab
-          ? { type: 'link', url, newTab, children: [textNode] }
-          : { type: 'link', url, children: [textNode] },
+        newTab ? { type: 'link', url, newTab, children: [textNode] } : { type: 'link', url, children: [textNode] },
       ]
     }
     return [textNode]

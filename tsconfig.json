@@ -4,10 +4,5 @@
     "noEmit": true
   },
   "include": ["packages/**/*.ts", "examples/**/*.ts"],
-  "exclude": [
-    "**/dist/**",
-    "**/node_modules/**",
-    "packages/create-kernel/template/**",
-    "packages/visual-editing/**"
-  ]
+  "exclude": ["**/dist/**", "**/node_modules/**", "packages/create-kernel/template/**", "packages/visual-editing/**"]
 }
