@@ -67,6 +67,8 @@ export { oauthProvider, googleOAuth, githubOAuth } from './oauth'
 export type { OAuthProvider, OAuthProfile } from './oauth'
 export { describeConfig } from './describe'
 export type { AdminSchema, AdminCollection, AdminGlobal, AdminField, AdminBlock, AdminFieldOption } from './describe'
+export { fieldSchema, propertiesOf, docSchema } from './json-schema'
+export type { JsonSchema } from './json-schema'
 
 export {
   definePlugin,

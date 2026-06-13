@@ -9,70 +9,16 @@
  * input validators are opaque `Parser`s); a request/response body is marked as a
  * free-form object, which Scalar still renders as a usable "try it" form.
  */
-import { describeConfig } from '@kernel/core'
-import type { AdminCollection, AdminField, AdminGlobal, EndpointConfig, Kernel } from '@kernel/core'
-
-type JsonSchema = Record<string, unknown>
+import { describeConfig, docSchema } from '@kernel/core'
+// fieldSchema/propertiesOf/docSchema moved to @kernel/core's json-schema so
+// @kernel/mcp can reuse the same field -> JSON Schema mapping without depending
+// on @kernel/server. Only docSchema is referenced here.
+import type { AdminCollection, AdminGlobal, EndpointConfig, JsonSchema, Kernel } from '@kernel/core'
 
 interface OpenApiOptions {
   apiBase: string
   title?: string
   version?: string
-}
-
-/** Map a single descriptor field to a JSON Schema fragment. */
-function fieldSchema(field: AdminField): JsonSchema {
-  const wrapMany = (item: JsonSchema): JsonSchema => (field.hasMany ? { type: 'array', items: item } : item)
-  switch (field.type) {
-    case 'number':
-      return { type: 'number' }
-    case 'boolean':
-    case 'checkbox':
-      return { type: 'boolean' }
-    case 'date':
-      return { type: 'string', format: 'date-time' }
-    case 'email':
-      return { type: 'string', format: 'email' }
-    case 'json':
-    case 'point':
-    case 'richText':
-      return {} // free-form
-    case 'select':
-    case 'radio': {
-      const values = (field.options ?? []).map((o) => o.value)
-      return wrapMany(values.length ? { type: 'string', enum: values } : { type: 'string' })
-    }
-    case 'relationship':
-    case 'upload':
-      return wrapMany({ type: 'string', description: `Related id (${String(field.relationTo)})` })
-    case 'group':
-      return { type: 'object', properties: propertiesOf(field.fields ?? []) }
-    case 'array':
-      return { type: 'array', items: { type: 'object', properties: propertiesOf(field.fields ?? []) } }
-    case 'blocks':
-      return { type: 'array', items: { type: 'object' } }
-    default:
-      return { type: 'string' } // text, textarea, slug, code, password
-  }
-}
-
-function propertiesOf(fields: AdminField[]): Record<string, JsonSchema> {
-  const props: Record<string, JsonSchema> = {}
-  for (const f of fields) {
-    // Never document hidden fields — these are server-managed columns
-    // (hash/api_key/reset_token/totp_secret/…) whose names should not leak.
-    if (f.admin?.hidden) continue
-    props[f.name] = fieldSchema(f)
-  }
-  return props
-}
-
-function docSchema(fields: AdminField[]): JsonSchema {
-  const props = propertiesOf(fields)
-  props.id = { type: 'string' }
-  props.createdAt = { type: 'string', format: 'date-time' }
-  props.updatedAt = { type: 'string', format: 'date-time' }
-  return { type: 'object', properties: props }
 }
 
 const listEnvelope = (ref: string): JsonSchema => ({

@@ -23,6 +23,7 @@
       "@kernel/core": ["packages/core/src/index.ts"],
       "@kernel/db-sqlite": ["packages/db-sqlite/src/index.ts"],
       "@kernel/server": ["packages/server/src/index.ts"],
+      "@kernel/mcp": ["packages/mcp/src/index.ts"],
       "@kernel/client": ["packages/client/src/index.ts"],
       "@kernel/visual-editing": ["packages/visual-editing/src/index.ts"],
       "@kernel/visual-editing/react": ["packages/visual-editing/src/react.ts"]
