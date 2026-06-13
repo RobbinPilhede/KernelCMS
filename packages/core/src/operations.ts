@@ -44,8 +44,11 @@ import type {
   RunJobsResult,
   SanitizedConfig,
   UpdateGlobalOptions,
+  UpdateLocalesOptions,
   UpdateManyOptions,
   UpdateOptions,
+  TranslationStatusOptions,
+  TranslationStatusListOptions,
   UploadConfig,
   UploadDocOptions,
   VersionDoc,
@@ -80,6 +83,7 @@ import {
   serializeDoc,
   storageFields,
   validateFields,
+  validateLocaleRequired,
 } from './fields'
 import { evalAccess, isAllowed, asWhere } from './access'
 import { JOBS_SLUG } from './config'
@@ -365,18 +369,74 @@ export function createOperations(ctx: OperationCtx) {
     }
   }
 
+  const loc = config.localization || false
+  const strictLoc = loc ? loc.strict : false
+
   function buildReq(partial?: Partial<RequestContext>): RequestContext {
-    const defaultLocale = config.localization ? config.localization.defaultLocale : 'en'
-    const fallback = config.localization
-      ? config.localization.fallback
-        ? config.localization.defaultLocale
-        : false
-      : false
+    const defaultLocale = loc ? loc.defaultLocale : 'en'
+    // Under strict localization the DEFAULT request behaviour is no-fallback (so an
+    // untranslated field never masquerades as present). A caller may still opt in by
+    // passing an explicit `fallbackLocale`; we record that opt-in via the context so the
+    // deserialize path can honour it. Non-strict keeps the historical fallback default.
+    const callerSetFallback = partial ? Object.prototype.hasOwnProperty.call(partial, 'fallbackLocale') : false
+    const configFallback = loc ? (loc.fallback ? loc.defaultLocale : false) : false
+    const fallback = callerSetFallback
+      ? (partial!.fallbackLocale as string | false)
+      : strictLoc
+        ? false
+        : configFallback
+    const context = partial?.context ?? {}
     return {
       user: partial?.user ?? null,
       locale: partial?.locale ?? defaultLocale,
-      fallbackLocale: partial?.fallbackLocale ?? fallback,
-      context: partial?.context ?? {},
+      fallbackLocale: fallback,
+      context: callerSetFallback && strictLoc ? { ...context, __strictFallbackOptIn: true } : context,
+    }
+  }
+
+  /** The single locale a write targets. `'all'` is a READ sentinel only — a write must
+   *  name one concrete locale (use `updateLocales` to write many at once). */
+  function writeLocale(req: RequestContext): string {
+    if (loc !== false && req.locale === 'all') {
+      throw new BadRequestError('locale "all" is read-only; write one locale at a time (or use updateLocales).')
+    }
+    return req.locale
+  }
+
+  /** Strict per-locale required check: every required localized field must have a value
+   *  for each `locales` written. No-op unless strict localization is on. */
+  function assertLocaleRequired(collection: CollectionConfig, row: Row, locales: string[]): void {
+    if (!strictLoc) return
+    const errors = validateLocaleRequired(collection.fields, row, locales)
+    if (errors.length) throw new ValidationError(errors)
+  }
+
+  /** Strict publish gate: reject a publish when the DEFAULT locale is missing any required
+   *  localized field, listing the offending `locale.field` pairs. No-op unless strict. */
+  function assertDefaultLocaleComplete(collection: CollectionConfig, row: Row): void {
+    if (!strictLoc || loc === false) return
+    const errors = validateLocaleRequired(collection.fields, row, [loc.defaultLocale])
+    if (errors.length) {
+      const pairs = errors.map((e) => e.path).join(', ')
+      throw new ValidationError([
+        {
+          path: '_status',
+          message: `Cannot publish: the default locale "${loc.defaultLocale}" is missing required field(s): ${pairs}.`,
+        },
+        ...errors,
+      ])
+    }
+  }
+
+  /** Build the deserialize options for a request: strict no-fallback, the per-request
+   *  fallback opt-in, and `locale:'all'` whole-map reads. */
+  function deserializeOptsFor(req: RequestContext) {
+    return {
+      locale: req.locale,
+      fallbackLocale: req.fallbackLocale,
+      strict: strictLoc,
+      strictFallbackOptIn: req.context?.__strictFallbackOptIn === true,
+      allLocales: loc !== false && req.locale === 'all',
     }
   }
 
@@ -393,10 +453,7 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   function rowToDoc(collection: CollectionConfig, row: Row, req: RequestContext): Doc {
-    const body = deserializeDoc(collection.fields, row, {
-      locale: req.locale,
-      fallbackLocale: req.fallbackLocale,
-    })
+    const body = deserializeDoc(collection.fields, row, deserializeOptsFor(req))
     const doc: Doc = { id: String(row.id), ...body }
     if (row.createdAt !== undefined) doc.createdAt = row.createdAt
     if (row.updatedAt !== undefined) doc.updatedAt = row.updatedAt
@@ -1336,12 +1393,19 @@ export function createOperations(ctx: OperationCtx) {
     const errors = await validateFields(collection.fields, data, { req, operation: 'create' })
     if (errors.length) throw new ValidationError(errors)
 
-    const row = serializeDoc(collection.fields, data, { locale: req.locale })
+    const localeWritten = writeLocale(req)
+    const row = serializeDoc(collection.fields, data, { locale: localeWritten })
+    // Strict: a newly-written locale must satisfy required localized fields for itself.
+    assertLocaleRequired(collection, row, [localeWritten])
     row.id = randomUUID()
     if (draftsOn(collection)) {
       row._status = statusFromData(opts.data as Row, 'draft')
       // Born-published: a new doc whose status is 'published' is a publish transition.
-      if (!override && row._status === 'published') await assertCanPublish(collection, req, undefined, opts.data as Row)
+      if (!override && row._status === 'published') {
+        await assertCanPublish(collection, req, undefined, opts.data as Row)
+        // Strict publish gate also applies to a born-published create.
+        assertDefaultLocaleComplete(collection, row)
+      }
       // Agent draft-only brake, scheduled-publish variant: a non-null `_scheduled_at` on
       // create schedules a publish processScheduledPublishes() runs under override — a
       // publish by proxy. An agent can never schedule one (mirrors the update() guard).
@@ -1485,13 +1549,20 @@ export function createOperations(ctx: OperationCtx) {
 
     // Serialize the post-hook, post-compute document — NOT the raw input — so any
     // field a beforeChange hook (or a stored compute) added/changed is persisted.
-    const row = serializeDoc(collection.fields, merged, { locale: req.locale, existingRow: existing })
+    const localeWritten = writeLocale(req)
+    const row = serializeDoc(collection.fields, merged, { locale: localeWritten, existingRow: existing })
+    // Strict: only the locale being written must satisfy its required localized fields;
+    // locales already stored are never retroactively failed.
+    assertLocaleRequired(collection, row, [localeWritten])
     if (draftsOn(collection)) {
       row._status = statusFromData(opts.data as Row, (existing._status as string) ?? 'draft')
       // Publish transition: becoming published when not already. Covers publish()→update(),
       // a raw PATCH `{ _status: 'published' }`, and restoreVersion of a published snapshot.
       if (!override && row._status === 'published' && existing._status !== 'published') {
         await assertCanPublish(collection, req, opts.id, opts.data as Row)
+        // Strict publish gate: the DEFAULT locale must be complete (no required localized
+        // field missing) — you can't publish a doc whose primary language is unfinished.
+        assertDefaultLocaleComplete(collection, row)
       }
       // Scheduled-publish time is a system column; let publish()/processScheduled set it.
       if (Object.prototype.hasOwnProperty.call(opts.data, '_scheduled_at')) {
@@ -1533,6 +1604,162 @@ export function createOperations(ctx: OperationCtx) {
     await applyComputed(collection.fields, doc, req)
     if (!override) await applyReadFieldAccess(collection.fields, doc, req)
     return doc as T
+  }
+
+  // -------------------------------------------------------------------------
+  // Localization: bulk multi-locale writes + translation status
+  // -------------------------------------------------------------------------
+
+  // Keys that must never be treated as a locale code (prototype pollution guard).
+  const FORBIDDEN_LOCALE_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+  /**
+   * Write several locales of one document in a single call. Each locale's partial flows
+   * through the NORMAL `update()` pipeline (access, field-access, hooks, validation,
+   * strict per-locale required checks) under a req pinned to that locale — so nothing is
+   * bypassed and `serializeDoc`'s per-locale merge preserves every untouched locale.
+   * Untrusted: keys are validated against the configured locale set and prototype-
+   * pollution keys are rejected before any write.
+   */
+  async function updateLocales<T extends Doc = Doc>(opts: UpdateLocalesOptions): Promise<T | null> {
+    const collection = collectionOrThrow(opts.collection)
+    if (loc === false) throw new BadRequestError('Localization is not enabled (set `config.localization`).')
+    const map = opts.locales
+    if (!map || typeof map !== 'object' || Array.isArray(map)) {
+      throw new BadRequestError('`locales` must be an object keyed by locale code.')
+    }
+    const allowed = new Set(loc.locales)
+    // Validate EVERY key up front so a bad code can't partially apply (some locales
+    // written, then a reject) — fail before the first write.
+    const codes = Object.keys(map)
+    if (codes.length === 0) throw new BadRequestError('`locales` must name at least one locale.')
+    for (const code of codes) {
+      if (FORBIDDEN_LOCALE_KEYS.has(code)) throw new BadRequestError(`Illegal locale key "${code}".`)
+      if (!allowed.has(code)) {
+        throw new BadRequestError(`Unknown locale "${code}". Configured: ${loc.locales.join(', ')}.`)
+      }
+    }
+
+    // Apply each locale via the access-checked update path. Sequential (not parallel) so
+    // each write sees the prior write's merged per-locale maps — keeping the storage row
+    // the single source of truth and avoiding lost updates. Any rejection (access /
+    // validation / strict) propagates and aborts the remaining locales.
+    let last: T | null = null
+    for (const code of codes) {
+      const partial = map[code]
+      if (!partial || typeof partial !== 'object' || Array.isArray(partial)) {
+        throw new BadRequestError(`Locale "${code}" partial must be an object.`)
+      }
+      last = await update<T>({
+        collection: opts.collection,
+        id: opts.id,
+        data: partial,
+        req: { ...opts.req, locale: code },
+        overrideAccess: opts.overrideAccess,
+        depth: opts.depth,
+      })
+    }
+    return last
+  }
+
+  /** Required localized field names on a collection (strict and non-strict alike). */
+  function requiredLocalizedFields(collection: CollectionConfig): string[] {
+    return storageFields(collection.fields)
+      .filter((f) => f.localized && f.required)
+      .map((f) => f.name)
+  }
+
+  /** All localized field names on a collection. */
+  function localizedFields(collection: CollectionConfig): string[] {
+    return storageFields(collection.fields)
+      .filter((f) => f.localized)
+      .map((f) => f.name)
+  }
+
+  /** True when a stored per-locale map holds a non-empty value for `locale`. */
+  function localeHasValue(raw: unknown, locale: string): boolean {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+    const value = (raw as Record<string, unknown>)[locale]
+    return value !== undefined && value !== null && value !== ''
+  }
+
+  /** Compute the per-locale completeness map for a single STORAGE row. */
+  function statusForRow(collection: CollectionConfig, row: Row): import('./types').TranslationStatus {
+    if (loc === false) return {}
+    const required = requiredLocalizedFields(collection)
+    const localized = localizedFields(collection)
+    const status: import('./types').TranslationStatus = {}
+    for (const locale of loc.locales) {
+      const missingRequired = required.filter((name) => !localeHasValue(row[name], locale))
+      const filled = localized.filter((name) => localeHasValue(row[name], locale)).length
+      status[locale] = {
+        complete: missingRequired.length === 0,
+        missingRequired,
+        filled,
+        totalLocalized: localized.length,
+      }
+    }
+    return status
+  }
+
+  /**
+   * Per-locale translation completeness for one document. Access-checked through the
+   * read path: a caller who can't read the doc gets a Forbidden/Not-found, never status.
+   * Returns an empty object when localization is off or the collection has no localized
+   * fields. Reads the RAW per-locale maps via a `locale:'all'` read so every locale is
+   * inspected regardless of the request's active locale.
+   */
+  async function translationStatus(opts: TranslationStatusOptions): Promise<import('./types').TranslationStatus> {
+    const collection = collectionOrThrow(opts.collection)
+    if (loc === false || localizedFields(collection).length === 0) return {}
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    const row = await db.findByID({ collection: collection.slug, id: opts.id })
+    if (!row) throw new NotFoundError()
+    // Published-only unless drafts requested — parity with findByID.
+    if (draftsOn(collection) && !(opts.draft ?? false) && row._status !== 'published') throw new NotFoundError()
+    if (!override) {
+      const access = await evalAccess(collection.access?.read, { req, id: opts.id })
+      if (!isAllowed(access)) throw new ForbiddenError()
+      const scope = asWhere(access)
+      if (scope && !matchesWhere(row, scope)) throw new ForbiddenError()
+    }
+    return statusForRow(collection, row)
+  }
+
+  /**
+   * Translation dashboard: per-locale completeness across a collection's documents,
+   * scoped by the caller's read access (no override widening). Empty when localization
+   * is off or the collection has no localized fields. Computes status from the raw
+   * stored per-locale maps, so it never depends on the active request locale.
+   */
+  async function translationStatusList(
+    opts: TranslationStatusListOptions,
+  ): Promise<{ docs: import('./types').TranslationStatusItem[]; count: number }> {
+    const collection = collectionOrThrow(opts.collection)
+    if (loc === false || localizedFields(collection).length === 0) return { docs: [], count: 0 }
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+
+    assertWhereFields(collection, opts.where)
+    let where = opts.where
+    if (!override) {
+      const access = await evalAccess(collection.access?.read, { req })
+      if (!isAllowed(access)) throw new ForbiddenError()
+      where = mergeWhere(where, asWhere(access))
+    }
+    // A dashboard spans drafts + published, so include drafts when the collection has them.
+    const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
+    const page = Math.max(opts.page ?? 1, 1)
+    const result = await db.find({ collection: collection.slug, where, sort: undefined, limit, page })
+    const docs: import('./types').TranslationStatusItem[] = []
+    for (const row of result.docs) {
+      const status = statusForRow(collection, row)
+      const completeLocales = loc.locales.filter((l) => status[l]?.complete)
+      const incompleteLocales = loc.locales.filter((l) => status[l] && !status[l]!.complete)
+      docs.push({ id: String(row.id), status, completeLocales, incompleteLocales })
+    }
+    return { docs, count: result.totalDocs }
   }
 
   // -------------------------------------------------------------------------
@@ -2344,15 +2571,9 @@ export function createOperations(ctx: OperationCtx) {
   function globalDoc(global: GlobalConfig, row: Row | null, req: RequestContext): Row {
     if (!row) {
       const defaults = applyDefaults(global.fields, {})
-      return deserializeDoc(global.fields, defaults, {
-        locale: req.locale,
-        fallbackLocale: req.fallbackLocale,
-      })
+      return deserializeDoc(global.fields, defaults, deserializeOptsFor(req))
     }
-    const body = deserializeDoc(global.fields, row, {
-      locale: req.locale,
-      fallbackLocale: req.fallbackLocale,
-    })
+    const body = deserializeDoc(global.fields, row, deserializeOptsFor(req))
     if (row.updatedAt !== undefined) body.updatedAt = row.updatedAt
     return body
   }
@@ -2667,6 +2888,9 @@ export function createOperations(ctx: OperationCtx) {
     find,
     findByID,
     update,
+    updateLocales,
+    translationStatus,
+    translationStatusList,
     updateMany,
     delete: deleteOne,
     deleteMany,

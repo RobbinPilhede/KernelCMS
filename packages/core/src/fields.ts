@@ -270,6 +270,35 @@ export async function validateFields(
   return errors
 }
 
+/**
+ * Strict-mode per-locale required validation. Given a stored row (per-locale maps) and
+ * the set of locales touched by this write, ensure every REQUIRED localized field has a
+ * value FOR EACH touched locale — so a partially-translated locale that omits a required
+ * localized field can't be saved. Only validates the locales being written; locales
+ * already stored are left untouched (no retroactive failures). Non-localized required
+ * fields stay the job of `validateFields`.
+ */
+export function validateLocaleRequired(fieldsIn: ConfigField[], row: Row, locales: string[]): FieldError[] {
+  const fields = storageFields(fieldsIn)
+  const errors: FieldError[] = []
+  for (const field of fields) {
+    if (!field.localized || !field.required) continue
+    const raw = row[field.name]
+    const map = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+    const label = fieldLabel(field)
+    for (const locale of locales) {
+      const value = Object.prototype.hasOwnProperty.call(map, locale) ? map[locale] : undefined
+      const empty =
+        field.type === 'richText' && value != null && value !== ''
+          ? isRichTextLike(value) && isEmptyRichText(asRichTextDoc(value))
+          : isEmpty(value)
+      if (empty)
+        errors.push({ path: `${locale}.${field.name}`, message: `${label} is required for locale "${locale}".` })
+    }
+  }
+  return errors
+}
+
 function validateFieldType(field: AnyField, value: unknown, label: string): string | null {
   switch (field.type) {
     case 'text':
@@ -404,16 +433,38 @@ export function serializeDoc(fieldsIn: ConfigField[], data: Row, opts: Serialize
 export interface DeserializeOptions {
   locale: string
   fallbackLocale: string | false
+  /** Strict localization (no silent fallback). When true, a missing locale resolves to
+   *  `null` and the `fallbackLocale` is only consulted if the caller set one explicitly
+   *  (`strictFallbackOptIn`). Threaded from `localization.strict`. */
+  strict?: boolean
+  /** Whether the request opted into fallback under strict (an explicit `fallbackLocale`).
+   *  Without it, strict reads do NOT fall back even if a `fallbackLocale` is present. */
+  strictFallbackOptIn?: boolean
+  /** Read EVERY locale: localized fields are returned as their full `{ [locale]: value }`
+   *  map (a defensive copy) instead of a single resolved value. */
+  allLocales?: boolean
 }
 
-function resolveLocale(raw: unknown, locale: string, fallback: string | false): unknown {
+function resolveLocale(raw: unknown, opts: DeserializeOptions): unknown {
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     const map = raw as Record<string, unknown>
-    if (locale in map) return map[locale]
-    if (fallback && fallback in map) return map[fallback]
+    if (opts.locale in map) return map[opts.locale]
+    // Strict mode never silently masks an untranslated field with another locale's
+    // value — unless the caller explicitly opted into a fallback for this request.
+    const allowFallback = !opts.strict || opts.strictFallbackOptIn === true
+    const fallback = opts.fallbackLocale
+    if (allowFallback && fallback && fallback in map) return map[fallback]
     return null
   }
   return raw ?? null
+}
+
+/** A defensive copy of a stored per-locale map (so callers can't mutate storage). */
+function localeMapCopy(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return { ...(raw as Record<string, unknown>) }
+  }
+  return {}
 }
 
 /** Resolve a storage row into a public document body (localized values resolved). */
@@ -422,11 +473,11 @@ export function deserializeDoc(fieldsIn: ConfigField[], row: Row, opts: Deserial
   const doc: Row = {}
   for (const field of fields) {
     const raw = row[field.name]
-    doc[field.name] = field.localized
-      ? resolveLocale(raw, opts.locale, opts.fallbackLocale)
-      : raw === undefined
-        ? null
-        : raw
+    if (field.localized) {
+      doc[field.name] = opts.allLocales ? localeMapCopy(raw) : resolveLocale(raw, opts)
+    } else {
+      doc[field.name] = raw === undefined ? null : raw
+    }
   }
   return doc
 }

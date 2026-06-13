@@ -21,6 +21,7 @@ export {
   defaultForField,
   applyDefaults,
   validateFields,
+  validateLocaleRequired,
   serializeDoc,
   deserializeDoc,
   relationshipFields,
@@ -108,6 +109,7 @@ export { systemInfo, formatSystemInfo, setupRuntime, connectorStatus, KERNEL_VER
 export type { SystemInfo, CollectionInfo, SetupRuntime, ConnectorStatus } from './info'
 
 export * from './errors'
+export { ALL_LOCALES } from './types'
 export type * from './types'
 
 // Convenience re-exports of the storage contract.

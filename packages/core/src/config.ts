@@ -404,10 +404,10 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
 
   let localization: SanitizedLocalization | false = false
   if (config.localization) {
-    const { locales, defaultLocale, fallback } = config.localization
+    const { locales, defaultLocale, fallback, strict } = config.localization
     assert(locales.length > 0, 'localization.locales must not be empty')
     assert(locales.includes(defaultLocale), `localization.defaultLocale "${defaultLocale}" must be in locales`)
-    localization = { locales, defaultLocale, fallback: fallback ?? true }
+    localization = { locales, defaultLocale, fallback: fallback ?? true, strict: strict === true }
   }
 
   // Gate the production secret. This runs inside sanitizeConfig, so every boot

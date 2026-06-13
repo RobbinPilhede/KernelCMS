@@ -548,6 +548,13 @@ export interface LocalizationConfig {
   locales: string[]
   defaultLocale: string
   fallback?: boolean
+  /** Strict localization. OFF by default (fully backward-compatible). When on:
+   *  reads NEVER silently fall back to another locale (an untranslated field reads
+   *  `null`, so missing translations can't masquerade as present); `required`
+   *  localized fields are validated for the locale being written; and `publish`
+   *  rejects a doc whose DEFAULT locale is missing a required localized field.
+   *  A caller may still opt into fallback per-request via an explicit `fallbackLocale`. */
+  strict?: boolean
 }
 
 export type WebhookEvent = 'create' | 'update' | 'delete'
@@ -644,7 +651,13 @@ export interface SanitizedLocalization {
   locales: string[]
   defaultLocale: string
   fallback: boolean
+  /** Strict mode resolved from config (default false). See {@link LocalizationConfig.strict}. */
+  strict: boolean
 }
+
+/** Sentinel `locale` value: read EVERY locale at once. Localized fields come back as
+ *  their full `{ [locale]: value }` map instead of a single resolved value. */
+export const ALL_LOCALES = 'all' as const
 
 export interface SanitizedConfig {
   serverURL: string
@@ -778,6 +791,53 @@ export interface UpdateOptions extends OperationBase {
   /** Mark this save as an autosave: the version snapshot is flagged `autosave`
    *  (drafts collections), so the UI can distinguish auto-saved drafts from manual ones. */
   autosave?: boolean
+}
+
+/** Write several locales of one document in a single call. Each entry in `locales`
+ *  is a partial document for that locale; localized fields are merged into the stored
+ *  per-locale maps (untouched locales are preserved, never clobbered). Every locale
+ *  goes through the normal access + validation pipeline — no override widening. */
+export interface UpdateLocalesOptions extends OperationBase {
+  collection: string
+  id: string
+  /** Per-locale partials, keyed by locale code. Keys must be configured locales;
+   *  unknown codes and prototype-pollution keys are rejected. */
+  locales: Record<string, Row>
+}
+
+/** Per-locale completeness for one document. */
+export interface LocaleStatus {
+  /** All required localized fields have a value in this locale. */
+  complete: boolean
+  /** Required localized field names with no value in this locale. */
+  missingRequired: string[]
+  /** How many localized fields have a value in this locale. */
+  filled: number
+  /** Total number of localized fields on the collection. */
+  totalLocalized: number
+}
+
+/** `translationStatus` result: completeness keyed by locale code. */
+export type TranslationStatus = Record<string, LocaleStatus>
+
+export interface TranslationStatusOptions extends OperationBase {
+  collection: string
+  id: string
+}
+
+/** One row in the translation dashboard: a document with its per-locale status. */
+export interface TranslationStatusItem {
+  id: string
+  status: TranslationStatus
+  completeLocales: string[]
+  incompleteLocales: string[]
+}
+
+export interface TranslationStatusListOptions extends OperationBase {
+  collection: string
+  where?: Where
+  limit?: number
+  page?: number
 }
 
 export interface UpdateManyOptions extends OperationBase {
@@ -1012,6 +1072,18 @@ export interface Kernel {
   create<T extends Doc = Doc>(opts: CreateOptions): Promise<T>
   upload<T extends Doc = Doc>(opts: UploadDocOptions): Promise<T>
   update<T extends Doc = Doc>(opts: UpdateOptions): Promise<T | null>
+  /** Write several locales of one document in a single call, merging each locale's
+   *  partial into the stored per-locale maps (untouched locales preserved). Runs the
+   *  normal access + validation pipeline per locale; under strict localization each
+   *  provided locale must satisfy its required localized fields. */
+  updateLocales<T extends Doc = Doc>(opts: UpdateLocalesOptions): Promise<T | null>
+  /** Per-locale translation completeness for one document (required-field coverage
+   *  and fill counts per configured locale). Access-checked via the read path. */
+  translationStatus(opts: TranslationStatusOptions): Promise<TranslationStatus>
+  /** Translation dashboard: per-locale completeness across a collection's documents,
+   *  scoped by the caller's read access. Empty when the collection has no localized
+   *  fields or localization is off. */
+  translationStatusList(opts: TranslationStatusListOptions): Promise<{ docs: TranslationStatusItem[]; count: number }>
   updateMany<T extends Doc = Doc>(opts: UpdateManyOptions): Promise<BulkResult<T>>
   delete<T extends Doc = Doc>(opts: DeleteOptions): Promise<T | null>
   deleteMany<T extends Doc = Doc>(opts: DeleteManyOptions): Promise<BulkResult<T>>

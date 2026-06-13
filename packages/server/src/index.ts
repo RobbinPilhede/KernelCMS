@@ -674,6 +674,28 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       return methodNotAllowed()
     }
 
+    // GET /_admin/translation-status/:collection -> the localization dashboard: per-locale
+    // completeness across a collection (optional ?id= for one document). REVIEWER-gated
+    // (admin OR editor); core scopes the listing by the reviewer's own read access, so it
+    // never widens what they could read directly. No-op shape when localization is off.
+    if (segments[1] === 'translation-status' && segments.length === 3 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Translation dashboard access requires an admin or editor role.')
+      const collection = segments[2]!
+      const id = url.searchParams.get('id')
+      if (id) {
+        return json(await kernel.translationStatus({ collection, id, req: { user } }))
+      }
+      return json(
+        await kernel.translationStatusList({
+          collection,
+          limit: toNum(url.searchParams.get('limit')) ?? undefined,
+          page: toNum(url.searchParams.get('page')) ?? undefined,
+          req: { user },
+        }),
+      )
+    }
+
     // POST /_admin/env -> persist chosen connector settings to the project .env.
     // Strictly first-run only (no admin yet = local operator) AND never in
     // production. Only whitelisted, single-line keys are written. Applies on the
