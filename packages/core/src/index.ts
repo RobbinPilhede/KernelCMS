@@ -13,6 +13,8 @@ export {
   AUDIT_TABLE,
   REVIEWS_TABLE,
   MIGRATIONS_TABLE,
+  LOCKS_TABLE,
+  PRESENCE_TABLE,
 } from './schema'
 export { generateTypes } from './codegen'
 export type { CodegenInput } from './codegen'

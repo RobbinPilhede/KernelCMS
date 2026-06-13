@@ -40,6 +40,16 @@ export const REVIEWS_TABLE = '_reviews'
  *  recording exactly what was created so a rollback can invert only those changes. */
 export const MIGRATIONS_TABLE = '_migrations'
 
+/** Storage table holding ADVISORY soft locks — one row per `${collection}:${documentId}`
+ *  a principal is editing. Advisory only: a lock NEVER changes write authorization, it
+ *  just signals "someone else is here". Always provisioned (a system table, no opt-in). */
+export const LOCKS_TABLE = '_locks'
+
+/** Storage table holding lightweight presence — one row per
+ *  `${collection}:${documentId}:${principalId}` heartbeat (who's viewing/editing).
+ *  Active set is derived by a `lastSeen` TTL filter. Always provisioned. */
+export const PRESENCE_TABLE = '_presence'
+
 /** Compile the sanitized config into the storage-facing schema for the adapter. */
 export function compileSchema(config: SanitizedConfig): KernelSchema {
   const tables: TableSchema[] = []
@@ -161,6 +171,47 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
       { name: 'createdTables', type: 'json', required: false, unique: false, indexed: false, localized: false },
       { name: 'addedColumns', type: 'json', required: false, unique: false, indexed: false, localized: false },
       { name: 'statements', type: 'json', required: false, unique: false, indexed: false, localized: false },
+    ],
+    timestamps: true,
+    singleton: false,
+  })
+
+  // Advisory soft locks. Always provisioned (a system table, no config opt-in) so the
+  // collaboration ops work on any boot. The pk is `${collection}:${documentId}`, so a
+  // doc has at most ONE lock row; `expiresAt` (indexed) drives the unexpired filter and
+  // a re-acquire by the same principal just overwrites the row. Advisory by contract —
+  // nothing here gates writes; access control is unaffected (see operations.acquireLock).
+  tables.push({
+    table: LOCKS_TABLE,
+    slug: LOCKS_TABLE,
+    columns: [
+      { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+      { name: 'documentId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+      { name: 'principalId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+      { name: 'principalType', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      { name: 'acquiredAt', type: 'timestamp', required: true, unique: false, indexed: false, localized: false },
+      { name: 'expiresAt', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
+      { name: 'label', type: 'text', required: false, unique: false, indexed: false, localized: false },
+    ],
+    timestamps: true,
+    singleton: false,
+  })
+
+  // Lightweight presence. Always provisioned. The pk is
+  // `${collection}:${documentId}:${principalId}`, so each principal has at most ONE row
+  // per doc and a heartbeat is a cheap idempotent upsert. The active set is whoever's
+  // `lastSeen` (indexed) is within the TTL of "now"; stale rows are simply filtered out
+  // (and lazily pruned). `kind` records 'viewing'|'editing'.
+  tables.push({
+    table: PRESENCE_TABLE,
+    slug: PRESENCE_TABLE,
+    columns: [
+      { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+      { name: 'documentId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+      { name: 'principalId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+      { name: 'principalType', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      { name: 'kind', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      { name: 'lastSeen', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
     ],
     timestamps: true,
     singleton: false,

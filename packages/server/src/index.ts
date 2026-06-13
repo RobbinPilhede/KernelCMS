@@ -674,6 +674,49 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       return methodNotAllowed()
     }
 
+    // /_admin/locks -> advisory soft locks, for the collaboration UI. REVIEWER-gated
+    // (admin OR editor; never an agent) — the same coarse door as the review inbox. Locks
+    // are ADVISORY: listing/acquiring/releasing here never changes write authorization.
+    //   GET    /_admin/locks            -> every unexpired lock (optional ?collection=)
+    //   POST   /_admin/locks            -> acquire/refresh { collection, id, ttlMs?, label? }
+    //   DELETE /_admin/locks/:coll/:id  -> release (holder/admin only)
+    if (segments[1] === 'locks') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Lock management requires an admin or editor role.')
+      if (segments.length === 2) {
+        if (method === 'GET') {
+          const collection = url.searchParams.get('collection')
+          return json({
+            locks: await kernel.listLocks({ ...(collection ? { collection } : {}), req: { user } }),
+          })
+        }
+        if (method === 'POST') {
+          const body = await readBody(request)
+          const result = await kernel.acquireLock({
+            collection: String(body.collection ?? ''),
+            id: String(body.id ?? ''),
+            ...(typeof body.ttlMs === 'number' ? { ttlMs: body.ttlMs } : {}),
+            ...(typeof body.label === 'string' ? { label: body.label } : {}),
+            req: { user },
+          })
+          // A respected (not stolen) lock held by someone else is a 409 so the client can
+          // surface "locked by …"; acquiring/refreshing your own returns 200.
+          return json(result, result.heldBy === 'other' ? 409 : 200)
+        }
+        return methodNotAllowed()
+      }
+      if (segments.length === 4 && method === 'DELETE') {
+        return json(
+          await kernel.releaseLock({
+            collection: decodeURIComponent(segments[2]!),
+            id: decodeURIComponent(segments[3]!),
+            req: { user },
+          }),
+        )
+      }
+      return methodNotAllowed()
+    }
+
     // GET /_admin/translation-status/:collection -> the localization dashboard: per-locale
     // completeness across a collection (optional ?id= for one document). REVIEWER-gated
     // (admin OR editor); core scopes the listing by the reviewer's own read access, so it
@@ -734,6 +777,34 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     }
 
     return json({ error: { code: 'NOT_FOUND', message: `No route for ${url.pathname}` } }, 404)
+  }
+
+  // /_presence/:collection/:id -> lightweight presence for the collaboration UI.
+  // AUTH-REQUIRED (any signed-in principal — humans and agents both report presence).
+  //   GET  -> the active participants on the document (within the TTL)
+  //   POST -> a heartbeat { kind: 'viewing' | 'editing' }
+  if (segments[0] === '_presence' && segments.length === 3) {
+    if (!user) throw new UnauthorizedError()
+    const presenceCollection = segments[1]!
+    const presenceId = segments[2]!
+    if (method === 'GET') {
+      const ttlMs = toNum(url.searchParams.get('ttlMs'))
+      return json({
+        presence: await kernel.getPresence({
+          collection: presenceCollection,
+          id: presenceId,
+          ...(ttlMs !== undefined ? { ttlMs } : {}),
+          req: { user },
+        }),
+      })
+    }
+    if (method === 'POST') {
+      const body = await readBody(request)
+      const kind = body.kind === 'editing' ? 'editing' : 'viewing'
+      await kernel.heartbeat({ collection: presenceCollection, id: presenceId, kind, req: { user } })
+      return json({ ok: true })
+    }
+    return methodNotAllowed()
   }
 
   // Custom endpoints (config.endpoints) — matched before the generic collection
@@ -973,13 +1044,28 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     if (method === 'GET') {
       const doc = await kernel.findByID({ collection, id, ...base })
       if (!doc) throw new NotFoundError()
-      return json(doc)
+      // Hand the client a concurrency token (ETag/Last-Modified = current updatedAt) so
+      // it can send it back as If-Match on its next save and get a 409 instead of a
+      // silent clobber if someone else edited in the meantime.
+      return withConcurrencyHeaders(json(doc), doc)
     }
     if (method === 'PATCH' || method === 'PUT') {
       const data = await readBody(request)
-      const doc = await kernel.update({ collection, id, data, ...base })
+      // Optimistic concurrency: a conditional save carries the token via If-Match /
+      // If-Unmodified-Since, or a body `_expectedUpdatedAt`. Strip the body sentinel so
+      // it never reaches the document data. A stale token throws ConflictError -> 409
+      // (carrying the current doc) from core.
+      const expectedUpdatedAt = expectedUpdatedAtFrom(request, data)
+      delete data._expectedUpdatedAt
+      const doc = await kernel.update({
+        collection,
+        id,
+        data,
+        ...(expectedUpdatedAt != null ? { expectedUpdatedAt } : {}),
+        ...base,
+      })
       if (!doc) throw new NotFoundError()
-      return json(doc)
+      return withConcurrencyHeaders(json(doc), doc)
     }
     if (method === 'DELETE') {
       const doc = await kernel.delete({ collection, id, ...base })
@@ -1376,6 +1462,35 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
   })
+}
+
+/**
+ * Resolve the optimistic-concurrency token a client sends for a conditional update:
+ * the strong `If-Match` ETag (preferred), else the `If-Unmodified-Since` date, else a
+ * body `_expectedUpdatedAt`. The ETag is the JSON-quoted `updatedAt` we emit on reads
+ * (see {@link withConcurrencyHeaders}); we strip the quotes/weak prefix to recover the
+ * raw token. Returns undefined when none is present (last-write-wins, the default).
+ */
+function expectedUpdatedAtFrom(request: Request, body?: Row): string | undefined {
+  const ifMatch = request.headers.get('if-match')
+  if (ifMatch && ifMatch.trim() !== '*') {
+    return ifMatch.trim().replace(/^W\//, '').replace(/^"|"$/g, '')
+  }
+  const ifUnmodified = request.headers.get('if-unmodified-since')
+  if (ifUnmodified) return ifUnmodified
+  if (body && typeof body._expectedUpdatedAt === 'string') return body._expectedUpdatedAt
+  return undefined
+}
+
+/** Stamp the current `updatedAt` as `ETag` + `Last-Modified` on a successful read/write
+ *  so a client always has the freshest concurrency token to send back on its next save. */
+function withConcurrencyHeaders(res: Response, doc: unknown): Response {
+  const updatedAt = doc && typeof doc === 'object' ? (doc as Row).updatedAt : undefined
+  if (updatedAt != null) {
+    res.headers.set('etag', `"${String(updatedAt)}"`)
+    res.headers.set('last-modified', String(updatedAt))
+  }
+  return res
 }
 
 function methodNotAllowed(): Response {

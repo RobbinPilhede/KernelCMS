@@ -736,6 +736,10 @@ export interface PublishOptions extends OperationBase {
   id: string
   /** Schedule the publish for a future time; the doc stays a draft until then. */
   publishAt?: string | Date
+  /** Optimistic-concurrency token threaded through to the underlying update — reject the
+   *  publish/unpublish if the document moved since the client last read it. See
+   *  {@link UpdateOptions.expectedUpdatedAt}. */
+  expectedUpdatedAt?: string
 }
 
 export interface SearchDocsOptions extends OperationBase {
@@ -792,6 +796,12 @@ export interface UpdateOptions extends OperationBase {
   /** Mark this save as an autosave: the version snapshot is flagged `autosave`
    *  (drafts collections), so the UI can distinguish auto-saved drafts from manual ones. */
   autosave?: boolean
+  /** Optimistic-concurrency token: the `updatedAt` the client last read for this
+   *  document. When provided, the update is REJECTED with a {@link ConflictError} if the
+   *  server's current `updatedAt` no longer matches (another writer got there first) —
+   *  no write happens. Omit for last-write-wins (the default, backward-compatible).
+   *  Checked AFTER access control, so it can't be used to probe documents you can't read. */
+  expectedUpdatedAt?: string
 }
 
 /** Write several locales of one document in a single call. Each entry in `locales`
@@ -804,6 +814,10 @@ export interface UpdateLocalesOptions extends OperationBase {
   /** Per-locale partials, keyed by locale code. Keys must be configured locales;
    *  unknown codes and prototype-pollution keys are rejected. */
   locales: Record<string, Row>
+  /** Optimistic-concurrency token: the `updatedAt` the client last read. Checked on the
+   *  FIRST locale write (before any locale is applied); a conflict aborts the whole call
+   *  before anything is persisted. See {@link UpdateOptions.expectedUpdatedAt}. */
+  expectedUpdatedAt?: string
 }
 
 /** Per-locale completeness for one document. */
@@ -1034,6 +1048,114 @@ export interface VersionDoc extends Row {
   autosave: boolean
 }
 
+// ---------------------------------------------------------------------------
+// Collaboration: advisory soft locks + lightweight presence
+//
+// Two LIGHTWEIGHT, DB-backed primitives that answer "two editors (or an agent and a
+// human) are on the same document" — NOT a real-time CRDT. Locks are ADVISORY: they
+// signal intent and never gate writes (access control is untouched). Presence is an
+// active-set heartbeat filtered by a TTL. Both accept an injected `now` (ms epoch) so
+// expiry is deterministic under test; production omits it and uses `Date.now()`.
+// ---------------------------------------------------------------------------
+
+/** An advisory soft lock held on a document, as stored in `_locks` and returned by the
+ *  lock ops. The id is `${collection}:${documentId}`, so a document has at most one. */
+export interface LockDoc extends Row {
+  id: string
+  collection: string
+  documentId: string
+  /** The principal that holds the lock (its `req.user.id`, or 'anonymous'). */
+  principalId: string
+  principalType: 'user' | 'agent' | 'system'
+  /** ISO timestamp the lock was (most recently) acquired/refreshed. */
+  acquiredAt: string
+  /** ISO timestamp the lock expires; a lock with `expiresAt <= now` is free to take. */
+  expiresAt: string
+  /** Optional human label (e.g. the holder's name) for the "locked by …" UI. */
+  label?: string | null
+}
+
+export interface AcquireLockOptions {
+  collection: string
+  id: string
+  req?: Partial<RequestContext>
+  /** Lock lifetime in ms from acquisition. Default 120_000 (2 min). */
+  ttlMs?: number
+  /** Optional human label shown to others (e.g. the holder's display name). */
+  label?: string
+  /** "Now" as a ms epoch, for deterministic expiry in tests. Default `Date.now()`. */
+  now?: number
+}
+
+export interface AcquireLockResult {
+  /** The current lock row (yours on acquire/refresh, or the OTHER principal's on a miss). */
+  lock: LockDoc
+  /** Whether YOU hold the lock now (`'you'`) or a different principal does (`'other'`). */
+  heldBy: 'you' | 'other'
+}
+
+export interface ReleaseLockOptions {
+  collection: string
+  id: string
+  req?: Partial<RequestContext>
+  now?: number
+}
+
+export interface ReleaseLockResult {
+  /** True when a lock row was removed; false when there was nothing to release. */
+  released: boolean
+}
+
+export interface GetLockOptions {
+  collection: string
+  id: string
+  /** Caller context — used to access-check READ on the target so a principal who can't
+   *  read the document can't probe who is editing it. */
+  req?: Partial<RequestContext>
+  now?: number
+}
+
+export interface ListLocksOptions {
+  /** Narrow to one collection; omit to list every unexpired lock. */
+  collection?: string
+  /** Caller context — locks on documents the caller can't READ are filtered out. Omit (or
+   *  call with `overrideAccess`/no user) for a trusted server call that sees every lock. */
+  req?: Partial<RequestContext>
+  now?: number
+}
+
+/** What a principal is doing on a document, for presence. */
+export type PresenceKind = 'viewing' | 'editing'
+
+export interface HeartbeatOptions {
+  collection: string
+  id: string
+  kind: PresenceKind
+  req?: Partial<RequestContext>
+  now?: number
+}
+
+/** One active participant on a document. */
+export interface PresenceEntry {
+  principalId: string
+  principalType: 'user' | 'agent' | 'system'
+  kind: PresenceKind
+  /** ISO timestamp of the participant's most recent heartbeat. */
+  lastSeen: string
+}
+
+export interface GetPresenceOptions {
+  collection: string
+  id: string
+  /** Caller context — used to access-check READ on the target so a principal who can't
+   *  read the document can't see who is present on it. */
+  req?: Partial<RequestContext>
+  /** Liveness window in ms: a participant whose `lastSeen` is older than this is stale
+   *  and excluded from the active set. Default 30_000 (30s). */
+  ttlMs?: number
+  now?: number
+}
+
 export interface FindGlobalOptions extends OperationBase {
   slug: string
 }
@@ -1192,6 +1314,23 @@ export interface Kernel {
    *  normal `create()` path (agent draft-only brake + field scope + access all apply),
    *  so it lands in the review queue. Rejects unknown block types / fields. */
   composePage<T extends Doc = Doc>(opts: ComposePageOptions): Promise<T>
+  /** Acquire (or refresh) an ADVISORY soft lock on a document. Returns `heldBy:'you'`
+   *  when you now hold it (no lock, expired, or you already held it — refreshed); returns
+   *  `heldBy:'other'` WITHOUT stealing when a different principal holds an unexpired lock.
+   *  Advisory only: a lock never changes write authorization. */
+  acquireLock(opts: AcquireLockOptions): Promise<AcquireLockResult>
+  /** Release a soft lock. Only the holder (or an admin/system override) may release an
+   *  unexpired lock; an already-expired lock is releasable by anyone. */
+  releaseLock(opts: ReleaseLockOptions): Promise<ReleaseLockResult>
+  /** The current UNEXPIRED lock on a document, or null. */
+  getLock(opts: GetLockOptions): Promise<LockDoc | null>
+  /** Every UNEXPIRED lock (optionally for one collection). */
+  listLocks(opts?: ListLocksOptions): Promise<LockDoc[]>
+  /** Record a presence heartbeat (upsert `lastSeen` + `kind`). Cheap and idempotent. */
+  heartbeat(opts: HeartbeatOptions): Promise<void>
+  /** The active participants on a document — those whose last heartbeat is within `ttlMs`
+   *  of now. Stale rows are filtered out (and lazily pruned). */
+  getPresence(opts: GetPresenceOptions): Promise<PresenceEntry[]>
   /** Apply the schema to the database (create tables / add columns / build indexes),
    *  recording a `_migrations` journal row when anything is applied. Pass
    *  `{ dryRun: true }` to compute the exact SQL it WOULD run and return the report
