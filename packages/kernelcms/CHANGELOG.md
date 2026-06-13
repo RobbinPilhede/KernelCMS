@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.23.0
+
+### Minor Changes
+
+- **Knowledge graph + GraphRAG: retrieve connected context, not just matching documents.** Your typed relationships already form a graph. KernelCMS now traverses it — and combines it with semantic search for GraphRAG, the cutting-edge retrieval technique that grounds AI on a _connected subgraph_ of your content instead of a flat list of hits.
+  - **Walk the graph.** `kernel.graph({ collection, id, depth })` does a bounded breadth-first walk from a document, following both outbound relationship/upload fields and inbound reverse-relationship (`join`) fields, and returns typed `{ nodes, edges }` (each edge labeled with its field and `kind: 'relationship' | 'reverse'`). Over REST: `GET /api/:collection/:id/graph?depth=`.
+  - **GraphRAG retrieval.** `kernel.graphSearch({ query, collection })` uses semantic/hybrid search to find the best seed documents, expands each through the graph to gather their connected neighbors, and returns the seeds, the subgraph, and a ready-to-ground `context` array (label + text per node). It's the retrieval half — feed `context` to your model. Over REST: `GET /api/graph-search?q=&collection=`.
+  - **Access-checked and bounded.** Every node loads through the normal access-control path: a document you can't read is dropped _and the edge to it is omitted_, so the graph never even reveals that a hidden document is connected; read-denied fields never appear in labels or context. Depth (max 10), node count (default 100, hard cap 500), per-node fan-out, and cycles are all bounded — a hub or a deep graph can't blow up the traversal. Red-teamed exhaustively — **Risk: LOW, zero leaks** — verified by a live harness and a Playwright end-to-end test.
+
+  `graphSearch` builds on the semantic-search layer (configure `embeddings`); `graph` works on any collection with relationships. Read-only and fully backward-compatible.
+
 ## 0.22.0
 
 ### Minor Changes
