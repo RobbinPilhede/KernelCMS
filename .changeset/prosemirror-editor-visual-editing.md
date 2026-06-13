@@ -8,8 +8,9 @@ per-field feature allow-list are unchanged, and every change is still run throug
 `sanitizeRichText` (link hrefs are additionally guarded against unsafe schemes at
 the editor boundary).
 
-Adds click-to-edit live preview. The new `@kernel/visual-editing` SDK
-(`kernelEditable(path)`, `useKernelPreview()`) lets any frontend become editable
+Adds click-to-edit live preview. A new visual-editing SDK, shipped at the
+`kernelcms/visual-editing` and `kernelcms/visual-editing/react` subpaths
+(`kernelEditable(path)`, `useKernelPreview()`), lets any frontend become editable
 inside the admin's live-preview iframe, and the built-in preview now focuses the
 matching field when you click an element, with hover outlines — over an
 origin-validated postMessage channel.
