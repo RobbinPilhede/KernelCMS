@@ -79,6 +79,22 @@ import type {
   CredentialDoc,
   VerifyCredentialOptions,
   VerifyCredentialResult,
+  Release,
+  ReleaseItem,
+  ReleaseStatus,
+  ReleaseWithItems,
+  CreateReleaseOptions,
+  ReleaseMemberOptions,
+  GetReleaseOptions,
+  ListReleasesOptions,
+  PreviewReleaseResult,
+  ReleasePreviewItem,
+  PublishReleaseOptions,
+  PublishReleaseResult,
+  ScheduleReleaseOptions,
+  CancelReleaseOptions,
+  ProcessScheduledReleasesOptions,
+  ProcessScheduledReleasesResult,
 } from './types'
 import {
   BadRequestError,
@@ -123,6 +139,8 @@ import {
   GLOBAL_ROW_ID,
   LOCKS_TABLE,
   PRESENCE_TABLE,
+  RELEASES_TABLE,
+  RELEASE_ITEMS_TABLE,
   REVIEWS_TABLE,
   resolveVersions,
   tableForGlobal,
@@ -877,6 +895,7 @@ export function createOperations(ctx: OperationCtx) {
     req: RequestContext,
     id: string | undefined,
     data: Row | undefined,
+    row?: Row,
   ): Promise<void> {
     // Hard draft-only brake: an agent principal can never publish, regardless of any
     // `access.publish`/`access.update` rule or role. Agents create/edit drafts and may
@@ -887,6 +906,12 @@ export function createOperations(ctx: OperationCtx) {
     const rule = collection.access?.publish ?? collection.access?.update
     const decision = await evalAccess(rule, { req, id, data })
     if (!isAllowed(decision)) throw new ForbiddenError()
+    // A row-scoped publish rule (returning a `Where`) restricts WHICH rows the caller may
+    // publish — match it against the target row, exactly as update access does. Without
+    // this, a `publish: () => ({ owner: { equals: req.user.id } })` rule would act as a
+    // blanket allow. Only enforced when the row is available to the caller.
+    const scope = asWhere(decision)
+    if (scope && row && !matchesWhere(row, scope)) throw new ForbiddenError()
   }
 
   /** Append a snapshot of `doc` to the collection's version table, trimming to maxPerDoc.
@@ -1338,6 +1363,492 @@ export function createOperations(ctx: OperationCtx) {
     })
 
     return { decision, documentId: opts.id }
+  }
+
+  // -------------------------------------------------------------------------
+  // Content releases
+  //
+  // A release is a NAMED bundle of draft documents published as a UNIT. It layers over
+  // the existing drafts + publish + scheduled-publish machinery without rewriting any op:
+  // publishing a release publishes each member through the SAME `publish` op the caller
+  // would call directly, so `assertCanPublish` (publish access + the agent draft-only
+  // brake + the pre-publish eval gate) governs every member. A release therefore can
+  // never widen publish authorization. Pre-flight is ALL-OR-NOTHING — if any member would
+  // fail the gate, none are published and the release stays `open` (no half go-live).
+  // -------------------------------------------------------------------------
+
+  // Bounds on the untrusted release name + membership size (storage-growth guards).
+  const MAX_RELEASE_NAME = 200
+  const MAX_RELEASE_ITEMS = 1000
+  // Prototype-pollution guard for any untrusted release string used downstream.
+  const RELEASE_FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype'])
+
+  function assertReleasesEnabled(): void {
+    if (!config.releases.enabled) {
+      throw new BadRequestError('Content releases are not enabled (set `config.releases: true`).')
+    }
+  }
+
+  /** Coerce a stored `_releases` row into the public {@link Release} shape. */
+  function rowToRelease(row: Row): Release {
+    return {
+      id: String(row.id),
+      name: typeof row.name === 'string' ? row.name : '',
+      status: normalizeReleaseStatus(row.status),
+      scheduledAt: row.scheduledAt != null ? String(row.scheduledAt) : null,
+      createdBy: row.createdBy != null ? String(row.createdBy) : null,
+      createdByType: normalizePrincipalType(row.createdByType),
+      createdAt: row.createdAt != null ? String(row.createdAt) : '',
+      publishedAt: row.publishedAt != null ? String(row.publishedAt) : null,
+    }
+  }
+
+  function normalizeReleaseStatus(value: unknown): ReleaseStatus {
+    return value === 'scheduled' || value === 'published' || value === 'failed' ? value : 'open'
+  }
+
+  /** Load a release row by id, or throw NotFound. Releases are admin/editor-gated at the
+   *  route layer; the ops trust the resolved `req` (like the review ops). */
+  async function releaseRowOrThrow(id: string): Promise<Row> {
+    if (typeof id !== 'string' || id.length === 0 || RELEASE_FORBIDDEN.has(id)) {
+      throw new BadRequestError('A release id is required.')
+    }
+    const row = await db.findByID({ collection: RELEASES_TABLE, id })
+    if (!row) throw new NotFoundError()
+    return row
+  }
+
+  /** The member rows of a release, oldest-first. */
+  async function releaseItemRows(releaseId: string): Promise<Row[]> {
+    const res = await db.find({
+      collection: RELEASE_ITEMS_TABLE,
+      where: { release: { equals: releaseId } },
+      sort: [{ field: 'createdAt', direction: 'asc' }],
+      limit: MAX_RELEASE_ITEMS,
+      page: 1,
+    })
+    return res.docs
+  }
+
+  function rowToReleaseItem(row: Row): ReleaseItem {
+    return {
+      id: String(row.id),
+      release: String(row.release),
+      collection: String(row.collection),
+      documentId: String(row.documentId),
+    }
+  }
+
+  /** Validate that a member's collection is a real, NON-system, drafts-enabled collection.
+   *  A release publishes via the per-doc publish op, which requires drafts; and a member
+   *  can never be another release or a system table (those aren't in `collectionsBySlug`). */
+  function memberCollectionOrThrow(slug: string): CollectionConfig {
+    if (typeof slug !== 'string' || RELEASE_FORBIDDEN.has(slug)) {
+      throw new BadRequestError('A valid collection slug is required.')
+    }
+    const collection = collectionOrThrow(slug)
+    if (!draftsOn(collection)) {
+      throw new BadRequestError(`Collection "${slug}" does not have drafts enabled; it cannot join a release.`)
+    }
+    return collection
+  }
+
+  /** Read-gate a member document with the caller's req — a member can only be added/
+   *  previewed/published if the caller could read it directly. Returns the row when
+   *  readable; null when the caller can't see it; throws NotFound when it's absent. */
+  async function readMemberRow(
+    collection: CollectionConfig,
+    id: string,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<Row | null> {
+    if (typeof id !== 'string' || id.length === 0 || RELEASE_FORBIDDEN.has(id)) {
+      throw new BadRequestError('A document id is required.')
+    }
+    const row = await db.findByID({ collection: collection.slug, id })
+    if (!row) throw new NotFoundError()
+    if (override) return row
+    const access = await evalAccess(collection.access?.read, { req, id })
+    if (!isAllowed(access)) return null
+    const scope = asWhere(access)
+    if (scope && !matchesWhere(row, scope)) return null
+    return row
+  }
+
+  async function createRelease(opts: CreateReleaseOptions): Promise<Release> {
+    assertReleasesEnabled()
+    const req = buildReq(opts.req)
+    const name = typeof opts.name === 'string' ? opts.name.trim() : ''
+    if (name.length === 0) throw new BadRequestError('A release `name` is required.')
+    if (name.length > MAX_RELEASE_NAME) {
+      throw new BadRequestError(`Release \`name\` too long (max ${MAX_RELEASE_NAME} characters).`)
+    }
+    const override = opts.overrideAccess ?? false
+    const id = randomUUID()
+    const created = await db.create({
+      collection: RELEASES_TABLE,
+      data: {
+        id,
+        name,
+        status: 'open',
+        scheduledAt: null,
+        createdBy: req.user?.id ?? null,
+        createdByType: principalKindFor(req, override),
+        publishedAt: null,
+      },
+    })
+    return rowToRelease(created)
+  }
+
+  /** Shared member-mutation path for add/remove. Only `open` releases are editable; the
+   *  caller must be able to READ the member document (so a release can't reference content
+   *  the caller can't see). De-dupes on (release, collection, documentId). */
+  async function mutateReleaseMember(opts: ReleaseMemberOptions, action: 'add' | 'remove'): Promise<ReleaseWithItems> {
+    assertReleasesEnabled()
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    const releaseRow = await releaseRowOrThrow(opts.release)
+    const status = normalizeReleaseStatus(releaseRow.status)
+    if (status !== 'open') {
+      throw new BadRequestError(`Release is "${status}"; only an open release can be edited.`)
+    }
+    const collection = memberCollectionOrThrow(opts.collection)
+    // The member must exist AND be readable by the caller (no leaking foreign content
+    // into a release the caller assembles).
+    const memberRow = await readMemberRow(collection, opts.id, req, override)
+    if (!memberRow) throw new ForbiddenError()
+
+    const existing = await db.find({
+      collection: RELEASE_ITEMS_TABLE,
+      where: {
+        and: [
+          { release: { equals: opts.release } },
+          { collection: { equals: collection.slug } },
+          { documentId: { equals: opts.id } },
+        ],
+      },
+      limit: 1,
+      page: 1,
+    })
+    const present = existing.docs[0]
+
+    if (action === 'add') {
+      if (!present) {
+        const items = await releaseItemRows(opts.release)
+        if (items.length >= MAX_RELEASE_ITEMS) {
+          throw new BadRequestError(`Release has too many items (max ${MAX_RELEASE_ITEMS}).`)
+        }
+        await db.create({
+          collection: RELEASE_ITEMS_TABLE,
+          data: { id: randomUUID(), release: opts.release, collection: collection.slug, documentId: opts.id },
+        })
+      }
+    } else if (present) {
+      await db.delete({ collection: RELEASE_ITEMS_TABLE, id: String(present.id) })
+    }
+
+    const items = await releaseItemRows(opts.release)
+    return { ...rowToRelease(releaseRow), items: items.map(rowToReleaseItem) }
+  }
+
+  function addToRelease(opts: ReleaseMemberOptions): Promise<ReleaseWithItems> {
+    return mutateReleaseMember(opts, 'add')
+  }
+
+  function removeFromRelease(opts: ReleaseMemberOptions): Promise<ReleaseWithItems> {
+    return mutateReleaseMember(opts, 'remove')
+  }
+
+  async function listReleases(opts: ListReleasesOptions = {}): Promise<{ docs: Release[]; count: number }> {
+    if (!config.releases.enabled) return { docs: [], count: 0 }
+    const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
+    const page = Math.max(opts.page ?? 1, 1)
+    const where = opts.status ? { status: { equals: opts.status } } : undefined
+    const res = await db.find({
+      collection: RELEASES_TABLE,
+      ...(where ? { where } : {}),
+      sort: [{ field: 'createdAt', direction: 'desc' }],
+      limit,
+      page,
+    })
+    return { docs: res.docs.map(rowToRelease), count: res.totalDocs }
+  }
+
+  async function getRelease(opts: GetReleaseOptions): Promise<ReleaseWithItems | null> {
+    assertReleasesEnabled()
+    const row = await db.findByID({ collection: RELEASES_TABLE, id: opts.release })
+    if (!row) return null
+    const items = await releaseItemRows(opts.release)
+    return { ...rowToRelease(row), items: items.map(rowToReleaseItem) }
+  }
+
+  async function previewRelease(opts: PublishReleaseOptions): Promise<PreviewReleaseResult> {
+    assertReleasesEnabled()
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    await releaseRowOrThrow(opts.release)
+    const itemRows = await releaseItemRows(opts.release)
+    const items: ReleasePreviewItem[] = []
+    for (const item of itemRows) {
+      const collection = config.collectionsBySlug[String(item.collection)]
+      if (!collection) continue
+      // Load the member in its CURRENT (draft) state through the access-checked read.
+      // A member the caller can't read is silently dropped — never leaked. findByID
+      // throws ForbiddenError on a denied/scoped-out read, so catch it and skip that
+      // member (so one unreadable member can't 403 the whole preview).
+      let doc: Doc | null = null
+      try {
+        doc = await findByID({
+          collection: collection.slug,
+          id: String(item.documentId),
+          draft: true,
+          req: opts.req,
+          ...(override ? { overrideAccess: true } : {}),
+        })
+      } catch (err) {
+        if (!isKernelError(err)) throw err
+      }
+      if (doc) items.push({ collection: collection.slug, id: String(item.documentId), doc })
+    }
+    return { items }
+  }
+
+  /**
+   * Dry-run the publish gate for one member with the caller's req: the per-doc publish
+   * access gate + agent brake (`assertCanPublish`) AND the blocking eval gate
+   * (`runPrePublishEvals`) against the member's CURRENT draft content. Returns a reason
+   * string when the member would NOT publish, or null when it would. Never writes.
+   */
+  async function preflightMember(
+    collection: CollectionConfig,
+    id: string,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<string | null> {
+    const row = await db.findByID({ collection: collection.slug, id })
+    if (!row) return 'document no longer exists'
+    if (!override) {
+      // The publish path runs through update(), which first requires UPDATE access to the
+      // row; mirror that so a caller who can't even update the doc fails pre-flight here.
+      const access = await evalAccess(collection.access?.update, { req, id, data: { _status: 'published' } })
+      if (!isAllowed(access)) return 'no update access'
+      const scope = asWhere(access)
+      if (scope && !matchesWhere(row, scope)) return 'no update access'
+    }
+    try {
+      if (!override) await assertCanPublish(collection, req, id, { _status: 'published' } as Row, row)
+    } catch (err) {
+      if (err instanceof ForbiddenError) return 'publish access denied'
+      throw err
+    }
+    // Eval gate (content CI). Runs regardless of override — evals are server config, not
+    // user input — exactly as the real publish path enforces them. A blocking finding
+    // throws ValidationError; surface its message as the failure reason.
+    const content = deserializeDoc(collection.fields, row, deserializeOptsFor(req)) as Row
+    try {
+      await runPrePublishEvals(collection, content, req)
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        return err.errors.map((e) => e.message).join('; ')
+      }
+      throw err
+    }
+    return null
+  }
+
+  async function publishRelease(opts: PublishReleaseOptions): Promise<PublishReleaseResult> {
+    assertReleasesEnabled()
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    const releaseRow = await releaseRowOrThrow(opts.release)
+    const status = normalizeReleaseStatus(releaseRow.status)
+    if (status === 'published') {
+      throw new BadRequestError('Release is already published.')
+    }
+    if (status !== 'open' && status !== 'scheduled') {
+      throw new BadRequestError(`Release is "${status}"; it cannot be published.`)
+    }
+    const itemRows = await releaseItemRows(opts.release)
+    const members = itemRows
+      .map((r) => ({ collection: config.collectionsBySlug[String(r.collection)], id: String(r.documentId) }))
+      .filter((m): m is { collection: CollectionConfig; id: string } => Boolean(m.collection))
+
+    // ALL-OR-NOTHING pre-flight: gate-check every member FIRST. If any would fail (publish
+    // access, the agent brake, or a blocking eval), publish NONE and leave the release
+    // `open`. A release must not go half-live.
+    const failed: PublishReleaseResult['failed'] = []
+    for (const m of members) {
+      const reason = await preflightMember(m.collection, m.id, req, override)
+      if (reason) failed.push({ collection: m.collection.slug, id: m.id, reason })
+    }
+    if (failed.length > 0) {
+      return { status: 'open', published: [], failed }
+    }
+
+    // Pre-flight passed: publish every member through the EXISTING publish op with the
+    // caller's req (so each re-runs assertCanPublish + the eval gate — the gate is the
+    // single source of truth; this is no override for an interactive publish). Best-effort
+    // atomic: a mid-publish DB error marks the release `failed` and reports the survivors.
+    const published: string[] = []
+    for (const m of members) {
+      try {
+        await publish({
+          collection: m.collection.slug,
+          id: m.id,
+          req: opts.req,
+          ...(override ? { overrideAccess: true } : {}),
+        })
+        published.push(`${m.collection.slug}/${m.id}`)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        failed.push({ collection: m.collection.slug, id: m.id, reason })
+        await db.update({
+          collection: RELEASES_TABLE,
+          id: opts.release,
+          data: { status: 'failed' },
+        })
+        await recordAudit({
+          action: 'release.publish',
+          documentId: opts.release,
+          req,
+          overrideAccess: override,
+          meta: { status: 'failed', published, failed },
+        })
+        return { status: 'failed', published, failed }
+      }
+    }
+
+    const publishedAt = new Date().toISOString()
+    await db.update({
+      collection: RELEASES_TABLE,
+      id: opts.release,
+      data: { status: 'published', publishedAt, scheduledAt: null },
+    })
+    await recordAudit({
+      action: 'release.publish',
+      documentId: opts.release,
+      req,
+      overrideAccess: override,
+      meta: { status: 'published', published, count: published.length },
+    })
+    return { status: 'published', published, failed }
+  }
+
+  async function scheduleRelease(opts: ScheduleReleaseOptions): Promise<Release> {
+    assertReleasesEnabled()
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    const releaseRow = await releaseRowOrThrow(opts.release)
+    const status = normalizeReleaseStatus(releaseRow.status)
+    if (status !== 'open' && status !== 'scheduled') {
+      throw new BadRequestError(`Release is "${status}"; only an open release can be scheduled.`)
+    }
+    const at = new Date(opts.at)
+    if (Number.isNaN(at.getTime())) throw new BadRequestError('`at` must be a valid date/time.')
+    if (at.getTime() <= Date.now()) throw new BadRequestError('`at` must be in the future.')
+
+    // Gate-check publishability NOW (at schedule time), exactly like a scheduled per-doc
+    // publish: the drain later publishes the recorded members under override, so the gate
+    // is enforced here, against the CALLER, while they are present. A failing member
+    // refuses the schedule (it would only fail again at drain time).
+    const itemRows = await releaseItemRows(opts.release)
+    for (const item of itemRows) {
+      const collection = config.collectionsBySlug[String(item.collection)]
+      if (!collection) continue
+      const reason = await preflightMember(collection, String(item.documentId), req, override)
+      if (reason) {
+        throw new BadRequestError(
+          `Cannot schedule: member ${collection.slug}/${String(item.documentId)} would not publish (${reason}).`,
+        )
+      }
+    }
+
+    const scheduledAt = at.toISOString()
+    const updated = await db.update({
+      collection: RELEASES_TABLE,
+      id: opts.release,
+      data: { status: 'scheduled', scheduledAt },
+    })
+    await recordAudit({
+      action: 'release.schedule',
+      documentId: opts.release,
+      req,
+      overrideAccess: override,
+      meta: { scheduledAt, items: itemRows.length },
+    })
+    return rowToRelease(updated ?? { ...releaseRow, status: 'scheduled', scheduledAt })
+  }
+
+  async function cancelRelease(opts: CancelReleaseOptions): Promise<{ id: string }> {
+    assertReleasesEnabled()
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    const releaseRow = await releaseRowOrThrow(opts.release)
+    const status = normalizeReleaseStatus(releaseRow.status)
+    if (status === 'published') {
+      throw new BadRequestError('A published release is immutable and cannot be cancelled.')
+    }
+    // Delete the membership rows then the release header.
+    const itemRows = await releaseItemRows(opts.release)
+    for (const item of itemRows) await db.delete({ collection: RELEASE_ITEMS_TABLE, id: String(item.id) })
+    await db.delete({ collection: RELEASES_TABLE, id: opts.release })
+    await recordAudit({
+      action: 'release.cancel',
+      documentId: opts.release,
+      req,
+      overrideAccess: override,
+      meta: { previousStatus: status },
+    })
+    return { id: opts.release }
+  }
+
+  /**
+   * Drain due scheduled releases. Mirrors `processScheduledPublishes`: a scheduled
+   * release is published under OVERRIDE for the exact member ids recorded — publishability
+   * was gate-checked at SCHEDULE time (see `scheduleRelease`), so this is the documented
+   * tradeoff (scheduled releases are gate-checked at schedule time, like scheduled
+   * publishes). A release whose pre-flight now fails (content changed to violate an eval)
+   * is marked `failed` and reported, never silently published. Drive from a cron/job.
+   */
+  async function processScheduledReleases(
+    opts: ProcessScheduledReleasesOptions = {},
+  ): Promise<ProcessScheduledReleasesResult> {
+    if (!config.releases.enabled) return { published: [] }
+    const nowIso = (opts.now ? new Date(opts.now) : new Date()).toISOString()
+    const published: string[] = []
+    const failed: NonNullable<ProcessScheduledReleasesResult['failed']> = []
+    const due = await db.find({
+      collection: RELEASES_TABLE,
+      where: {
+        and: [
+          { status: { equals: 'scheduled' } },
+          { scheduledAt: { less_than_equal: nowIso } },
+          { scheduledAt: { exists: true } },
+        ],
+      },
+      limit: opts.limit ?? 1000,
+      page: 1,
+    })
+    for (const row of due.docs) {
+      const id = String(row.id)
+      // Publish under override — gate-checked at schedule time. A blocking eval that the
+      // content NOW violates still re-fires inside publishRelease's pre-flight (which runs
+      // evals regardless of override), so a release that became invalid is reported failed.
+      const result = await publishRelease({ release: id, overrideAccess: true })
+      if (result.status === 'published') {
+        published.push(id)
+      } else {
+        failed.push({
+          release: id,
+          reason: result.failed.map((f) => `${f.collection}/${f.id}: ${f.reason}`).join('; '),
+        })
+        // Pre-flight left it `open`; mark it `failed` so the drain doesn't retry it forever.
+        if (result.status === 'open') {
+          await db.update({ collection: RELEASES_TABLE, id, data: { status: 'failed' } })
+        }
+      }
+    }
+    return failed.length > 0 ? { published, failed } : { published }
   }
 
   // Keys that must never reach a serialized document via block data — guarding the
@@ -1938,7 +2449,7 @@ export function createOperations(ctx: OperationCtx) {
       if (row._status === 'published') {
         bornPublished = true
         if (!override) {
-          await assertCanPublish(collection, req, undefined, opts.data as Row)
+          await assertCanPublish(collection, req, undefined, opts.data as Row, row)
           // Strict publish gate also applies to a born-published create.
           assertDefaultLocaleComplete(collection, row)
         }
@@ -2180,7 +2691,7 @@ export function createOperations(ctx: OperationCtx) {
       if (row._status === 'published' && existing._status !== 'published') {
         isPublishTransition = true
         if (!override) {
-          await assertCanPublish(collection, req, opts.id, opts.data as Row)
+          await assertCanPublish(collection, req, opts.id, opts.data as Row, existing)
           // Strict publish gate: the DEFAULT locale must be complete (no required localized
           // field missing) — you can't publish a doc whose primary language is unfinished.
           assertDefaultLocaleComplete(collection, row)
@@ -3963,6 +4474,16 @@ export function createOperations(ctx: OperationCtx) {
     deleteRole,
     findReviewQueue,
     submitReview,
+    createRelease,
+    addToRelease,
+    removeFromRelease,
+    listReleases,
+    getRelease,
+    previewRelease,
+    publishRelease,
+    scheduleRelease,
+    cancelRelease,
+    processScheduledReleases,
     composePage,
     acquireLock,
     releaseLock,

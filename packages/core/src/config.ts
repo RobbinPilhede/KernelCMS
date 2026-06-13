@@ -418,6 +418,16 @@ function sanitizeReview(review: KernelConfig['review'], hasAgents: boolean): { e
 }
 
 /**
+ * Resolve the content-releases setting. OPT-IN and disabled by default — `true`
+ * provisions the `_releases` + `_release_items` tables and the release ops; anything
+ * else (absent / `false`) stays off, fully backward-compatible (no tables, ops throw a
+ * clean "disabled" error or return empty, exactly like RBAC/review when off).
+ */
+function sanitizeReleases(releases: KernelConfig['releases']): { enabled: boolean } {
+  return { enabled: releases === true }
+}
+
+/**
  * Validate autonomous workflows. Each needs a unique snake_case slug and at least one
  * named step with a `run` function. A workflow's `agent` (when set) must name a real
  * configured agent — and that agent must NOT hold the 'admin' role (consistency with
@@ -963,6 +973,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     rbac: { enabled: rbacEnabled },
     rbacStore,
     review: sanitizeReview(config.review, agents.length > 0),
+    releases: sanitizeReleases(config.releases),
     signing: sanitizeSigning(config.signing),
     evals: sanitizeEvals(config.evals),
     workflows,

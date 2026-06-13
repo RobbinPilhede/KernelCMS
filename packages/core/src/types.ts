@@ -831,6 +831,14 @@ export interface KernelConfig {
    *  on, `false` to force it off. When disabled, the review ops return empty / throw
    *  cleanly (like `findRoles` with RBAC off) — fully backward-compatible. */
   review?: boolean
+  /** Content releases: stage a coordinated set of draft documents and publish them as
+   *  one unit, optionally on a schedule. Provisions `_releases` + `_release_items` system
+   *  tables and enables the release ops (`createRelease`/`publishRelease`/…) + the
+   *  `/api/_admin/releases` routes. OPT-IN, disabled by default — `true` turns it on.
+   *  Publishing a release routes every member through the NORMAL per-doc publish gate
+   *  (`assertCanPublish`: publish access + the agent draft-only brake + the eval gate),
+   *  so a release can never bypass publish authorization. */
+  releases?: boolean
   /** Content credentials (C2PA-style). When set, every publish signs a tamper-evident
    *  manifest of the document into the `_credentials` table; verify re-checks the
    *  signature + content hash. A shared HMAC `secret`, or an asymmetric key pair.
@@ -1088,6 +1096,9 @@ export interface SanitizedConfig {
   /** Resolved agent-review setting. `enabled` provisions the `_reviews` table and the
    *  review queue/decision ops; defaults to on when `agents` are configured. */
   review: { enabled: boolean }
+  /** Resolved content-releases setting. `enabled` provisions the `_releases` +
+   *  `_release_items` tables and the release ops; disabled by default (opt-in). */
+  releases: { enabled: boolean }
   /** The mutable runtime role store. Seeded from `config.rbac.roles`, merged from the
    *  `_roles` table at boot, and captured by reference by the injected access rules.
    *  Empty (`{ roles: {} }`) and unused when RBAC is disabled. */
@@ -1400,6 +1411,9 @@ export type AuditAction =
   | 'role.delete'
   | 'review.approve'
   | 'review.request_changes'
+  | 'release.publish'
+  | 'release.schedule'
+  | 'release.cancel'
   | 'workflow.completed'
   | 'workflow.failed'
   | 'workflow.awaiting_review'
@@ -1504,6 +1518,136 @@ export interface SubmitReviewOptions {
 export interface SubmitReviewResult {
   decision: ReviewDecision
   documentId: string
+}
+
+// ---------------------------------------------------------------------------
+// Content releases
+//
+// A release is a NAMED bundle of draft documents that go live together, atomically,
+// optionally on a schedule. It layers over the existing drafts + publish + scheduled-
+// publish system: publishing a release publishes each member through the normal per-doc
+// publish op (so `assertCanPublish` — publish access + the agent draft-only brake + the
+// eval gate — applies to every member; a release can never bypass publish authorization).
+// ---------------------------------------------------------------------------
+
+/** Lifecycle of a release. `open` → editable + publishable; `scheduled` → awaiting its
+ *  drain; `published` → all members went live; `failed` → a mid-publish error left it
+ *  partially applied (reported, never silently retried). */
+export type ReleaseStatus = 'open' | 'scheduled' | 'published' | 'failed'
+
+/** A persisted release row from the `_releases` table. */
+export interface Release {
+  id: string
+  name: string
+  status: ReleaseStatus
+  /** ISO timestamp the release is scheduled to publish (null unless `status:'scheduled'`). */
+  scheduledAt: string | null
+  /** Principal id that created the release. */
+  createdBy: string | null
+  createdByType: 'user' | 'agent' | 'system'
+  createdAt: string
+  /** ISO timestamp the release went live (null until published). */
+  publishedAt: string | null
+}
+
+/** A single member of a release: a (collection, documentId) reference. */
+export interface ReleaseItem {
+  id: string
+  release: string
+  collection: string
+  documentId: string
+}
+
+/** A release together with its member references (the `getRelease` shape). */
+export interface ReleaseWithItems extends Release {
+  items: ReleaseItem[]
+}
+
+export interface CreateReleaseOptions {
+  /** Human-readable release name (untrusted; length-bounded, no prototype keys). */
+  name: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface ReleaseMemberOptions {
+  /** The release id. */
+  release: string
+  /** The member's collection slug (must be a real, non-system, drafts-enabled collection). */
+  collection: string
+  /** The member document's id. */
+  id: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface GetReleaseOptions {
+  release: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface ListReleasesOptions {
+  /** Narrow to a single lifecycle status. */
+  status?: ReleaseStatus
+  limit?: number
+  page?: number
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+/** One member as it CURRENTLY looks (draft state), for the pre-publish preview. */
+export interface ReleasePreviewItem {
+  collection: string
+  id: string
+  doc: Doc
+}
+
+export interface PreviewReleaseResult {
+  items: ReleasePreviewItem[]
+}
+
+export interface PublishReleaseOptions {
+  release: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface PublishReleaseResult {
+  status: ReleaseStatus
+  /** `${collection}/${id}` of every member that went live. */
+  published: string[]
+  /** Members that could not be published, with a reason. On a failed pre-flight NONE
+   *  are published (all-or-nothing); on a mid-publish DB error this lists the ones that
+   *  failed after some succeeded (best-effort atomic). */
+  failed: Array<{ collection: string; id: string; reason: string }>
+}
+
+export interface ScheduleReleaseOptions {
+  release: string
+  /** When the release should publish (ISO string, Date, or epoch ms). Must be in the future. */
+  at: string | Date | number
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface CancelReleaseOptions {
+  release: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface ProcessScheduledReleasesOptions {
+  /** "Now" reference for which scheduled releases are due. Defaults to the current time. */
+  now?: string | Date | number
+  limit?: number
+}
+
+export interface ProcessScheduledReleasesResult {
+  /** Release ids that published successfully when their schedule came due. */
+  published: string[]
+  /** Releases that were due but could not fully publish, with a reason. */
+  failed?: Array<{ release: string; reason: string }>
 }
 
 /** A block to assemble into a `blocks` layout via {@link Kernel.composePage}. */
@@ -2089,6 +2233,39 @@ export interface Kernel {
    *  keeps it a draft and records the note. Both decisions persist to `_reviews` and
    *  are audited. */
   submitReview(opts: SubmitReviewOptions): Promise<SubmitReviewResult>
+  /** Create an empty, `open` content release — a named bundle of drafts to publish as a
+   *  unit. Requires `config.releases`. The name is untrusted (length-bounded). */
+  createRelease(opts: CreateReleaseOptions): Promise<Release>
+  /** Add a draft document to an OPEN release. Validates the collection + document exist
+   *  and the caller can read the document; de-dupes (release, collection, documentId).
+   *  Only `open` releases are editable. */
+  addToRelease(opts: ReleaseMemberOptions): Promise<ReleaseWithItems>
+  /** Remove a member from an OPEN release. */
+  removeFromRelease(opts: ReleaseMemberOptions): Promise<ReleaseWithItems>
+  /** List releases (optionally by status), newest-first. Empty when releases are disabled. */
+  listReleases(opts?: ListReleasesOptions): Promise<{ docs: Release[]; count: number }>
+  /** A release plus its member references, or null when it doesn't exist. */
+  getRelease(opts: GetReleaseOptions): Promise<ReleaseWithItems | null>
+  /** Preview a release: each member in its CURRENT (draft) state, loaded through the
+   *  access-checked read (`draft:true`). Members the caller can't read are dropped. */
+  previewRelease(opts: PublishReleaseOptions): Promise<PreviewReleaseResult>
+  /** Publish every member of an `open` release as a unit, each through the existing
+   *  publish op with the caller's `req` (so `assertCanPublish` — publish access, the
+   *  agent brake, and the eval gate — applies per member). ALL-OR-NOTHING pre-flight:
+   *  if any member would fail the gate, NONE are published and the release stays `open`.
+   *  On success the release becomes `published`. A mid-publish DB error marks it `failed`
+   *  and reports which members succeeded (best-effort atomic). */
+  publishRelease(opts: PublishReleaseOptions): Promise<PublishReleaseResult>
+  /** Schedule an `open` release to publish at `at`. Publishability is gate-checked NOW
+   *  (pre-flight at schedule time, exactly like a scheduled per-doc publish); the drain
+   *  then publishes the recorded members under override when due. */
+  scheduleRelease(opts: ScheduleReleaseOptions): Promise<Release>
+  /** Cancel (delete) an `open` or `scheduled` release. A published release is immutable. */
+  cancelRelease(opts: CancelReleaseOptions): Promise<{ id: string }>
+  /** Publish every scheduled release whose time has arrived (the drain). Members are
+   *  published under override — they were gate-checked at schedule time. Drive from a
+   *  cron/job alongside `processScheduledPublishes`. */
+  processScheduledReleases(opts?: ProcessScheduledReleasesOptions): Promise<ProcessScheduledReleasesResult>
   /** Assemble a `blocks` page layout from a validated spec and create it through the
    *  normal `create()` path (agent draft-only brake + field scope + access all apply),
    *  so it lands in the review queue. Rejects unknown block types / fields. */

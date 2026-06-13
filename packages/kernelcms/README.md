@@ -55,6 +55,84 @@ KernelCMS takes the opposite stance.
 The guiding rule of the whole codebase: heavy or opinionated dependencies live behind
 optional adapters, never in `@kernel/core`. The lean default is the product.
 
+One more stance worth calling out: KernelCMS is **RAG-native**. Bring any embedder and a
+collection's content is indexed into a vector store on every write, with built-in
+semantic and hybrid (Reciprocal Rank Fusion) search served through the same
+access-checked read path. Your CMS *is* your RAG knowledge base, instead of a CMS plus a
+Lambda plus a separate vector database you have to keep in sync.
+
+Building on that, your content is also a **knowledge graph**. Your typed relationships
+*are* the edges, so `kernel.graph(...)` walks a document and its connected neighbors
+(outbound relationship/upload fields **and** inbound reverse-relationship joins), and
+`kernel.graphSearch(...)` does **GraphRAG** — semantic search finds the seed documents,
+then the graph expands each into its connected subgraph and returns a ready-to-ground
+`context` array. You retrieve not just the matching document but its connected context —
+the cutting-edge RAG technique — straight from the relationships you already modeled.
+Every node is loaded through the same access-checked read path, and a node the caller
+can't read (and the edge to it) is simply omitted.
+
+And the same content engine is **AI-discoverable**. Opt into `discoverability` and KernelCMS
+serves `llms.txt`, a full-text corpus, retrieval-ready content chunks, and per-document
+GEO markdown with provenance-backed citations — so answer engines (ChatGPT, Claude,
+Perplexity, Google AI) can ingest and cite your content. Every byte is generated as an
+anonymous principal over the same access-checked read path: only published, publicly
+readable content ever ships.
+
+And it emits **structured data**. Opt into `structuredData` and KernelCMS generates
+schema.org **JSON-LD** for any collection straight from your typed model — so search
+engines get rich results and AI answer engines get machine-understandable facts, without
+you hand-writing `<script type="application/ld+json">` by hand. Smart defaults map your
+fields to schema.org properties (override per-collection), and every read goes through the
+same access-checked pipeline: a draft, private, or read-denied document or field is never
+emitted, and the embeddable `<script>` is HTML-escaped so content can't break out of the
+tag. With semantic search and llms.txt/GEO it completes the discoverability trio.
+
+It is also the **agentic CMS**. Define `workflows` and an agent can run an autonomous
+content pipeline — ideation → draft → quality gate → human review — entirely inside the
+engine, with hard guardrails. Every step runs as a scoped agent principal: it physically
+cannot publish (draft-only brake), cannot write outside its `fieldScope`, and never gets
+`overrideAccess`. Content only advances through `evalGate` (your content-CI quality
+checks) and `requestReview` (a human approval in the inbox). Hand a job to an agent;
+nothing it produces goes live unchecked.
+
+It is also **real-time**. Opt into `realtime` and every content write lands on a durable,
+access-filtered change feed: pull it with cursor-based polling (`kernel.changes` / `GET
+/api/changes`) for CDC pipelines, or subscribe to a live Server-Sent-Events stream (`GET
+/api/changes/stream`) for UIs that update as content moves. Events are **metadata only**
+and filtered per subscriber — a caller is never even told that a document they can't read
+changed. Reactive admin UIs, agents that react to content, and search re-indexers stay in
+sync over the *same* access-checked engine, not a side channel around it.
+
+And content has a **time-machine**. On any collection with `versions` enabled, you can
+read a document (or a whole list) as it existed at any past instant (`asOf`), walk its
+complete change timeline, diff any two points field-by-field, and revert in one call —
+*git for content*, built on the version history KernelCMS already keeps. Every
+historical read, diff, and restore goes through the **same** access checks and
+field-stripping as a live read: time-travel is a view into the access-checked engine,
+never a side door around it.
+
+And content ships in **releases**. Opt into `releases` and you can bundle a set of draft
+documents — a landing page, three posts, an updated pricing global — into a named
+release and publish them **together, atomically**, optionally on a schedule. Preview the
+whole bundle as it will read, then go live with an **all-or-nothing pre-flight**: every
+member is dry-run through the same per-document publish gate (publish access, the agent
+draft-only brake, the blocking eval/content-CI gate) and if *any* would fail, *none*
+publish — no half-launched campaign. Publishing a release is held to the exact same bar
+as a direct publish (a caller can only publish a release whose every member they could
+publish directly; an agent can never publish one), so coordinated launches stay as safe
+as a single edit. This is the practical heart of *content environments*.
+
+And content can **personalize**. Opt into `audiences` and any field becomes
+`personalized: true` — it stores audience variants the way `localized` stores locales,
+resolving per request (`?audience=vip` or `req.audience`) to that segment, then the default,
+then null. Built-in A/B testing rides the same model: declare `experiments` and
+`kernel.assignVariant({ experiment, key })` gives **deterministic sticky bucketing** of a
+visitor — the same key always gets the same variant, the variant *is* a segment, and only a
+hash of the key is ever stored (no PII at rest). Variants still pass field read-access, an
+untrusted audience is honored only if it's a configured segment, and per-segment writes
+merge without clobbering each other — micro-experiences and experiments from the same typed
+model, no separate personalization platform.
+
 ---
 
 ## Quickstart
@@ -144,9 +222,12 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Postgres:** swap `sqliteAdapter` for `postgresAdapter()` and set `DATABASE_URL` (or pick it in the first-run Connectors step). Configs scaffolded by `npx kernel init` are already env-driven: set `DATABASE_URL` and they use Postgres, otherwise a local SQLite file.
 - **Caching:** add `cache: memoryCache()` (or `dbCache()` / `redisCache()`) and mark a collection `cache: true`. Reads are served read-through and invalidated automatically on write.
 - **Search:** add `search: memorySearch()` and give a collection `search: { fields: ['title', 'body'] }`, then `kernel.searchDocs({ collection, query })`. Hits are loaded through the access-checked read path, so search never surfaces a document the caller cannot read.
+- **Semantic & hybrid search (RAG-native):** set a pluggable `embeddings: { embed }` (your OpenAI/Cohere/local model — no embedding dependency baked in) and mark a collection's search `semantic: true`. Fields are embedded on every write into a vector store, and `kernel.semanticSearch(...)` / `kernel.hybridSearch(...)` (Reciprocal Rank Fusion of full-text + vector) plus `GET /api/:collection/semantic` and `/hybrid` are served through the same access-checked read path. Your CMS becomes your RAG knowledge base — see the [semantic search guide](docs/semantic-search.md).
 - **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change; the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
+- **Real-time change feed:** `realtime: { enabled: true }` turns on an access-filtered change feed — a durable pull feed for CDC and a live SSE push stream. See [Real-time](#real-time-change-feed-cdc--sse) below.
 - **Payments & orders:** add the `commerce({ payment: stripePayment({ ... }) })` plugin and you get `products` + `orders` collections, a `POST /commerce/checkout` (totals recomputed server-side from real prices), and a signature-verified `POST /commerce/webhook` that transitions orders to paid/refunded. Stripe and a deterministic `testPayment()` adapter included.
 - **AI agents (MCP):** register `agents: [{ id, token, roles, fieldScope }]` and serve your kernel over the Model Context Protocol — `npx kernel mcp` (stdio, for Claude Desktop / Cursor) or `kernel mcp --http` (multi-agent, per-request scoped tokens). Tools are auto-generated from the same model that builds the OpenAPI spec (CRUD, count, version history, your opt-in `defineEndpoint` business logic, plus `kernel://schema` resources to introspect), and every call runs through the in-process Local API as a scoped principal — so an agent goes through the **same access pipeline as a human**: it only touches the fields you allow, **cannot publish** (drafts only, enforced by the engine), and is attributed in version history. The MCP layer enforces nothing on its own. Import from `kernelcms/mcp`; the MCP SDK is an optional peer dependency.
+- **Agentic workflows:** define `workflows: [{ slug, agent, trigger, steps }]` and an agent runs an autonomous content pipeline (draft → quality gate → human review) under the same guardrails as MCP. Triggers (`on: 'create' | 'update'`) enqueue a **durable** run via the jobs queue, so a slow agent step never blocks the content write; `runWorkflow(...)` / `POST /api/_admin/workflows/:slug/run` run a `manual` one. Content advances only through `ctx.evalGate(...)` (your content-CI evals) and `ctx.requestReview(...)` (human approval in the inbox) — the agent itself physically cannot publish. See [agentic workflows](docs/agentic-workflows.md).
 - **Referential integrity:** give a relationship `onDelete: 'setNull' | 'cascade' | 'restrict'` to clean up references when a document is deleted.
 - **Hooks, access rules, localization, background jobs, plugins:** all configured the same way.
 
@@ -166,6 +247,9 @@ A couple of the guides are also kept alongside the source:
   deny-by-default access, `overrideAccess`, drafts→publish, stored vs. virtual
   computed fields, `defaultSort`, the seed convention, env vars, CLI flags, and
   the `.ts` type-stripping requirements for config files.
+- **[Personalization & A/B](docs/personalization.md)** — `personalized` fields and
+  audience variants, the `audiences` config, reading/writing segments (merge semantics),
+  deterministic A/B `experiments` with `assignVariant`, and the access/PII guarantees.
 
 ---
 
@@ -243,6 +327,9 @@ that is persisted at write time and therefore sortable and filterable:
 - Computed (virtual) fields: `virtual: true` + `compute({ doc, req })`, derived on read,
   never stored, read-only in the admin.
 - Per-field localization with a configurable locale set and fallbacks.
+- Per-field **personalization**: `personalized: true` stores audience variants (like
+  `localized`, but keyed by segment) against a configured `audiences` set, plus built-in
+  deterministic A/B `experiments`. See [Personalization & A/B](#personalization--ab-experiments).
 - Conditional fields, default values, validation, read-only and hidden flags, and
   sidebar field positioning.
 
@@ -266,6 +353,435 @@ that is persisted at write time and therefore sortable and filterable:
   Publishing is a distinct, access-controlled transition: `access.publish` gates the
   draft → published edge separately from `update` (and falls back to `update` when
   omitted, so existing behavior is unchanged).
+
+### Content time-machine (point-in-time reads, diff & restore)
+
+On any collection with `versions` enabled, the version history becomes a queryable
+*git-for-content* surface — no extra storage, no second access path. (Without
+`versions`, these ops raise `BadRequestError` — there's no history to reconstruct.)
+
+- **Point-in-time reads.** Pass `asOf: '<iso>'` to `kernel.findByID(...)` or
+  `kernel.find(...)` and the engine reconstructs the document(s) from the latest
+  snapshot with `createdAt <= asOf` (`null` if it didn't exist yet; current when
+  `asOf` is omitted). List reads honor `where` / `limit` / `page`.
+- **History timeline.** `kernel.history({ collection, id })` →
+  `Array<{ versionId, at, by, byType, status, autosave, changedFields }>`, oldest →
+  newest; `changedFields` are the fields that differ from the previous snapshot.
+- **Field-level diff.** `kernel.diffVersions({ collection, id, from, to })` →
+  `Record<field, { from, to }>`. `from`/`to` are each a versionId **or** an ISO
+  timestamp (resolved to the snapshot at-or-before it).
+- **Restore as-of.** `kernel.restoreAsOf({ collection, id, asOf })` reverts by writing
+  that historical content through the **normal update path** — content fields only
+  (`_status`/system columns excluded, so a restore is never a publish), no
+  `overrideAccess`, the agent draft-only brake still applies, and it records a new
+  version.
+
+```bash
+curl "http://localhost:3000/api/posts/<id>?asOf=2025-12-31T23:59:59Z"  # point-in-time read
+curl "http://localhost:3000/api/posts?asOf=2025-12-31T23:59:59Z"       # point-in-time list
+curl "http://localhost:3000/api/posts/<id>/history"                    # the change timeline
+curl "http://localhost:3000/api/posts/<id>/diff?from=<a>&to=<b>"       # field-level diff
+curl -X POST "http://localhost:3000/api/posts/<id>/restore-as-of?asOf=2026-06-01T00:00:00Z" # gated like an update
+```
+
+**The access-parity guarantee:** every historical read, diff, and timeline runs through
+the *same* read-check and field-stripping as a live read, evaluated against the caller's
+**current** access — no time-travel around revoked access. A caller who can't read the
+doc now can't read its `asOf` state, `history`, or `diff`; a read-denied field never
+appears in an `asOf` doc, in `changedFields`, or in a diff; historical drafts stay hidden
+unless `draft: true`. See the [content time-machine guide](docs/time-machine.md).
+
+### Content releases (atomic, schedulable publishing bundles)
+
+Opt into `releases` and you can bundle a set of draft documents into a named **release**
+and publish them **together, atomically** — for coordinated launches and campaigns. The
+key provisions two system tables (`_releases` + `_release_items`); members must be real,
+non-system, drafts-enabled collection documents.
+
+```ts
+export default defineConfig({
+  releases: true, // provisions _releases + _release_items
+  collections: [/* … drafts-enabled collections … */],
+})
+
+// open → add members → preview → publish, all on the Local API:
+const release = await kernel.createRelease({ name: 'Spring launch' })
+await kernel.addToRelease({ release: release.id, collection: 'posts', id })  // access-checked
+const { docs } = await kernel.previewRelease({ release: release.id })        // current draft state
+const result = await kernel.publishRelease({ release: release.id })          // → { status, published, failed }
+
+// or schedule the whole bundle; drain it from a cron alongside scheduled publishes:
+await kernel.scheduleRelease({ release: release.id, at: '2026-07-01T09:00:00Z' })
+await kernel.processScheduledReleases() // call next to processScheduledPublishes()
+```
+
+A release moves `open` (editable — add/remove members) → `published` (all members live,
+`publishedAt` set) or `scheduled` → `published`; a mid-publish error → `failed`. Only
+`open` releases are editable; `published` is immutable.
+
+**The all-or-nothing, same-gate guarantee:** `publishRelease` first dry-runs the publish
+gate for **every** member — the per-document publish access check, the agent draft-only
+brake, and the blocking eval/content-CI gate against current draft content. If *any*
+member would fail, it publishes **none** (returns `failed` with reasons; the release
+stays `open`) — no partial go-live. Only when all pass does it publish each through the
+normal `publish` op. So publishing a release is held to the **same per-document publish
+gate as a direct publish**: a caller can only publish a release whose every member they
+could publish directly, an **agent can never publish a release**, and eval gates still
+apply. Member management is access-checked (you can't pull a doc you can't read into a
+release), and scheduled releases are gate-checked at schedule time and re-checked on the
+drain. Best-effort atomic on a mid-publish fault; red-teamed to Risk LOW. See the
+[content releases guide](docs/releases.md).
+
+### Personalization & A/B experiments
+
+`personalized` fields are the audience-keyed twin of localization: where a `localized` field
+stores one value per locale, a `personalized` field stores a `{ [segment]: value }` map and
+resolves per request to the caller's audience → the default segment → null. Opt in with an
+`audiences` config; built-in `experiments` add deterministic A/B testing on the same model.
+
+```ts
+export default defineConfig({
+  audiences: { segments: ['default', 'vip', 'returning'], default: 'default' }, // default ∈ segments
+  experiments: [{ slug: 'cta', variants: ['a', 'b'], weights: [50, 50], seed: 1 }], // variants are segments
+  collections: [
+    { slug: 'posts', fields: [
+      { name: 'headline', type: 'text', personalized: true }, // can't also be `localized`
+    ] },
+  ],
+})
+```
+
+- **Resolve a variant.** Pass `?audience=vip` (REST) or `req.audience` (Local API). A write
+  carrying an audience **merges** that segment without clobbering the others:
+
+```ts
+const { variant } = kernel.assignVariant({ experiment: 'cta', key: visitorId }) // sticky, weight-proportional
+const doc = await kernel.findByID({ collection: 'posts', id, req: { audience: variant } }) // variant IS a segment
+```
+
+```bash
+curl "http://localhost:3000/api/posts/<id>?audience=vip"                                  # read the vip variant
+curl -X PATCH "http://localhost:3000/api/posts/<id>?audience=vip" -d '{"headline":"…"}'    # merge into vip only
+curl -X POST  "http://localhost:3000/api/_experiments/cta/assign" -d '{"key":"visitor-1"}' # public; → {variant, segment}
+```
+
+**The guarantees:** an untrusted `audience` is honored only if it's a configured segment
+(unknown → default); segment keys are guarded against `__proto__`/`constructor`/`prototype`
+(no pollution); personalized fields still pass field read-access, so a read-denied variant
+is stripped for every audience; per-segment writes merge (no variant lost); and bucketing is
+deterministic over an FNV hash of the visitor `key` — **only the hash is recorded, no PII at
+rest**. Red-teamed to Risk LOW. See the [personalization guide](docs/personalization.md).
+
+### Search (full-text, semantic & hybrid)
+
+- Adapter-based **full-text** search (`search: memorySearch()` + a collection's
+  `search: { fields }`), with hits loaded through the access-checked read path.
+- **RAG-native semantic search.** Supply a pluggable embedder — KernelCMS has no hard
+  embedding dependency, so OpenAI, Cohere, or a local model all work — and a collection's
+  fields are embedded on every write into a vector store (the built-in in-process
+  `memoryVector()` by default; a pgvector adapter is the documented production follow-up).
+- **Hybrid search** fuses full-text and vector results with Reciprocal Rank Fusion
+  (RRF, k=60), the 2026-standard ranking. Both ops degrade gracefully — semantic-only with
+  no full-text fields, full-text-only with no embedder.
+- Every result goes through the **access-checked read path**: a vector hit for a document
+  the caller cannot read is dropped, never leaked. `limit` is clamped (max 100) and
+  `filter` is validated to real columns. Indexing is real-time (a governance requirement
+  for AI agents), and an embed failure is logged (never with the text or key) without
+  breaking the content write.
+
+```ts
+import { defineConfig } from 'kernelcms'
+import OpenAI from 'openai'
+
+const openai = new OpenAI()
+
+export default defineConfig({
+  search: memorySearch(), // full-text (hybrid fuses this with the vector store)
+  embeddings: {
+    // Bring any embedder; KernelCMS just needs string[] → number[][].
+    embed: async (texts) => {
+      const res = await openai.embeddings.create({ model: 'text-embedding-3-small', input: texts })
+      return res.data.map((d) => d.embedding)
+    },
+  },
+  collections: [
+    {
+      slug: 'posts',
+      access: { read: () => true },
+      search: { fields: ['title', 'body'], semantic: true }, // index + embed on write
+      fields: [/* … */],
+    },
+  ],
+})
+
+// Local API — fused full-text + vector, access-checked:
+const { docs } = await kernel.hybridSearch({ collection: 'posts', query: 'how do I deploy?', req })
+// or pure vector: kernel.semanticSearch({ collection, query, limit, filter, req })
+```
+
+```bash
+curl "http://localhost:3000/api/posts/semantic?q=how%20do%20I%20deploy&limit=10"
+curl "http://localhost:3000/api/posts/hybrid?q=how%20do%20I%20deploy"
+```
+
+### Knowledge graph & GraphRAG
+
+Your typed relationships *are* a graph. `kernel.graph(...)` walks a document and its
+neighbors; `kernel.graphSearch(...)` is **GraphRAG** — semantic search picks the seeds,
+the graph expands each into its connected subgraph, and you get a `context` array to
+ground an LLM. It is the **retrieval** half; the generation stays yours.
+
+- **Graph traversal.** `kernel.graph({ collection, id, depth?, maxNodes?, req })` →
+  `{ nodes, edges, truncated }`. BFS from the seed following outbound
+  relationship/upload fields **and** inbound reverse-relationship (`join`) fields, up to
+  `depth` hops (default 1, clamp 10). A `GraphNode` is `{ ref: '<collection>:<id>',
+  collection, id, label }`; a `GraphEdge` is `{ from, to, field, relationTo, kind }` where
+  `kind` is `'relationship'` (outbound) or `'reverse'` (inbound join). Bounded and
+  cycle-safe: `maxNodes` (default 100, hard cap 500), a per-node fan-out cap (200), and
+  de-duped nodes; `truncated: true` when a bound clips the walk.
+- **GraphRAG retrieval.** `kernel.graphSearch({ collection?, query, depth?, limit?, req })`
+  → `{ seeds, nodes, edges, context, truncated }`. It runs semantic/hybrid search (so it
+  **requires `embeddings`**; it falls back to full-text, then plain `find`) to find seed
+  docs for `query`, expands each through the graph, and returns the seeds + the connected
+  subgraph + a `context` array of `{ ref, label, text }` snippets to ground an LLM. Pass an
+  explicit `collection` when more than one is searchable.
+
+```ts
+// Local API — the connected subgraph around one document:
+const { nodes, edges, truncated } = await kernel.graph({ collection: 'posts', id, depth: 2, req })
+
+// GraphRAG — semantic seeds, expanded into their connected context:
+const { seeds, context } = await kernel.graphSearch({ collection: 'posts', query: 'who wrote about deploys?', depth: 1, req })
+// `context` is Array<{ ref, label, text }> — drop it straight into an LLM prompt.
+```
+
+```bash
+curl "http://localhost:3000/api/posts/<id>/graph?depth=2&maxNodes=100"
+curl "http://localhost:3000/api/graph-search?q=who%20wrote%20about%20deploys&collection=posts&depth=1"
+```
+
+**The access & bounds guarantee:** every node loads through the same access-checked read
+path. A node the caller can't read is dropped **and the edge to it is omitted**, so the
+relationship's very existence never leaks; read-denied fields never appear in a `label` or
+`context`. The bounds (`depth`, `maxNodes`, fan-out, de-dupe) make traversal DoS-safe.
+This is retrieval only — see the [knowledge graph guide](docs/knowledge-graph.md).
+
+### Real-time change feed (CDC & SSE)
+
+Opt in with `realtime: { enabled: true }` and every content write emits a change event
+onto a durable, access-filtered feed. Two shapes are served from one source: a **pull
+feed** for CDC pipelines (cursor polling) and a **live SSE push stream** for reactive UIs.
+The feed is off by default; `retain` (default 10000, clamped) bounds the change outbox.
+
+```ts
+export default defineConfig({
+  realtime: { enabled: true, retain: 50000 }, // off by default; retain = max outbox rows
+  collections: [/* … */],
+})
+```
+
+- **Durable pull (CDC).** `kernel.changes({ since, collection?, limit?, req })` →
+  `{ changes, cursor }`; poll again with `since: cursor`. Each `ChangeEvent` is
+  `{ seq, at, collection, documentId, event, principalType }` —
+  `event` is `'create' | 'update' | 'delete' | 'publish' | 'unpublish'`. REST:
+  `GET /api/changes?since=&collection=&limit=` (auth required).
+- **Live push (SSE).** `GET /api/changes/stream?collection=` returns `text/event-stream`,
+  emitting `id: <seq>` + `data: <json>` frames as changes happen, with `: ping`
+  heartbeats; reconnect with `Last-Event-ID` to resume from the last `seq`. Auth required.
+- **In-process subscribe.** `const off = kernel.subscribe((e) => { … })` returns an
+  unsubscribe function — for server code, workflows, and live re-indexing.
+
+```ts
+// In-process: react to changes inside the server.
+const off = kernel.subscribe((e) => {
+  if (e.collection === 'posts') reindex(e.documentId)
+})
+// later: off()
+```
+
+```bash
+curl "http://localhost:3000/api/changes?since=0&collection=posts&limit=100"  # pull (CDC)
+curl -N "http://localhost:3000/api/changes/stream?collection=posts"          # live SSE
+```
+
+**The metadata-only, access-filtered guarantee:** an event carries **metadata only, never
+the document body**, and the feed is **filtered per subscriber** — a subscriber is never
+even told that a document they cannot read changed (the event is dropped entirely,
+fail-closed; for deletes and row-scoped reads the filter requires a fully-public read
+rule). The client re-fetches the actual document through the normal access-checked API.
+Both endpoints require auth, retention and connection counts are bounded, and a feed-write
+failure never breaks the content write. *(Honest notes: the hook-based feed emits
+create/update/delete, so a publish currently reads as `update`; `seq` is per-node — single-node
+ordering, multi-node needs a shared sequence.)* Pairs with [workflows](docs/agentic-workflows.md)
+(react to a change) and search (live re-index). See the [real-time guide](docs/realtime.md).
+
+### AI discoverability (llms.txt & GEO)
+
+- **GEO-native.** Opt into `discoverability` and KernelCMS exposes your content to AI
+  answer engines through the emerging **llms.txt** standard — an index of your content
+  plus a full-text corpus, both with provenance/citation footers — so ChatGPT, Claude,
+  Perplexity, and Google AI can ingest and *cite* it. Omitting the key disables the
+  feature; defaults are safe — only collections with a public read and a title are
+  exposed, never auth/upload/system collections (unless `include: true`).
+- **Four ops, one access pipeline.** `kernel.llmsTxt()` (the index),
+  `kernel.llmsFullTxt()` (the full markdown corpus), `kernel.contentChunks({ collection?,
+  limit? })` (retrieval-ready chunks for RAG/GEO ingestion), and
+  `kernel.geoDocument({ collection, id })` (one published doc as GEO markdown with a
+  citation block — author, last-updated, canonical URL, and a signature-verified note
+  when content credentials are configured).
+
+```ts
+export default defineConfig({
+  discoverability: {
+    title: 'Acme Blog',
+    description: 'Guides and changelog from the Acme team.',
+    baseUrl: 'https://acme.com',
+    collections: [
+      { slug: 'posts', titleField: 'title', descriptionField: 'excerpt',
+        bodyField: 'body', urlPattern: '/blog/:slug' },
+    ],
+    // maxDocsPerCollection defaults to 1000, maxDocsTotal to 5000
+  },
+  collections: [/* … */],
+})
+
+// Local API — the llms.txt index (title, description, per-collection link lists):
+const indexTxt = await kernel.llmsTxt()
+```
+
+```bash
+curl http://localhost:3000/api/llms.txt          # text/plain — proxy to your site root /llms.txt
+curl http://localhost:3000/api/llms-full.txt     # text/plain — the full content corpus
+curl "http://localhost:3000/api/content-chunks?collection=posts&limit=50"  # JSON chunks
+curl http://localhost:3000/api/posts/<id>/geo    # text/markdown — one doc, with citation
+```
+
+The **published-only guarantee:** every generator reads through the access-checked
+pipeline as an *anonymous* principal filtering `_status === 'published'`, with no
+`overrideAccess`. Drafts, scheduled-but-unpublished docs, access-restricted documents,
+and read-denied fields never appear. Output is size-bounded by `maxDocsPerCollection`
+(default 1000) and `maxDocsTotal` (default 5000). See the
+[AI discoverability guide](docs/ai-discoverability.md). (`toMarkdown(richTextDoc)` is
+also exported from `kernelcms/richtext`.)
+
+### Structured data (schema.org JSON-LD)
+
+- **JSON-LD from your model.** Opt into `structuredData` and KernelCMS generates
+  schema.org [JSON-LD](https://json-ld.org) for a collection's documents — so search
+  engines render rich results and AI answer engines get machine-understandable facts,
+  generated automatically from your typed fields. Off until you add the block; you pick the
+  schema.org `type` (`'Article'`, `'Product'`, `'Person'`, `'BlogPosting'`, …) per
+  collection.
+- **Smart defaults, explicit override.** With no `mapping`, the title / `useAsTitle` field
+  becomes `name` + `headline`, the first rich-text/textarea becomes `articleBody` (plus a
+  truncated `description`), a publish/posted/created date becomes `datePublished` (else
+  `createdAt`) and updated/modified becomes `dateModified` (else `updatedAt`), `email` → `email`,
+  an image/upload → `image` (URL), and an author-ish relationship → `author`
+  (`{ '@type': 'Person', name }`). A `mapping: { schemaProperty: fieldName }` overrides the lot.
+
+```ts
+export default defineConfig({
+  structuredData: {
+    baseUrl: 'https://acme.com',
+    collections: [
+      { slug: 'posts', type: 'BlogPosting', urlPattern: '/blog/:slug' }, // smart defaults
+      { slug: 'authors', type: 'Person', mapping: { name: 'full_name', email: 'contact' } },
+    ],
+  },
+  collections: [/* … */],
+})
+
+// Local API — the JSON-LD object, or null:
+const ld = await kernel.jsonLd({ collection: 'posts', id, req })
+// or the ready-to-embed, HTML-escaped <script> string ('' when no doc):
+const script = await kernel.jsonLdScript({ collection: 'posts', id, req })
+```
+
+```html
+<!-- drop the escaped <script> into your page head -->
+<head>{{ script }}</head>
+```
+
+```bash
+curl http://localhost:3000/api/posts/<id>/jsonld   # application/ld+json (404 when null/disabled)
+```
+
+**The guarantees:** reads go through the same access-checked pipeline as every live read —
+a draft, private, or read-denied document or field is **never** emitted (a public/anonymous
+caller sees only published, publicly readable content). `jsonLdScript` HTML-escapes
+`<`/`>`/`&` so content can't break out of the `<script>` tag (XSS-safe), and the `@id` /
+`image` URLs are injection-safe (no `javascript:` / `data:` / path traversal). The
+standalone op is the surface — it is not auto-injected into the GEO output. See the
+[structured data guide](docs/structured-data.md).
+
+### Agentic workflows (autonomous, governed AI pipelines)
+
+Hand a job to an agent and let it run a multi-step content pipeline — ideation, draft,
+quality gate, human review — without it ever being able to push something live. A
+`workflow` names a scoped `agent`, an optional `trigger`, and ordered `steps`. Every step
+runs through `ctx.kernel`, a Local-API subset (`find` / `findByID` / `create` / `update` /
+`delete` / `count` / `composePage` / `findVersions`) pinned to that agent principal — a
+step can't pass `overrideAccess` or a different principal — plus two gates:
+
+```ts
+export default defineConfig({
+  agents: [{ id: 'writer', token: process.env.WRITER_TOKEN, roles: ['editor'],
+             fieldScope: { allow: ['title', 'body', 'excerpt'] } }],
+  workflows: [
+    {
+      slug: 'draft_from_brief',
+      agent: 'writer',                       // every step runs as this scoped agent
+      trigger: { on: 'create', collection: 'briefs' },
+      maxAttempts: 3,
+      steps: [
+        {
+          name: 'draft',
+          async run(ctx) {
+            // ctx.input is the trigger doc; ctx.kernel is pinned to `writer`
+            const body = await generateWithYourLLM(ctx.input.brief) // your agent/LLM
+            const post = await ctx.kernel.create({
+              collection: 'posts',
+              data: { title: ctx.input.title, body }, // a DRAFT — agents cannot publish
+            })
+            ctx.log(`drafted post ${post.id}`)
+            // quality CI: runs the collection's `evals`; THROWS → the run fails
+            await ctx.evalGate({ collection: 'posts', id: post.id })
+            // pause as `awaiting_review`; a human approves (and publishes) in the inbox
+            await ctx.requestReview({ collection: 'posts', id: post.id }, 'ready for review')
+          },
+        },
+      ],
+    },
+  ],
+})
+```
+
+```ts
+// Local API — run a manual workflow, or read the durable run log:
+const run = await kernel.runWorkflow({ slug: 'draft_from_brief', input })
+const { docs } = await kernel.workflowRuns({ slug: 'draft_from_brief', status: 'awaiting_review' })
+```
+
+```bash
+# REST (admin/editor-gated):
+curl http://localhost:3000/api/_admin/workflow-runs?slug=draft_from_brief
+curl -X POST http://localhost:3000/api/_admin/workflows/draft_from_brief/run -d '{ … }'
+```
+
+Triggers (`on: 'create' | 'update'`) enqueue a **durable** run via the jobs queue (drained
+by `kernel jobs:run` / `runDueJobs`), so a slow agent step never blocks the content write;
+`on: 'manual'` runs only via `runWorkflow` / the route. Runs move through
+`pending → running → completed | failed | awaiting_review`, recorded per-step in
+`_workflow_runs` (error **messages** only, never stacks or secrets) and decisioned as
+`workflow.completed` / `workflow.failed` / `workflow.awaiting_review`.
+
+**The guardrails are the whole point.** Every step is the scoped agent: it physically
+cannot publish (draft-only brake), cannot write outside `fieldScope`, and never runs with
+`overrideAccess`. Content advances **only** through `evalGate` (quality CI) and
+`requestReview` → human approval — KernelCMS orchestrates and guards; the actual
+generation is your agent/LLM inside a step, and approval publishes through the inbox path.
+A self-triggering loop is guarded: an agent's own write into its trigger collection won't
+re-fire its workflow.
 
 ### Auth
 

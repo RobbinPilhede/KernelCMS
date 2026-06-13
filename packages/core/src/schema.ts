@@ -36,6 +36,16 @@ export const AUDIT_TABLE = '_audit'
 /** Storage table holding agent-review decisions (the human approval inbox). */
 export const REVIEWS_TABLE = '_reviews'
 
+/** Storage table holding content releases — one row per named bundle of drafts published
+ *  as a unit. Provisioned only when `config.releases` is enabled. `status` is indexed for
+ *  the list/drain scans; `scheduledAt` (indexed) drives the scheduled-release drain. */
+export const RELEASES_TABLE = '_releases'
+
+/** Storage table holding release membership — one row per (release, collection, documentId).
+ *  Provisioned only when `config.releases` is enabled. `release` is indexed for the items
+ *  lookup; `documentId` is indexed so a doc's releases are queryable. */
+export const RELEASE_ITEMS_TABLE = '_release_items'
+
 /** Storage table holding the migration journal — one row per applied migration,
  *  recording exactly what was created so a rollback can invert only those changes. */
 export const MIGRATIONS_TABLE = '_migrations'
@@ -162,6 +172,41 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'reviewerId', type: 'text', required: false, unique: false, indexed: true, localized: false },
         { name: 'reviewerType', type: 'text', required: false, unique: false, indexed: false, localized: false },
         { name: 'note', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Content releases, provisioned only when releases are enabled. `_releases` is the
+  // bundle header (status/schedule/provenance); `_release_items` is the membership list,
+  // a flat (release, collection, documentId) row. `status` + `scheduledAt` are indexed
+  // for the list + drain scans; `release` + `documentId` on items are indexed for the
+  // per-release items lookup and reverse "which releases hold this doc" queries. The
+  // (release, collection, documentId) uniqueness is enforced in the op (de-dupe), not a
+  // composite DB constraint, to stay portable across adapters.
+  if (config.releases.enabled) {
+    tables.push({
+      table: RELEASES_TABLE,
+      slug: RELEASES_TABLE,
+      columns: [
+        { name: 'name', type: 'text', required: true, unique: false, indexed: false, localized: false },
+        { name: 'status', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'scheduledAt', type: 'timestamp', required: false, unique: false, indexed: true, localized: false },
+        { name: 'createdBy', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'createdByType', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'publishedAt', type: 'timestamp', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+    tables.push({
+      table: RELEASE_ITEMS_TABLE,
+      slug: RELEASE_ITEMS_TABLE,
+      columns: [
+        { name: 'release', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'collection', type: 'text', required: true, unique: false, indexed: false, localized: false },
+        { name: 'documentId', type: 'text', required: true, unique: false, indexed: true, localized: false },
       ],
       timestamps: true,
       singleton: false,

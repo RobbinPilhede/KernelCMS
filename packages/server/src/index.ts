@@ -756,6 +756,102 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       return methodNotAllowed()
     }
 
+    // /_admin/releases -> content releases (a named bundle of drafts published as a unit).
+    // REVIEWER-gated (admin OR editor; never an agent): the same trusted-human gate as the
+    // review inbox. The acting identity is the server-resolved `user` ONLY — the client
+    // body never names the principal. Publishing a release routes EVERY member through the
+    // normal per-doc publish gate with this `user`, so a caller can only publish a release
+    // whose every member they could publish directly (an agent can never publish — the
+    // per-doc brake), and the all-or-nothing pre-flight stops a partial go-live.
+    if (segments[1] === 'releases') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Release management requires an admin or editor role.')
+      const q = url.searchParams
+
+      // GET /_admin/releases, POST /_admin/releases
+      if (segments.length === 2) {
+        if (method === 'GET') {
+          const status = q.get('status')
+          return json(
+            await kernel.listReleases({
+              ...(status ? { status: status as never } : {}),
+              limit: toNum(q.get('limit')) ?? undefined,
+              page: toNum(q.get('page')) ?? undefined,
+              req: { user },
+            }),
+          )
+        }
+        if (method === 'POST') {
+          const body = await readBody(request)
+          return json({ release: await kernel.createRelease({ name: String(body.name ?? ''), req: { user } }) }, 201)
+        }
+        return methodNotAllowed()
+      }
+
+      const releaseId = decodeURIComponent(segments[2]!)
+
+      // GET /_admin/releases/:id, DELETE /_admin/releases/:id (cancel)
+      if (segments.length === 3) {
+        if (method === 'GET') {
+          const release = await kernel.getRelease({ release: releaseId, req: { user } })
+          if (!release) throw new NotFoundError()
+          return json({ release })
+        }
+        if (method === 'DELETE') return json(await kernel.cancelRelease({ release: releaseId, req: { user } }))
+        return methodNotAllowed()
+      }
+
+      if (segments.length >= 4) {
+        const action = segments[3]!
+
+        // POST /_admin/releases/:id/items  — add a member.
+        // DELETE /_admin/releases/:id/items/:collection/:docId — remove a member.
+        if (action === 'items') {
+          if (segments.length === 4 && method === 'POST') {
+            const body = await readBody(request)
+            return json({
+              release: await kernel.addToRelease({
+                release: releaseId,
+                collection: String(body.collection ?? ''),
+                id: String(body.id ?? ''),
+                req: { user },
+              }),
+            })
+          }
+          if (segments.length === 6 && method === 'DELETE') {
+            return json({
+              release: await kernel.removeFromRelease({
+                release: releaseId,
+                collection: decodeURIComponent(segments[4]!),
+                id: decodeURIComponent(segments[5]!),
+                req: { user },
+              }),
+            })
+          }
+          return methodNotAllowed()
+        }
+
+        // GET /_admin/releases/:id/preview
+        if (action === 'preview' && segments.length === 4 && method === 'GET') {
+          return json(await kernel.previewRelease({ release: releaseId, req: { user } }))
+        }
+
+        // POST /_admin/releases/:id/publish
+        if (action === 'publish' && segments.length === 4 && method === 'POST') {
+          return json(await kernel.publishRelease({ release: releaseId, req: { user } }))
+        }
+
+        // POST /_admin/releases/:id/schedule  { at }
+        if (action === 'schedule' && segments.length === 4 && method === 'POST') {
+          const body = await readBody(request)
+          if (typeof body.at !== 'string') throw new BadRequestError('`at` (ISO timestamp) is required.')
+          return json({ release: await kernel.scheduleRelease({ release: releaseId, at: body.at, req: { user } }) })
+        }
+      }
+
+      return methodNotAllowed()
+    }
+
     // /_admin/workflow-runs -> the agentic-workflow run log. REVIEWER-gated (admin OR
     // editor; never an agent) — operators monitor autonomous runs here. GET lists runs
     // (optional ?slug= / ?status= / pagination). Read-only. Returns empty when workflows

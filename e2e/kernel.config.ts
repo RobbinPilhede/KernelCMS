@@ -53,6 +53,8 @@ export default defineConfig({
       ],
     },
   ],
+  // Content releases: stage drafts into a named bundle and publish them atomically.
+  releases: true,
   // Real-time: a durable change feed (CDC) + live SSE stream for reactive UIs/agents.
   realtime: { enabled: true },
   // Structured data: schema.org JSON-LD generated from the typed model for SEO + AI.

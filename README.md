@@ -111,6 +111,17 @@ historical read, diff, and restore goes through the **same** access checks and
 field-stripping as a live read: time-travel is a view into the access-checked engine,
 never a side door around it.
 
+And content ships in **releases**. Opt into `releases` and you can bundle a set of draft
+documents — a landing page, three posts, an updated pricing global — into a named
+release and publish them **together, atomically**, optionally on a schedule. Preview the
+whole bundle as it will read, then go live with an **all-or-nothing pre-flight**: every
+member is dry-run through the same per-document publish gate (publish access, the agent
+draft-only brake, the blocking eval/content-CI gate) and if *any* would fail, *none*
+publish — no half-launched campaign. Publishing a release is held to the exact same bar
+as a direct publish (a caller can only publish a release whose every member they could
+publish directly; an agent can never publish one), so coordinated launches stay as safe
+as a single edit. This is the practical heart of *content environments*.
+
 And content can **personalize**. Opt into `audiences` and any field becomes
 `personalized: true` — it stores audience variants the way `localized` stores locales,
 resolving per request (`?audience=vip` or `req.audience`) to that segment, then the default,
@@ -379,6 +390,47 @@ the *same* read-check and field-stripping as a live read, evaluated against the 
 doc now can't read its `asOf` state, `history`, or `diff`; a read-denied field never
 appears in an `asOf` doc, in `changedFields`, or in a diff; historical drafts stay hidden
 unless `draft: true`. See the [content time-machine guide](docs/time-machine.md).
+
+### Content releases (atomic, schedulable publishing bundles)
+
+Opt into `releases` and you can bundle a set of draft documents into a named **release**
+and publish them **together, atomically** — for coordinated launches and campaigns. The
+key provisions two system tables (`_releases` + `_release_items`); members must be real,
+non-system, drafts-enabled collection documents.
+
+```ts
+export default defineConfig({
+  releases: true, // provisions _releases + _release_items
+  collections: [/* … drafts-enabled collections … */],
+})
+
+// open → add members → preview → publish, all on the Local API:
+const release = await kernel.createRelease({ name: 'Spring launch' })
+await kernel.addToRelease({ release: release.id, collection: 'posts', id })  // access-checked
+const { docs } = await kernel.previewRelease({ release: release.id })        // current draft state
+const result = await kernel.publishRelease({ release: release.id })          // → { status, published, failed }
+
+// or schedule the whole bundle; drain it from a cron alongside scheduled publishes:
+await kernel.scheduleRelease({ release: release.id, at: '2026-07-01T09:00:00Z' })
+await kernel.processScheduledReleases() // call next to processScheduledPublishes()
+```
+
+A release moves `open` (editable — add/remove members) → `published` (all members live,
+`publishedAt` set) or `scheduled` → `published`; a mid-publish error → `failed`. Only
+`open` releases are editable; `published` is immutable.
+
+**The all-or-nothing, same-gate guarantee:** `publishRelease` first dry-runs the publish
+gate for **every** member — the per-document publish access check, the agent draft-only
+brake, and the blocking eval/content-CI gate against current draft content. If *any*
+member would fail, it publishes **none** (returns `failed` with reasons; the release
+stays `open`) — no partial go-live. Only when all pass does it publish each through the
+normal `publish` op. So publishing a release is held to the **same per-document publish
+gate as a direct publish**: a caller can only publish a release whose every member they
+could publish directly, an **agent can never publish a release**, and eval gates still
+apply. Member management is access-checked (you can't pull a doc you can't read into a
+release), and scheduled releases are gate-checked at schedule time and re-checked on the
+drain. Best-effort atomic on a mid-publish fault; red-teamed to Risk LOW. See the
+[content releases guide](docs/releases.md).
 
 ### Personalization & A/B experiments
 

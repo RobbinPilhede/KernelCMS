@@ -52,6 +52,61 @@ function ungatedConfig() {
 const editor = { user: { id: 'u-editor', collection: 'posts', roles: ['editor'] } }
 const writer = { user: { id: 'u-writer', collection: 'posts', roles: ['writer'] } }
 
+// A collection whose publish rule is ROW-SCOPED: you may only publish docs you own.
+function ownerScopedPublishConfig() {
+  return defineConfig({
+    secret: 'test-secret',
+    db: sqliteAdapter({ url: ':memory:' }),
+    collections: [
+      {
+        slug: 'posts',
+        versions: { drafts: true },
+        access: {
+          read: () => true,
+          create: () => true,
+          update: () => true,
+          // Returning a Where restricts WHICH rows may be published — only the owner's.
+          publish: ({ req }) => ({ owner: { equals: (req.user as { id?: string } | null)?.id } }),
+        },
+        fields: [
+          { name: 'title', type: 'text' },
+          { name: 'owner', type: 'text' },
+        ],
+      },
+    ],
+  })
+}
+
+describe('publish gate enforces a row-scoped access.publish rule (F1 regression)', () => {
+  let kernel: Kernel
+  beforeEach(async () => {
+    kernel = await initKernel(ownerScopedPublishConfig(), { logLevel: 'error' })
+    await kernel.migrate()
+  })
+  afterEach(async () => {
+    await kernel.destroy()
+  })
+
+  it('lets the owner publish their own doc but blocks publishing another user’s doc', async () => {
+    const mine = await kernel.create({ collection: 'posts', data: { title: 'Mine', owner: 'u-writer' }, req: writer })
+    const theirs = await kernel.create({
+      collection: 'posts',
+      data: { title: 'Theirs', owner: 'u-editor' },
+      req: writer,
+    })
+
+    // Owner can publish their own row.
+    const ok = await kernel.publish({ collection: 'posts', id: mine.id, req: writer })
+    expect(ok?._status).toBe('published')
+
+    // Publishing a row outside the scope (owned by someone else) is rejected — the
+    // Where is matched against the row, not treated as a blanket allow.
+    await expect(kernel.publish({ collection: 'posts', id: theirs.id, req: writer })).rejects.toThrow()
+    const still = await kernel.findByID({ collection: 'posts', id: theirs.id, draft: true, overrideAccess: true })
+    expect(still?._status).toBe('draft')
+  })
+})
+
 describe('publish gate (access.publish) restricts the draft → published transition', () => {
   let kernel: Kernel
   let draftId: string
