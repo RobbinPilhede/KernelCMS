@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.17.0
+
+### Minor Changes
+
+- **Be found and cited by AI answer engines: native llms.txt + GEO.** As people increasingly get answers from ChatGPT, Claude, Perplexity, and Google AI instead of clicking links, your content has to be ingestible and citable by machines. KernelCMS now generates that layer from your live content — no extra pipeline.
+  - **`llms.txt` + `llms-full.txt`, generated.** `kernel.llmsTxt()` produces the standard index (title, description, per-collection link lists); `kernel.llmsFullTxt()` produces the full content corpus as clean markdown, each document a titled section with a provenance/citation footer. Over REST: `GET /api/llms.txt` and `GET /api/llms-full.txt` (proxy them to your site root).
+  - **RAG-ready chunks + per-document GEO markdown.** `kernel.contentChunks()` returns retrieval-ready chunks (title, url, text, token estimate, provenance) to feed a RAG pipeline; `kernel.geoDocument({ collection, id })` (and `GET /api/:collection/:id/geo`) renders one document as GEO-optimized markdown with a citation block — author, last-updated, canonical URL, and a signature-verified note when content credentials are enabled (built on the provenance + signing layer).
+  - **Published-only by construction.** Every generator reads through the access-control pipeline as an anonymous principal filtering to published content — drafts, scheduled-but-unpublished documents, access-restricted collections, and read-denied fields can never appear in any output. No `overrideAccess`, anywhere. Output is size-bounded. Red-teamed exhaustively across all four outputs on both the Local API and the public HTTP routes — **Risk: LOW, zero leaks** — and verified by a live harness plus a Playwright end-to-end test driving the real endpoints unauthenticated.
+
+  Also exports `toMarkdown(richTextDoc)` from `kernelcms/richtext`. Opt-in via `discoverability` config; fully backward-compatible.
+
 ## 0.16.0
 
 ### Minor Changes
