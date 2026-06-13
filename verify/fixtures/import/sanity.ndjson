@@ -1,0 +1,4 @@
+{"_type":"authors","_id":"author-1","_rev":"a","name":"Grace Hopper","bio":"Compiler pioneer."}
+{"_type":"posts","_id":"post-1","_rev":"b","title":"The First Compiler","content":"A-0 system.","author":{"_type":"reference","_ref":"author-1"}}
+{"_type":"posts","_id":"drafts.post-2","_rev":"c","title":"Nanoseconds","content":"On wire lengths.","author":{"_type":"reference","_ref":"author-1"}}
+{"_type":"sanity.imageAsset","_id":"image-xyz","url":"https://cdn.sanity.io/x.png"}

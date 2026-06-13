@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -19,6 +19,7 @@ import {
 import type { Kernel, KernelConfig, KernelSchema } from '@kernel/core'
 import { serve } from '@kernel/server'
 import { configTemplate, moduleTemplate, toSlug } from './templates'
+import { IMPORT_SOURCES, formatImportReport, isImportSource, loadAdapter, runImport, type ImportInput } from './import'
 
 /** Pick the stdio agent principal: explicit --agent, else the sole configured
  *  agent. Ambiguous / empty / unknown is a hard, explained error. Pure so it's
@@ -96,6 +97,10 @@ async function loadConfig(flags: Flags): Promise<LoadedConfig> {
   return { config, seed: mod.seed, path: abs }
 }
 
+// Upper bound on an import export file — adapters buffer the whole file, so refuse
+// inputs large enough to OOM the process before any per-field clamp applies.
+const MAX_IMPORT_FILE_BYTES = 256 * 1_048_576
+
 const HELP = `KernelCMS CLI
 
 Usage: kernel <command> [options]
@@ -107,7 +112,8 @@ Commands:
   migrate:snapshot   Save the compiled schema to kernel/schema-snapshot.json
   info               Print a product overview of this KernelCMS instance
   doctor             Check the config + environment for misconfigurations
-  import             Import a portable JSON export (--file) — migrate from another CMS
+  import             Import content OUT of another CMS — --from <source> (dry-run by default)
+  import:json        Import a portable KernelCMS JSON export (--file)
   seed               Run the exported seed() function
   jobs:run           Run all due background jobs once (drive from a cron)
   generate:types     Write generated TypeScript types for the content model
@@ -118,6 +124,12 @@ Commands:
 
 Options:
   --config <path>    Path to kernel.config.ts (default: ./kernel.config.ts)
+  --from <source>    "import" source: wordpress | contentful | sanity | strapi | payload
+  --file <path>      Export file to import from
+  --url <url>        Source REST base URL (strapi/payload fallback)
+  --token <token>    Source API token (never logged)
+  --apply            "import": actually write (default is a dry-run preview)
+  --status <s>       "import": draft | published for imported docs (default: draft)
   --port <number>    Port for "dev"/"mcp --http" (default: $PORT or 3000)
   --out <path>       Output file for "generate:types"
   --agent <id>       Agent principal for "mcp" stdio (required if config has >1 agent)
@@ -263,6 +275,64 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'import': {
+      // Migrate content OUT of a competitor CMS and INTO KernelCMS. Dry-run by default —
+      // destructive writes are opt-in (--apply/--write), so a curious `kernel import` can
+      // never mutate the database. The adapter parses the export; the engine maps ids,
+      // resolves relationships in a second pass, and prints an honest report.
+      const from = typeof flags.from === 'string' ? flags.from : undefined
+      if (!from) {
+        throw new Error(`Pass --from <source> (one of: ${IMPORT_SOURCES.join(', ')}).`)
+      }
+      if (!isImportSource(from)) {
+        throw new Error(`Unknown import source "${from}". Use one of: ${IMPORT_SOURCES.join(', ')}.`)
+      }
+      const file = typeof flags.file === 'string' ? flags.file : undefined
+      const url = typeof flags.url === 'string' ? flags.url : undefined
+      if (!file && !url) {
+        throw new Error(`Pass --file <path> (an exported file) to import from ${from}.`)
+      }
+      const apply = flags.apply === true || flags.write === true
+      const dryRun = !apply
+      const statusFlag = typeof flags.status === 'string' ? flags.status : undefined
+      if (statusFlag && statusFlag !== 'draft' && statusFlag !== 'published') {
+        throw new Error(`--status must be "draft" or "published" (got "${statusFlag}").`)
+      }
+      const defaultStatus = statusFlag === 'published' ? 'published' : 'draft'
+
+      // Adapters read the whole file into memory; refuse pathologically large inputs
+      // up front so a multi-GB export can't OOM the import before any per-field clamp.
+      const resolvedFile = file ? resolve(process.cwd(), file) : undefined
+      if (resolvedFile) {
+        const bytes = statSync(resolvedFile).size
+        if (bytes > MAX_IMPORT_FILE_BYTES) {
+          throw new Error(
+            `Import file is ${(bytes / 1_048_576).toFixed(0)} MiB; the limit is ${MAX_IMPORT_FILE_BYTES / 1_048_576} MiB. ` +
+              `Split the export into smaller files.`,
+          )
+        }
+      }
+
+      const { config } = await loadConfig(flags)
+      const adapter = await loadAdapter(from)
+      const input: ImportInput = {
+        ...(resolvedFile ? { file: resolvedFile } : {}),
+        ...(url ? { url } : {}),
+        ...(typeof flags.token === 'string' ? { token: flags.token } : {}),
+        ...(typeof flags.space === 'string' ? { space: flags.space } : {}),
+        ...(typeof flags.dataset === 'string' ? { dataset: flags.dataset } : {}),
+      }
+      const dataset = await adapter.read(input)
+      for (const note of dataset.notes ?? []) console.log(`  note: ${note}`)
+
+      const kernel = await initKernel(config, { autoMigrate: true })
+      const report = await runImport(kernel, dataset, { dryRun, defaultStatus, source: adapter.name })
+      console.log(formatImportReport(report))
+      await kernel.destroy()
+      if (report.errors.length) process.exitCode = 1
+      break
+    }
+
+    case 'import:json': {
       const file = typeof flags.file === 'string' ? flags.file : undefined
       if (!file) throw new Error('Pass --file <path> to a portable JSON export ({ "<slug>": [rows] }).')
       const { config } = await loadConfig(flags)

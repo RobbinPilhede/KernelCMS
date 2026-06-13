@@ -1,0 +1,24 @@
+[
+  {
+    "slug": "authors",
+    "docs": [{ "id": "auth-1", "name": "Margaret Hamilton", "bio": "Apollo software lead." }]
+  },
+  {
+    "slug": "posts",
+    "docs": [
+      {
+        "id": "post-1",
+        "title": "Software Engineering",
+        "content": "Coined the term.",
+        "author": { "id": "auth-1", "name": "Margaret Hamilton" }
+      },
+      {
+        "id": "post-2",
+        "title": "On Reliability",
+        "content": "No bugs in flight.",
+        "author": "auth-1",
+        "extraField": "this field does not exist on the target"
+      }
+    ]
+  }
+]

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+  xmlns:excerpt="http://wordpress.org/export/1.2/excerpt/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:wp="http://wordpress.org/export/1.2/">
+  <channel>
+    <title>Demo Blog</title>
+    <wp:wxr_version>1.2</wp:wxr_version>
+    <wp:author>
+      <wp:author_id>1</wp:author_id>
+      <wp:author_login><![CDATA[jane]]></wp:author_login>
+      <wp:author_email><![CDATA[jane@example.com]]></wp:author_email>
+      <wp:author_display_name><![CDATA[Jane Writer]]></wp:author_display_name>
+    </wp:author>
+
+    <item>
+      <title><![CDATA[Hello World]]></title>
+      <dc:creator><![CDATA[jane]]></dc:creator>
+      <content:encoded><![CDATA[<p>The first post &amp; a warm welcome.</p>]]></content:encoded>
+      <excerpt:encoded><![CDATA[First post.]]></excerpt:encoded>
+      <wp:post_id>101</wp:post_id>
+      <wp:post_name><![CDATA[hello-world]]></wp:post_name>
+      <wp:status><![CDATA[publish]]></wp:status>
+      <wp:post_type><![CDATA[post]]></wp:post_type>
+      <category domain="category" nicename="news"><![CDATA[News]]></category>
+      <category domain="post_tag" nicename="welcome"><![CDATA[Welcome]]></category>
+    </item>
+
+    <item>
+      <title><![CDATA[Second Post]]></title>
+      <dc:creator><![CDATA[jane]]></dc:creator>
+      <content:encoded><![CDATA[<p>More words here.</p>]]></content:encoded>
+      <excerpt:encoded><![CDATA[Second.]]></excerpt:encoded>
+      <wp:post_id>102</wp:post_id>
+      <wp:post_name><![CDATA[second-post]]></wp:post_name>
+      <wp:status><![CDATA[draft]]></wp:status>
+      <wp:post_type><![CDATA[post]]></wp:post_type>
+      <category domain="category" nicename="news"><![CDATA[News]]></category>
+    </item>
+
+    <item>
+      <title><![CDATA[About]]></title>
+      <dc:creator><![CDATA[jane]]></dc:creator>
+      <content:encoded><![CDATA[<p>About this site.</p>]]></content:encoded>
+      <wp:post_id>200</wp:post_id>
+      <wp:post_name><![CDATA[about]]></wp:post_name>
+      <wp:status><![CDATA[publish]]></wp:status>
+      <wp:post_type><![CDATA[page]]></wp:post_type>
+    </item>
+
+    <item>
+      <title><![CDATA[Logo]]></title>
+      <wp:post_id>300</wp:post_id>
+      <wp:post_name><![CDATA[logo]]></wp:post_name>
+      <wp:post_type><![CDATA[attachment]]></wp:post_type>
+      <wp:attachment_url><![CDATA[https://example.com/wp-content/uploads/logo.png]]></wp:attachment_url>
+    </item>
+
+    <item>
+      <title><![CDATA[Primary Menu]]></title>
+      <wp:post_id>400</wp:post_id>
+      <wp:post_type><![CDATA[nav_menu_item]]></wp:post_type>
+    </item>
+  </channel>
+</rss>

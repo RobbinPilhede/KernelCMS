@@ -1,0 +1,48 @@
+{
+  "locales": [
+    { "code": "en-US", "default": true },
+    { "code": "de-DE", "default": false }
+  ],
+  "contentTypes": [
+    { "sys": { "id": "posts" }, "name": "Post" },
+    { "sys": { "id": "authors" }, "name": "Author" }
+  ],
+  "entries": [
+    {
+      "sys": { "id": "author-1", "contentType": { "sys": { "id": "authors" } } },
+      "fields": {
+        "name": { "en-US": "Ada Lovelace", "de-DE": "Ada (de)" },
+        "bio": { "en-US": "First programmer." }
+      }
+    },
+    {
+      "sys": { "id": "post-1", "contentType": { "sys": { "id": "posts" } } },
+      "fields": {
+        "title": { "en-US": "Analytical Engine", "de-DE": "Analytische Maschine" },
+        "content": { "en-US": "On computing." },
+        "author": {
+          "en-US": { "sys": { "type": "Link", "linkType": "Entry", "id": "author-1" } }
+        }
+      }
+    },
+    {
+      "sys": { "id": "post-2", "contentType": { "sys": { "id": "posts" } } },
+      "fields": {
+        "title": { "en-US": "Notes" },
+        "content": { "en-US": "Second post." },
+        "author": {
+          "en-US": { "sys": { "type": "Link", "linkType": "Entry", "id": "author-1" } }
+        }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "sys": { "id": "asset-1" },
+      "fields": {
+        "title": { "en-US": "Portrait" },
+        "file": { "en-US": { "url": "//images.ctfassets.net/portrait.jpg", "fileName": "portrait.jpg" } }
+      }
+    }
+  ]
+}
