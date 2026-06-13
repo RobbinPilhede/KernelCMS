@@ -25,7 +25,7 @@ import {
   setupRuntime,
   KERNEL_VERSION,
 } from '@kernel/core'
-import type { EndpointConfig, RequestContext } from '@kernel/core'
+import type { AgentConfig, EndpointConfig, RequestContext } from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
 import { buildOpenApiSpec, scalarHtml } from './openapi'
 import {
@@ -229,6 +229,20 @@ function timingEqual(a: string, b: string): boolean {
   const bb = Buffer.from(b)
   if (ab.length !== bb.length) return false
   return timingSafeEqual(ab, bb)
+}
+
+/**
+ * Resolve a presented bearer token to a configured agent, comparing every candidate
+ * with a constant-time check and never short-circuiting on the first match — so the
+ * response can't reveal which agent (if any) a token belongs to. Returns the matched
+ * agent or null.
+ */
+function matchAgent(agents: readonly AgentConfig[], token: string): AgentConfig | null {
+  let found: AgentConfig | null = null
+  for (const agent of agents) {
+    if (timingEqual(token, agent.token) && !found) found = agent
+  }
+  return found
 }
 
 /** A web-standard request handler: the value returned by `createRequestHandler`. */
@@ -968,6 +982,31 @@ async function resolveAuth(
   const auth = request.headers.get('authorization')
   if (options.apiKey && auth?.startsWith('Bearer ') && timingEqual(auth.slice('Bearer '.length), options.apiKey)) {
     return { user: { id: 'system', roles: ['admin'], collection: 'system' }, overrideAccess: true, viaCookie: false }
+  }
+  // Configured agents: a non-human, access-controlled principal. Resolved from a
+  // bearer token (Authorization: Bearer <token>, or x-kernel-agent: <token>) and run
+  // with overrideAccess:FALSE — agents go through the full access chain, NEVER the
+  // god-mode apiKey path above. The brake in core forbids them publishing; their
+  // fieldScope restricts which fields they may write. Checked after the apiKey so a
+  // misconfigured shared secret can't be shadowed, but before user tokens.
+  const agentToken = auth?.startsWith('Bearer ')
+    ? auth.slice('Bearer '.length)
+    : (request.headers.get('x-kernel-agent') ?? null)
+  if (agentToken) {
+    const agent = matchAgent(kernel.config.agents, agentToken)
+    if (agent) {
+      return {
+        user: {
+          id: agent.id,
+          principalType: 'agent',
+          roles: agent.roles ?? [],
+          ...(agent.fieldScope ? { fieldScope: agent.fieldScope } : {}),
+          collection: undefined,
+        },
+        overrideAccess: false,
+        viaCookie: false,
+      }
+    }
   }
   if (options.getUser) {
     const user = await options.getUser(request)

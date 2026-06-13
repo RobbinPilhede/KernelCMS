@@ -203,6 +203,23 @@ export function createOperations(ctx: OperationCtx) {
     req: RequestContext,
     id?: string,
   ): Promise<void> {
+    // Scoped principals (agents) are deny-by-default at the field level: enforce the
+    // allow/deny list at the TOP LEVEL of the write before any per-field rule runs,
+    // so an unscoped field (e.g. `roles`, `_status` siblings) can never be written
+    // even when the collection declares no rule for it. Humans (no fieldScope) are
+    // untouched — their existing opt-in rule path below is the only gate. Matching is
+    // by top-level field name (a permitted group/array passes its subfields through).
+    const scope = req.user?.fieldScope
+    if (scope) {
+      const allow = scope.allow ? new Set(scope.allow) : null
+      const deny = scope.deny ? new Set(scope.deny) : null
+      for (const field of effectiveFields(fields)) {
+        if (!Object.prototype.hasOwnProperty.call(data, field.name)) continue
+        if (allow ? !allow.has(field.name) : deny ? deny.has(field.name) : false) {
+          delete data[field.name]
+        }
+      }
+    }
     for (const field of effectiveFields(fields)) {
       if (!Object.prototype.hasOwnProperty.call(data, field.name)) continue
       const rule = field.access?.[operation]
@@ -547,6 +564,12 @@ export function createOperations(ctx: OperationCtx) {
     id: string | undefined,
     data: Row | undefined,
   ): Promise<void> {
+    // Hard draft-only brake: an agent principal can never publish, regardless of any
+    // `access.publish`/`access.update` rule or role. Agents create/edit drafts and may
+    // unpublish, but `_status:'published'` is forbidden — a guarantee that does not
+    // depend on config. (`_status` is a system column outside field scope, so this
+    // brake — not fieldScope — is what stops agents publishing.)
+    if (req.user?.principalType === 'agent') throw new ForbiddenError()
     const rule = collection.access?.publish ?? collection.access?.update
     const decision = await evalAccess(rule, { req, id, data })
     if (!isAllowed(decision)) throw new ForbiddenError()
@@ -572,6 +595,9 @@ export function createOperations(ctx: OperationCtx) {
         status,
         autosave,
         createdBy: req.user?.id ?? null,
+        // Attribute the snapshot to the principal kind so "review agent changes" is
+        // queryable; humans (and system/override writes) record 'user'.
+        createdByType: req.user?.principalType ?? 'user',
       },
     })
     if (v.maxPerDoc > 0) {
@@ -609,9 +635,13 @@ export function createOperations(ctx: OperationCtx) {
     }
     const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
     const page = Math.max(opts.page ?? 1, 1)
+    // Optionally narrow to one principal kind ("review agent changes").
+    const where: Where = opts.createdByType
+      ? { and: [{ parent: { equals: opts.id } }, { createdByType: { equals: opts.createdByType } }] }
+      : { parent: { equals: opts.id } }
     const result = await db.find({
       collection: tableForVersions(collection.slug),
-      where: { parent: { equals: opts.id } },
+      where,
       sort: [{ field: 'createdAt', direction: 'desc' }],
       limit,
       page,

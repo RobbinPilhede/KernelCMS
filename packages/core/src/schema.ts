@@ -67,6 +67,9 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
           { name: 'status', type: 'text', required: false, unique: false, indexed: true, localized: false },
           { name: 'autosave', type: 'boolean', required: false, unique: false, indexed: false, localized: false },
           { name: 'createdBy', type: 'text', required: false, unique: false, indexed: false, localized: false },
+          // Principal kind that authored the snapshot ('user' | 'agent') so agent
+          // changes are queryable for review. Nullable; defaults to 'user'.
+          { name: 'createdByType', type: 'text', required: false, unique: false, indexed: true, localized: false },
         ],
         timestamps: true,
         singleton: false,

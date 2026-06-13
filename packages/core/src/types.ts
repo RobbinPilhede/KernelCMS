@@ -18,12 +18,42 @@ import type { OAuthProvider } from './oauth'
 // Request context
 // ---------------------------------------------------------------------------
 
+/** A coarse field allow/deny list. `allow` (when set) is deny-by-default: only the
+ *  listed top-level field names may be written; everything else is stripped. `deny`
+ *  is the inverse. Matched by top-level field name (a permitted group/array passes
+ *  its subfields through). */
+export interface FieldScope {
+  allow?: string[]
+  deny?: string[]
+}
+
 export interface AuthUser {
   id: string
   email?: string
   roles?: string[]
   collection?: string
+  /** What kind of principal this is. `'agent'` is a non-human, access-controlled
+   *  caller (e.g. an MCP client): it flows through the SAME access pipeline as a
+   *  human but is scoped by `fieldScope` and can NEVER publish (drafts only). */
+  principalType?: 'user' | 'agent'
+  /** Restrict which top-level fields this principal may write (see {@link FieldScope}).
+   *  Enforced in `applyFieldAccess` BEFORE per-field rules. Humans omit this. */
+  fieldScope?: FieldScope
   [key: string]: unknown
+}
+
+/** A non-human, access-controlled principal (e.g. an MCP client). Its true guard
+ *  is `fieldScope.allow` plus the hard draft-only brake — NEVER grant an agent an
+ *  `admin` role. `token` is the bearer credential (source it from env, never hardcode). */
+export interface AgentConfig {
+  id: string
+  token: string
+  label?: string
+  roles?: string[]
+  fieldScope?: FieldScope
+  /** Optional allow-list of collection slugs the agent may act on (informational at
+   *  this layer; enforcement is via access rules + fieldScope). */
+  collections?: string[]
 }
 
 export interface RequestContext<TUser extends AuthUser = AuthUser> {
@@ -524,6 +554,10 @@ export interface KernelConfig {
   /** Default cache TTL in ms applied to cached collections that don't set their own.
    *  0 (default) means entries live until invalidated by a write. */
   cacheDefaults?: { ttl?: number }
+  /** Non-human, access-controlled principals (e.g. MCP clients). Each authenticates
+   *  with its bearer `token` and runs through the full access pipeline scoped by its
+   *  `fieldScope`; agents can never publish. Source tokens from env, never hardcode. */
+  agents?: AgentConfig[]
 }
 
 export interface SanitizedLocalization {
@@ -571,6 +605,9 @@ export interface SanitizedConfig {
   search?: SearchAdapter
   /** Per-collection searchable field names. */
   searchableFields: Record<string, string[]>
+  /** Validated non-human principals (see `agents`). The server resolves a bearer
+   *  token against these to build an `overrideAccess:false`, field-scoped principal. */
+  agents: AgentConfig[]
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +727,9 @@ export interface FindVersionsOptions extends OperationBase {
   id: string
   limit?: number
   page?: number
+  /** Filter the history by the principal kind that authored each snapshot, e.g.
+   *  `'agent'` to review only agent-made changes. Omit for all. */
+  createdByType?: 'user' | 'agent'
 }
 
 export interface RestoreVersionOptions extends OperationBase {

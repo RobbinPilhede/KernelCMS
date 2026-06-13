@@ -1,5 +1,6 @@
 import type {
   AccessFn,
+  AgentConfig,
   AnyField,
   CollectionConfig,
   ConfigField,
@@ -295,6 +296,31 @@ function collectNamingErrors(collections: CollectionConfig[], globals: GlobalCon
   return errors
 }
 
+/**
+ * Validate non-human principals. Each needs a unique, non-empty id and a non-empty
+ * token (the bearer credential — authors source it from env). The real guard on an
+ * agent is its `fieldScope.allow` plus the hard draft-only brake in operations; do
+ * NOT give an agent an `admin` role (it would widen the access rules it passes —
+ * the field scope still constrains writes, but role-gated rules would open up).
+ */
+function sanitizeAgents(agents: AgentConfig[] | undefined): AgentConfig[] {
+  if (!agents || agents.length === 0) return []
+  const ids = new Set<string>()
+  const tokens = new Set<string>()
+  for (const agent of agents) {
+    assert(typeof agent.id === 'string' && agent.id.length > 0, 'every agent needs a non-empty `id`')
+    assert(!ids.has(agent.id), `duplicate agent id "${agent.id}"`)
+    ids.add(agent.id)
+    assert(
+      typeof agent.token === 'string' && agent.token.length > 0,
+      `agent "${agent.id}" needs a non-empty \`token\` (source it from env)`,
+    )
+    assert(!tokens.has(agent.token), `two agents share the same token ("${agent.id}")`)
+    tokens.add(agent.token)
+  }
+  return agents
+}
+
 export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   assert(config.db, 'a database adapter is required (config.db)')
   assert(Array.isArray(config.collections), 'config.collections must be an array')
@@ -453,6 +479,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     cacheTtlBySlug,
     cacheDefaultTtl,
     searchableFields,
+    agents: sanitizeAgents(config.agents),
     ...(config.search ? { search: config.search } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),
