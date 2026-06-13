@@ -146,6 +146,8 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Search:** add `search: memorySearch()` and give a collection `search: { fields: ['title', 'body'] }`, then `kernel.searchDocs({ collection, query })`. Hits are loaded through the access-checked read path, so search never surfaces a document the caller cannot read.
 - **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change; the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
 - **Payments & orders:** add the `commerce({ payment: stripePayment({ ... }) })` plugin and you get `products` + `orders` collections, a `POST /commerce/checkout` (totals recomputed server-side from real prices), and a signature-verified `POST /commerce/webhook` that transitions orders to paid/refunded. Stripe and a deterministic `testPayment()` adapter included.
+- **AI agents (MCP):** register an `agents: [{ id, token, roles, fieldScope }]` and serve your kernel over the Model Context Protocol with `@kernel/mcp`. The tools are auto-generated from the same model that builds the OpenAPI spec, and every call runs through the in-process Local API as a scoped principal — so an agent goes through the **same access pipeline as a human**: it can only touch the fields you allow, **cannot publish** (drafts only, enforced by the engine), and is attributed in version history. The MCP layer enforces nothing on its own.
+- **Referential integrity:** give a relationship `onDelete: 'setNull' | 'cascade' | 'restrict'` to clean up references when a document is deleted.
 - **Hooks, access rules, localization, background jobs, plugins:** all configured the same way.
 
 See [What is in the box](#what-is-in-the-box) for the full list.
