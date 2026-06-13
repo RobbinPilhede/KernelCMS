@@ -9,6 +9,7 @@ import { isKernelError } from './errors'
 import { attachWebhooks } from './webhooks'
 import { attachSearch } from './search'
 import { applyPlugins } from './plugins'
+import { ROLES_TABLE, cloneRoleDef } from './rbac'
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const
 
@@ -73,6 +74,34 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   if (sanitized.search) await sanitized.search.init({ logger, db: sanitized.db })
 
   const ops = createOperations({ config: sanitized, db: opDb, logger })
+
+  // RBAC boot: reconcile the runtime store with the `_roles` table. On first boot
+  // (table empty) the config-seeded roles are written so they're persisted/editable;
+  // on later boots the persisted rows are merged into the store so runtime edits made
+  // in a previous run survive. The store was already seeded from config at compile, so
+  // the injected access rules work even if this step is skipped (e.g. table not yet
+  // migrated) — hence failures are logged, never fatal.
+  if (sanitized.rbac.enabled) {
+    try {
+      const existing = await sanitized.db.find({ collection: ROLES_TABLE, limit: 1000, page: 1 })
+      if (existing.docs.length === 0) {
+        // First boot: persist the config-seeded roles.
+        for (const [name, def] of Object.entries(sanitized.rbacStore.roles)) {
+          await sanitized.db.create({ collection: ROLES_TABLE, data: { id: name, name, def: cloneRoleDef(def) } })
+        }
+      } else {
+        // Persisted rows are authoritative for roles they define; merge them over the
+        // config seed so runtime edits/additions take effect.
+        for (const row of existing.docs) {
+          const name = typeof row.name === 'string' ? row.name : String(row.id)
+          const def = (row.def ?? {}) as import('./types').RoleDef
+          sanitized.rbacStore.roles[name] = cloneRoleDef(def)
+        }
+      }
+    } catch (err) {
+      logger.warn('RBAC: could not load `_roles` (run a migration to enable persistence)', err)
+    }
+  }
 
   return {
     config: sanitized,
@@ -142,6 +171,10 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     findAuditLog: ops.findAuditLog,
     enqueue: ops.enqueue,
     runDueJobs: ops.runDueJobs,
+    findRoles: ops.findRoles,
+    createRole: ops.createRole,
+    updateRole: ops.updateRole,
+    deleteRole: ops.deleteRole,
     async migrate() {
       await sanitized.db.migrate(schema)
     },

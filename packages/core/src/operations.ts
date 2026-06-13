@@ -24,6 +24,7 @@ import type {
   PublishOptions,
   RequestContext,
   RestoreVersionOptions,
+  RoleDef,
   BulkResult,
   CreateAPIKeyOptions,
   DeleteManyOptions,
@@ -72,6 +73,7 @@ import {
 } from './fields'
 import { evalAccess, isAllowed, asWhere } from './access'
 import { JOBS_SLUG } from './config'
+import { ROLES_TABLE, cloneRoleDef, assertValidRoleDef } from './rbac'
 import { matchesWhere, mergeWhere, parseSort } from './query'
 import { AUDIT_TABLE, GLOBAL_ROW_ID, resolveVersions, tableForGlobal, tableForVersions } from './schema'
 
@@ -2239,6 +2241,69 @@ export function createOperations(ctx: OperationCtx) {
     return `${base}-${sizeName}.${ext}`
   }
 
+  // -------------------------------------------------------------------------
+  // RBAC roles (runtime-editable)
+  //
+  // The live store (config.rbacStore) is captured by reference by the injected
+  // access rules, so every mutation here changes enforcement on the NEXT access
+  // check. Each write persists to the `_roles` table AND updates the store, keeping
+  // them in lockstep. Admin-gating happens at the HTTP layer (and the Local API can
+  // be called from trusted server code); these are plain store+table operations.
+  // -------------------------------------------------------------------------
+
+  function assertRbacEnabled(): void {
+    if (!config.rbac.enabled) throw new BadRequestError('RBAC is not enabled (set `config.rbac`).')
+  }
+
+  /** Validate a runtime role def, mapping a structural failure to a 400 (BadRequest). */
+  function validateRole(name: string, def: RoleDef): void {
+    try {
+      assertValidRoleDef(name, def)
+    } catch (err) {
+      throw new BadRequestError(err instanceof Error ? err.message : 'Invalid role definition.')
+    }
+  }
+
+  /** List roles from the live store (the authoritative in-memory view, kept in sync
+   *  with `_roles`). Returns `[]` when RBAC is disabled rather than throwing, so a UI
+   *  can probe safely. */
+  async function findRoles(): Promise<import('./types').RoleDoc[]> {
+    if (!config.rbac.enabled) return []
+    return Object.entries(config.rbacStore.roles)
+      .map(([name, def]) => ({ name, def: cloneRoleDef(def) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  async function createRole(name: string, def: RoleDef): Promise<import('./types').RoleDoc> {
+    assertRbacEnabled()
+    validateRole(name, def)
+    if (config.rbacStore.roles[name]) throw new ConflictError(`Role "${name}" already exists.`)
+    const stored = cloneRoleDef(def)
+    await db.create({ collection: ROLES_TABLE, data: { id: name, name, def: stored } })
+    // Update the live store only AFTER the persist succeeds (fail-closed: a failed
+    // write must not leave a phantom grant in memory).
+    config.rbacStore.roles[name] = stored
+    return { name, def: cloneRoleDef(stored) }
+  }
+
+  async function updateRole(name: string, def: RoleDef): Promise<import('./types').RoleDoc> {
+    assertRbacEnabled()
+    validateRole(name, def)
+    if (!config.rbacStore.roles[name]) throw new NotFoundError(`Role "${name}" not found.`)
+    const stored = cloneRoleDef(def)
+    await db.update({ collection: ROLES_TABLE, id: name, data: { name, def: stored } })
+    config.rbacStore.roles[name] = stored
+    return { name, def: cloneRoleDef(stored) }
+  }
+
+  async function deleteRole(name: string): Promise<{ name: string }> {
+    assertRbacEnabled()
+    if (!config.rbacStore.roles[name]) throw new NotFoundError(`Role "${name}" not found.`)
+    await db.delete({ collection: ROLES_TABLE, id: name })
+    delete config.rbacStore.roles[name]
+    return { name }
+  }
+
   return {
     create,
     upload,
@@ -2272,6 +2337,10 @@ export function createOperations(ctx: OperationCtx) {
     recordAudit,
     enqueue,
     runDueJobs,
+    findRoles,
+    createRole,
+    updateRole,
+    deleteRole,
   }
 }
 

@@ -11,6 +11,8 @@ import type {
 } from './types'
 import { effectiveFields, joinFields } from './fields'
 import { consoleEmail, type EmailAdapter } from './email'
+import { createRbacStore, injectRbac } from './rbac'
+import { resolveVersions } from './schema'
 
 let warnedNoEmail = false
 function consoleEmailFallback(): EmailAdapter {
@@ -477,6 +479,18 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     }
   }
 
+  // Granular RBAC (opt-in via config.rbac). Create the mutable runtime store, seed it
+  // from config, and INJECT a default access rule for every collection×op / global×op
+  // that has no explicit rule. Explicit rules are left untouched (they win). The
+  // injected closures capture `rbacStore` by reference, so runtime role edits take
+  // effect immediately. When config.rbac is absent this is skipped entirely — nothing
+  // changes, so the deny-by-default-with-no-rule behaviour is fully preserved.
+  const rbacEnabled = Boolean(config.rbac)
+  const rbacStore = createRbacStore(config.rbac)
+  if (rbacEnabled) {
+    injectRbac(rbacStore, collections, globals, (c) => resolveVersions(c.versions).drafts)
+  }
+
   return {
     serverURL: config.serverURL ?? 'http://localhost:3000',
     db: config.db,
@@ -495,6 +509,8 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     searchableFields,
     agents: sanitizeAgents(config.agents),
     audit: sanitizeAudit(config.audit),
+    rbac: { enabled: rbacEnabled },
+    rbacStore,
     ...(config.search ? { search: config.search } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),

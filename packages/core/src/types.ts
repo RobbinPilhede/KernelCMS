@@ -86,6 +86,50 @@ export type AccessFn<TUser extends AuthUser = AuthUser> = (
 ) => AccessResult | Promise<AccessResult>
 
 // ---------------------------------------------------------------------------
+// RBAC (role -> permission grants)
+// ---------------------------------------------------------------------------
+
+/** The operations a role grant can cover. `publish` only applies to drafts-enabled
+ *  collections (and is ignored for globals). */
+export type RbacOp = 'read' | 'create' | 'update' | 'delete' | 'publish'
+
+/** A per-resource grant: `true` allows every op, or an explicit list of ops. */
+export type OpGrant = true | RbacOp[]
+
+/** A role: an optional description, an `admin` super-grant (bypasses per-op checks,
+ *  like the literal 'admin' role), and per-collection / per-global op grants. */
+export interface RoleDef {
+  description?: string
+  /** Full access to everything (mirrors the literal 'admin' role convention). */
+  admin?: boolean
+  /** Op grants keyed by collection slug. */
+  collections?: Record<string, OpGrant>
+  /** Op grants keyed by global slug (read/update only). */
+  globals?: Record<string, OpGrant>
+}
+
+/** Opt-in granular RBAC. When omitted, NOTHING changes (full backward compatibility):
+ *  no `_roles` table, no access injection. When present, roles seed a runtime-editable
+ *  store and injected access rules enforce them. */
+export interface RbacConfig {
+  roles: Record<string, RoleDef>
+}
+
+/** The mutable runtime role store. Created at config compile, seeded from `config.rbac`,
+ *  then merged with the `_roles` DB table at boot. The injected access closures capture
+ *  this object by reference, so `updateRole`/`createRole`/`deleteRole` take effect on the
+ *  next access check with no recompile. */
+export interface RbacStore {
+  roles: Record<string, RoleDef>
+}
+
+/** A role as returned by the Local/HTTP API: its name plus its definition. */
+export interface RoleDoc {
+  name: string
+  def: RoleDef
+}
+
+// ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
 
@@ -574,6 +618,13 @@ export interface KernelConfig {
    *  via `kernel.findAuditLog` and exportable over `GET /api/_admin/audit`.
    *  Opt-in and DISABLED by default — `true` or `{ enabled: true }` turns it on. */
   audit?: boolean | { enabled?: boolean }
+  /** Granular, runtime-editable RBAC (role -> permission grants). OPT-IN: when omitted,
+   *  nothing changes (full backward compatibility). When set, roles seed a `_roles`
+   *  system table and injected access rules enforce per-collection / per-global op grants.
+   *  Edit roles at runtime via `kernel.createRole/updateRole/deleteRole`; changes take
+   *  effect immediately. An `admin: true` role (or the literal 'admin' role) gets full
+   *  access. Explicit `collection.access[op]` rules always win over RBAC. */
+  rbac?: RbacConfig
 }
 
 export interface SanitizedLocalization {
@@ -627,6 +678,12 @@ export interface SanitizedConfig {
   /** Resolved audit-log setting. `enabled` provisions the `_audit` table and turns
    *  on recording; disabled by default (opt-in governance feature). */
   audit: { enabled: boolean }
+  /** Whether granular RBAC is enabled (provisions the `_roles` table + injects access). */
+  rbac: { enabled: boolean }
+  /** The mutable runtime role store. Seeded from `config.rbac.roles`, merged from the
+   *  `_roles` table at boot, and captured by reference by the injected access rules.
+   *  Empty (`{ roles: {} }`) and unused when RBAC is disabled. */
+  rbacStore: RbacStore
 }
 
 // ---------------------------------------------------------------------------
@@ -859,6 +916,16 @@ export interface Kernel {
   findAuditLog(opts?: FindAuditLogOptions): Promise<{ docs: AuditDoc[]; count: number }>
   enqueue(opts: EnqueueOptions): Promise<Doc>
   runDueJobs(opts?: RunJobsOptions): Promise<RunJobsResult>
+  /** List all RBAC roles (from the live store). Empty when RBAC is disabled. */
+  findRoles(): Promise<RoleDoc[]>
+  /** Create a role: persist it to `_roles` and add it to the live store. Throws if RBAC
+   *  is disabled, the name already exists, or the definition is invalid. */
+  createRole(name: string, def: RoleDef): Promise<RoleDoc>
+  /** Replace a role's definition: persist to `_roles` and update the live store. The
+   *  change is enforced on the next access check. Throws if RBAC is disabled / invalid. */
+  updateRole(name: string, def: RoleDef): Promise<RoleDoc>
+  /** Remove a role from `_roles` and the live store. Throws if RBAC is disabled. */
+  deleteRole(name: string): Promise<{ name: string }>
   migrate(): Promise<void>
   destroy(): Promise<void>
 }

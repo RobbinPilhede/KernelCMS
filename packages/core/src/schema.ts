@@ -1,6 +1,7 @@
 import type { KernelSchema, TableSchema } from '@kernel/db'
 import type { SanitizedConfig } from './types'
 import { columnForField, storageFields } from './fields'
+import { ROLES_TABLE } from './rbac'
 
 export function tableForCollection(slug: string): string {
   return slug
@@ -97,6 +98,21 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'principalType', type: 'text', required: false, unique: false, indexed: false, localized: false },
         { name: 'fields', type: 'json', required: false, unique: false, indexed: false, localized: false },
         { name: 'meta', type: 'json', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Runtime-editable RBAC roles, provisioned only when RBAC is enabled. `name` is the
+  // primary key (text); `def` holds the RoleDef as JSON. Seeded from config on first boot.
+  if (config.rbac.enabled) {
+    tables.push({
+      table: ROLES_TABLE,
+      slug: ROLES_TABLE,
+      columns: [
+        { name: 'name', type: 'text', required: true, unique: true, indexed: true, localized: false },
+        { name: 'def', type: 'json', required: false, unique: false, indexed: false, localized: false },
       ],
       timestamps: true,
       singleton: false,

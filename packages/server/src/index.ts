@@ -25,7 +25,7 @@ import {
   setupRuntime,
   KERNEL_VERSION,
 } from '@kernel/core'
-import type { AgentConfig, AuditDoc, EndpointConfig, RequestContext } from '@kernel/core'
+import type { AgentConfig, AuditDoc, EndpointConfig, RequestContext, RoleDef } from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
 import { buildOpenApiSpec, scalarHtml } from './openapi'
 import {
@@ -600,6 +600,39 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       })
       if (q.get('format') === 'csv') return auditCsvResponse(result.docs)
       return json(result)
+    }
+
+    // /_admin/roles -> manage runtime-editable RBAC roles. ADMIN-ONLY (same gate as
+    // /_admin/audit): the future role-builder UI calls these. GET lists, POST creates,
+    // PATCH /:name replaces, DELETE /:name removes. Each mutation persists to `_roles`
+    // and updates the live store, so enforcement changes immediately.
+    if (segments[1] === 'roles') {
+      if (!user) throw new UnauthorizedError()
+      if (!isAdmin(user)) throw new ForbiddenError('Role management requires an admin role.')
+
+      // GET /_admin/roles, POST /_admin/roles
+      if (segments.length === 2) {
+        if (method === 'GET') return json({ roles: await kernel.findRoles() })
+        if (method === 'POST') {
+          const body = await readBody(request)
+          const name = typeof body.name === 'string' ? body.name : ''
+          const def = (body.def ?? {}) as RoleDef
+          return json({ role: await kernel.createRole(name, def) }, 201)
+        }
+        return methodNotAllowed()
+      }
+
+      // PATCH /_admin/roles/:name, DELETE /_admin/roles/:name
+      if (segments.length === 3) {
+        const name = decodeURIComponent(segments[2]!)
+        if (method === 'PATCH') {
+          const body = await readBody(request)
+          const def = (body.def ?? {}) as RoleDef
+          return json({ role: await kernel.updateRole(name, def) })
+        }
+        if (method === 'DELETE') return json(await kernel.deleteRole(name))
+        return methodNotAllowed()
+      }
     }
 
     // POST /_admin/env -> persist chosen connector settings to the project .env.
