@@ -7,12 +7,19 @@ import type {
   ChangesOptions,
   ChangesResult,
   Doc,
+  GraphEdge,
+  GraphNode,
+  GraphOptions,
+  GraphResult,
+  GraphSearchOptions,
+  GraphSearchResult,
   Kernel,
   KernelConfig,
   MigrateRunOptions,
   RequestContext,
   RollbackOptions,
   RollbackResult,
+  SanitizedConfig,
 } from './types'
 import { sanitizeConfig } from './config'
 import { compileSchema, MIGRATIONS_TABLE } from './schema'
@@ -39,6 +46,18 @@ import { attachSemantic, reciprocalRankFusion } from './vector'
 import { applyPlugins } from './plugins'
 import { ROLES_TABLE, cloneRoleDef } from './rbac'
 import { storageFields } from './fields'
+import {
+  clampDepth,
+  clampMaxNodes,
+  clampSeedLimit,
+  extractText,
+  resolveLabel,
+  traverseGraph,
+  type GraphLoaders,
+  type JoinNeighborQuery,
+  type LoadedNode,
+} from './graph'
+import { MAX_POPULATE_DEPTH } from './operations'
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const
 
@@ -154,6 +173,189 @@ async function loadAccessChecked<T extends Doc = Doc>(
     if (docs.length >= limit) break
   }
   return docs
+}
+
+/** A configured, non-system collection that participates in the content graph. System
+ *  collections (`_*`) and reserved internal tables are never graph nodes. */
+function isGraphCollection(config: SanitizedConfig, slug: string): boolean {
+  if (typeof slug !== 'string' || slug.startsWith('_')) return false
+  return Boolean(config.collectionsBySlug[slug])
+}
+
+/**
+ * Build the access-checked loader surface the BFS engine consumes. EVERY node load and
+ * EVERY reverse query funnels through `ops.findByID` / `ops.find` with the caller's
+ * principal, so a document the caller can't read returns null / is absent — and the BFS
+ * then drops both the node and the edge to it (no leak). `depth: 1` populates one hop of
+ * relationship VALUES on each loaded doc so `outboundNeighbors` can read ref ids even
+ * when stored polymorphically; access on those populated relations is irrelevant here
+ * because every neighbour is independently re-loaded through `loadNode`.
+ */
+function makeGraphLoaders(
+  ops: import('./operations').Operations,
+  config: SanitizedConfig,
+  opts: { req?: Partial<RequestContext>; overrideAccess?: boolean },
+): GraphLoaders {
+  const isCollection = (slug: string): boolean => isGraphCollection(config, slug)
+
+  const toLoaded = (slug: string, doc: Doc): LoadedNode => {
+    const collection = config.collectionsBySlug[slug]!
+    return {
+      collection,
+      doc,
+      node: { ref: `${slug}:${doc.id}`, collection: slug, id: doc.id, label: resolveLabel(collection, doc) },
+    }
+  }
+
+  return {
+    isCollection,
+    async loadNode(slug, id) {
+      if (!isCollection(slug)) return null
+      let doc: Doc | null = null
+      try {
+        // depth:0 — raw relationship ids/refs are kept (not populated to nested docs),
+        // which is exactly what `outboundNeighbors` wants. Access-checked read path.
+        doc = await ops.findByID<Doc>({
+          collection: slug,
+          id,
+          req: opts.req,
+          overrideAccess: opts.overrideAccess,
+          depth: 0,
+        })
+      } catch (err) {
+        if (!isKernelError(err)) throw err
+      }
+      return doc ? toLoaded(slug, doc) : null
+    },
+    async loadReverse(query: JoinNeighborQuery, fromId: string) {
+      if (!isCollection(query.collection)) return []
+      let result: { docs: Doc[] } = { docs: [] }
+      try {
+        // The reverse query runs through the access-checked `find`, so a back-reference
+        // the caller can't read is filtered out by the related collection's read scope.
+        result = await ops.find<Doc>({
+          collection: query.collection,
+          where: { [query.on]: { equals: fromId } },
+          limit: GRAPH_REVERSE_LIMIT,
+          req: opts.req,
+          overrideAccess: opts.overrideAccess,
+          depth: 0,
+        })
+      } catch (err) {
+        if (!isKernelError(err)) throw err
+        return []
+      }
+      return result.docs.map((d) => toLoaded(query.collection, d))
+    },
+  }
+}
+
+/** Cap on rows pulled per reverse-relationship query — bounds a single hub's inbound
+ *  fan-out (a doc referenced by thousands of others can't blow up one BFS step). */
+const GRAPH_REVERSE_LIMIT = 200
+
+/** Run a bounded, access-checked graph traversal from a seed document. */
+async function runGraph(
+  ops: import('./operations').Operations,
+  config: SanitizedConfig,
+  opts: GraphOptions,
+): Promise<GraphResult> {
+  if (typeof opts.collection !== 'string' || typeof opts.id !== 'string' || opts.id.length === 0) {
+    throw new BadRequestError('graph requires a collection and a document id.')
+  }
+  if (!isGraphCollection(config, opts.collection)) {
+    throw new BadRequestError(`Unknown collection "${opts.collection}".`)
+  }
+  const depth = clampDepth(opts.depth, MAX_POPULATE_DEPTH)
+  const maxNodes = clampMaxNodes(opts.maxNodes)
+  const loaders = makeGraphLoaders(ops, config, opts)
+  const { nodes, edges, truncated } = await traverseGraph(
+    loaders,
+    { collection: opts.collection, id: opts.id },
+    { depth, maxNodes },
+  )
+  return { nodes, edges, truncated }
+}
+
+/**
+ * GraphRAG retrieval: seed from semantic hits, expand each seed via the access-checked
+ * BFS, and assemble the connected subgraph plus a plain-text `context` array. Seeds and
+ * every reachable node are access-checked, so non-readable content never contributes.
+ */
+async function runGraphSearch<T extends Doc = Doc>(
+  ops: import('./operations').Operations,
+  config: SanitizedConfig,
+  seedSearch: (collection: string, query: string, limit: number) => Promise<{ docs: T[] }>,
+  opts: GraphSearchOptions,
+): Promise<GraphSearchResult<T>> {
+  const query = String(opts.query ?? '')
+  const limit = clampSeedLimit(opts.limit)
+  const depth = clampDepth(opts.depth, MAX_POPULATE_DEPTH)
+  const maxNodes = clampMaxNodes(opts.maxNodes)
+
+  // Resolve which collection seeds come from. An explicit `collection` wins; otherwise
+  // use the single semantic-or-searchable collection. Ambiguity is a clear error rather
+  // than a silent cross-collection guess.
+  const collection = resolveSeedCollection(config, opts.collection)
+
+  if (query.trim().length === 0) {
+    return { seeds: [], nodes: [], edges: [], context: [], truncated: false }
+  }
+  const { docs: seeds } = await seedSearch(collection, query, limit)
+
+  // Expand every seed, merging the subgraphs (de-duped by ref across seeds) under one
+  // shared node budget so the TOTAL output stays bounded regardless of seed count.
+  const loaders = makeGraphLoaders(ops, config, opts)
+  const nodeMap = new Map<string, GraphNode>()
+  const edgeKeys = new Set<string>()
+  const edges: GraphEdge[] = []
+  let truncated = false
+  for (const seed of seeds) {
+    if (nodeMap.size >= maxNodes) {
+      truncated = true
+      break
+    }
+    const remaining = maxNodes - nodeMap.size
+    const sub = await traverseGraph(loaders, { collection, id: seed.id }, { depth, maxNodes: remaining + nodeMap.size })
+    truncated = truncated || sub.truncated
+    for (const n of sub.nodes) if (!nodeMap.has(n.ref)) nodeMap.set(n.ref, n)
+    for (const e of sub.edges) {
+      const key = `${e.from} ${e.to} ${e.field} ${e.kind}`
+      if (!edgeKeys.has(key)) {
+        edgeKeys.add(key)
+        edges.push(e)
+      }
+    }
+  }
+
+  // Build the grounding context from the readable nodes. Each node is re-loaded through
+  // the access-checked path to obtain its full (stripped) doc for the text snippet — a
+  // node whose read access changed mid-traversal simply yields no context.
+  const context: GraphSearchResult<T>['context'] = []
+  for (const node of nodeMap.values()) {
+    const loaded = await loaders.loadNode(node.collection, node.id)
+    if (!loaded) continue
+    context.push({ ref: node.ref, label: loaded.node.label, text: extractText(loaded.collection, loaded.doc) })
+  }
+
+  return { seeds, nodes: [...nodeMap.values()], edges, context, truncated }
+}
+
+/** Resolve the seed collection for graphSearch: an explicit choice, else the single
+ *  collection with semantic (then full-text) search. Ambiguity / absence throws. */
+function resolveSeedCollection(config: SanitizedConfig, explicit: string | undefined): string {
+  if (explicit !== undefined) {
+    if (!isGraphCollection(config, explicit)) throw new BadRequestError(`Unknown collection "${explicit}".`)
+    return explicit
+  }
+  const semantic = Object.keys(config.semanticFields)
+  if (semantic.length === 1) return semantic[0]!
+  const fullText = Object.keys(config.searchableFields)
+  if (semantic.length === 0 && fullText.length === 1) return fullText[0]!
+  if (semantic.length === 0 && fullText.length === 0) {
+    throw new BadRequestError('graphSearch needs a collection with search enabled (none configured).')
+  }
+  throw new BadRequestError('graphSearch requires an explicit `collection` when several collections have search.')
 }
 
 export function createLogger(level: keyof typeof LEVELS = 'info'): Logger {
@@ -335,7 +537,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     }
   }
 
-  return {
+  const kernel: Kernel = {
     config: sanitized,
     db: sanitized.db,
     async changes(opts: ChangesOptions = {}): Promise<ChangesResult> {
@@ -630,6 +832,31 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
       }
       return { matched, updated }
     },
+    async graph(opts: GraphOptions): Promise<GraphResult> {
+      return runGraph(ops, sanitized, opts)
+    },
+    async graphSearch<T extends Doc = Doc>(opts: GraphSearchOptions): Promise<GraphSearchResult<T>> {
+      // Seed search: prefer hybrid (semantic + full-text) when embeddings are present,
+      // fall back to full-text `searchDocs`, and finally to a plain `find` so graphSearch
+      // still works (sans relevance ranking) when no search adapter is configured. Each
+      // path is already access-checked — non-readable seeds never appear.
+      const seedSearch = async (collection: string, query: string, limit: number): Promise<{ docs: T[] }> => {
+        const hasSemantic = Boolean(sanitized.embeddings && sanitized.vector && sanitized.semanticFields[collection])
+        const hasFullText = Boolean(sanitized.search && sanitized.searchableFields[collection])
+        const searchOpts = { collection, query, limit, req: opts.req, overrideAccess: opts.overrideAccess }
+        if (hasSemantic) return kernel.hybridSearch<T>(searchOpts)
+        if (hasFullText) return kernel.searchDocs<T>(searchOpts)
+        const result = await ops.find<T>({
+          collection,
+          limit,
+          req: opts.req,
+          overrideAccess: opts.overrideAccess,
+          depth: 0,
+        })
+        return { docs: result.docs }
+      }
+      return runGraphSearch<T>(ops, sanitized, seedSearch, opts)
+    },
     async destroy() {
       if (sanitized.cache) await sanitized.cache.destroy()
       if (sanitized.search) await sanitized.search.destroy()
@@ -637,4 +864,5 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
       await sanitized.db.destroy()
     },
   }
+  return kernel
 }

@@ -61,6 +61,16 @@ semantic and hybrid (Reciprocal Rank Fusion) search served through the same
 access-checked read path. Your CMS *is* your RAG knowledge base, instead of a CMS plus a
 Lambda plus a separate vector database you have to keep in sync.
 
+Building on that, your content is also a **knowledge graph**. Your typed relationships
+*are* the edges, so `kernel.graph(...)` walks a document and its connected neighbors
+(outbound relationship/upload fields **and** inbound reverse-relationship joins), and
+`kernel.graphSearch(...)` does **GraphRAG** — semantic search finds the seed documents,
+then the graph expands each into its connected subgraph and returns a ready-to-ground
+`context` array. You retrieve not just the matching document but its connected context —
+the cutting-edge RAG technique — straight from the relationships you already modeled.
+Every node is loaded through the same access-checked read path, and a node the caller
+can't read (and the edge to it) is simply omitted.
+
 And the same content engine is **AI-discoverable**. Opt into `discoverability` and KernelCMS
 serves `llms.txt`, a full-text corpus, retrieval-ready content chunks, and per-document
 GEO markdown with provenance-backed citations — so answer engines (ChatGPT, Claude,
@@ -461,6 +471,48 @@ const { docs } = await kernel.hybridSearch({ collection: 'posts', query: 'how do
 curl "http://localhost:3000/api/posts/semantic?q=how%20do%20I%20deploy&limit=10"
 curl "http://localhost:3000/api/posts/hybrid?q=how%20do%20I%20deploy"
 ```
+
+### Knowledge graph & GraphRAG
+
+Your typed relationships *are* a graph. `kernel.graph(...)` walks a document and its
+neighbors; `kernel.graphSearch(...)` is **GraphRAG** — semantic search picks the seeds,
+the graph expands each into its connected subgraph, and you get a `context` array to
+ground an LLM. It is the **retrieval** half; the generation stays yours.
+
+- **Graph traversal.** `kernel.graph({ collection, id, depth?, maxNodes?, req })` →
+  `{ nodes, edges, truncated }`. BFS from the seed following outbound
+  relationship/upload fields **and** inbound reverse-relationship (`join`) fields, up to
+  `depth` hops (default 1, clamp 10). A `GraphNode` is `{ ref: '<collection>:<id>',
+  collection, id, label }`; a `GraphEdge` is `{ from, to, field, relationTo, kind }` where
+  `kind` is `'relationship'` (outbound) or `'reverse'` (inbound join). Bounded and
+  cycle-safe: `maxNodes` (default 100, hard cap 500), a per-node fan-out cap (200), and
+  de-duped nodes; `truncated: true` when a bound clips the walk.
+- **GraphRAG retrieval.** `kernel.graphSearch({ collection?, query, depth?, limit?, req })`
+  → `{ seeds, nodes, edges, context, truncated }`. It runs semantic/hybrid search (so it
+  **requires `embeddings`**; it falls back to full-text, then plain `find`) to find seed
+  docs for `query`, expands each through the graph, and returns the seeds + the connected
+  subgraph + a `context` array of `{ ref, label, text }` snippets to ground an LLM. Pass an
+  explicit `collection` when more than one is searchable.
+
+```ts
+// Local API — the connected subgraph around one document:
+const { nodes, edges, truncated } = await kernel.graph({ collection: 'posts', id, depth: 2, req })
+
+// GraphRAG — semantic seeds, expanded into their connected context:
+const { seeds, context } = await kernel.graphSearch({ collection: 'posts', query: 'who wrote about deploys?', depth: 1, req })
+// `context` is Array<{ ref, label, text }> — drop it straight into an LLM prompt.
+```
+
+```bash
+curl "http://localhost:3000/api/posts/<id>/graph?depth=2&maxNodes=100"
+curl "http://localhost:3000/api/graph-search?q=who%20wrote%20about%20deploys&collection=posts&depth=1"
+```
+
+**The access & bounds guarantee:** every node loads through the same access-checked read
+path. A node the caller can't read is dropped **and the edge to it is omitted**, so the
+relationship's very existence never leaks; read-denied fields never appear in a `label` or
+`context`. The bounds (`depth`, `maxNodes`, fan-out, de-dupe) make traversal DoS-safe.
+This is retrieval only — see the [knowledge graph guide](docs/knowledge-graph.md).
 
 ### Real-time change feed (CDC & SSE)
 

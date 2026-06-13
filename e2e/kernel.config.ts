@@ -144,6 +144,8 @@ export default defineConfig({
         { name: 'summary', type: 'text', localized: true },
         { name: 'tagline', type: 'text', personalized: true },
         { name: 'body', type: 'richText', preset: 'standard' },
+        // Self-relationship so the knowledge graph has edges to traverse.
+        { name: 'related', type: 'relationship', relationTo: 'articles', hasMany: true },
       ],
     },
   ],

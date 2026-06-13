@@ -532,6 +532,28 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return json(describeConfig(kernel.config))
   }
 
+  // GET /graph-search?q=&collection=&depth=&limit= -> GraphRAG retrieval: semantic seed
+  // documents for `q` plus their connected, ACCESS-CHECKED subgraph (nodes + edges) and a
+  // plain-text `context` array for grounding an LLM. Runs as the REQUEST principal, so only
+  // content the caller may read contributes — no node, edge, or snippet leaks a hidden doc.
+  if (segments.length === 1 && segments[0] === 'graph-search' && method === 'GET') {
+    const q = url.searchParams.get('q')
+    if (typeof q !== 'string' || q.trim().length === 0) {
+      throw new BadRequestError('`q` (the search query) is required.')
+    }
+    const collectionParam = url.searchParams.get('collection')
+    const result = await kernel.graphSearch({
+      query: q,
+      ...(collectionParam ? { collection: collectionParam } : {}),
+      depth: toNum(url.searchParams.get('depth')),
+      limit: toNum(url.searchParams.get('limit')),
+      maxNodes: toNum(url.searchParams.get('maxNodes')),
+      req: base.req,
+      overrideAccess: base.overrideAccess,
+    })
+    return json(result)
+  }
+
   // POST/GET /_experiments/:slug/assign -> deterministically bucket a visitor `key` into
   // an experiment variant. PUBLIC: bucketing is not secret, and only the HASH of `key` is
   // ever used/recorded (never the raw key). The returned `segment` is fed back as
@@ -1299,6 +1321,21 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       const obj = await kernel.jsonLd({ collection, id, ...base })
       if (obj == null) throw new NotFoundError()
       return textResponse(JSON.stringify(obj), 'application/ld+json; charset=utf-8')
+    }
+    // GET /:collection/:id/graph?depth=&maxNodes= -> the content knowledge graph around a
+    // document: a bounded, ACCESS-CHECKED BFS over typed relationships. Resolved with the
+    // REQUEST principal, so a node (or even an edge to one) the caller can't read never
+    // appears. `depth`/`maxNodes` are graph-specific and clamped in core.
+    if (segments[2] === 'graph' && method === 'GET') {
+      const result = await kernel.graph({
+        collection,
+        id,
+        depth: toNum(url.searchParams.get('depth')),
+        maxNodes: toNum(url.searchParams.get('maxNodes')),
+        req: base.req,
+        overrideAccess: base.overrideAccess,
+      })
+      return json(result)
     }
     return methodNotAllowed()
   }

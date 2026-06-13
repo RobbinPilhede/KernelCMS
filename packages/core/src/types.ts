@@ -1859,6 +1859,100 @@ export interface BackfillResult {
   updated: number
 }
 
+// ---------------------------------------------------------------------------
+// Content knowledge graph + GraphRAG retrieval
+//
+// Treat content plus its TYPED relationships as a graph: a node is a document,
+// an edge is a typed relationship (outbound relationship/upload field) or its
+// virtual reverse (`join` field). `graph` does a bounded BFS from a seed doc,
+// loading every node through the ACCESS-CHECKED read path — a node the caller
+// can't read is DROPPED, and so is the edge to it, so the graph never reveals a
+// document (or even a relationship to one) a caller is not allowed to see.
+// `graphSearch` seeds the BFS from semantic-search hits and returns the
+// connected subgraph plus a plain-text `context` array for grounding an LLM
+// (the retrieval half of GraphRAG; the generation is the caller's). Read-only,
+// access-checked, and bounded (depth + node cap + per-node fan-out + seed cap)
+// so a hub node or a deep cycle can never DoS the traversal.
+// ---------------------------------------------------------------------------
+
+/** One node in a content graph: a document, identified by a `${collection}:${id}`
+ *  ref. `label` is the document's title (via `admin.useAsTitle`, then a `title`/`name`
+ *  field, else `${collection} ${id}`) — only readable fields ever contribute. */
+export interface GraphNode {
+  /** Stable `${collection}:${id}` identifier (the de-dupe key). */
+  ref: string
+  collection: string
+  id: string
+  /** The document's display title. Never carries a read-denied field's value. */
+  label: string
+}
+
+/** A typed edge between two graph nodes. `kind` is `'relationship'` for an outbound
+ *  relationship/upload field, `'reverse'` for a virtual `join` (reverse-relationship)
+ *  edge. `field` is the field name on the SOURCE side that defines the edge. */
+export interface GraphEdge {
+  from: string
+  to: string
+  field: string
+  relationTo: string
+  kind: 'relationship' | 'reverse'
+}
+
+export interface GraphResult {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  /** True when the BFS hit `maxNodes` (or a per-node fan-out cap) and stopped early,
+   *  so the subgraph may be incomplete. */
+  truncated: boolean
+}
+
+export interface GraphOptions {
+  collection: string
+  id: string
+  /** BFS hop budget from the seed. Default 1; clamped to `[0, MAX_POPULATE_DEPTH]`. */
+  depth?: number
+  /** Hard cap on total nodes returned (the seed counts). Default 100; clamped to a
+   *  hard maximum so a hub node can't explode the traversal (DoS guard). */
+  maxNodes?: number
+  req?: Partial<RequestContext>
+  /** Trusted server call: bypass access checks. Never set from an untrusted boundary —
+   *  the REST route always passes the request principal. */
+  overrideAccess?: boolean
+}
+
+/** One grounding snippet for an LLM: a reachable node's ref, label, and a plain-text
+ *  excerpt (title + a body/summary snippet). Only readable nodes/fields contribute. */
+export interface GraphContextItem {
+  ref: string
+  label: string
+  text: string
+}
+
+export interface GraphSearchOptions {
+  /** Narrow the semantic seed search to one collection (required when more than one
+   *  collection has semantic search — there is no cross-collection seed query). */
+  collection?: string
+  query: string
+  /** BFS hop budget to expand each seed. Default 1; clamped to `[0, MAX_POPULATE_DEPTH]`. */
+  depth?: number
+  /** Max seed documents from the semantic search. Default 5; clamped. */
+  limit?: number
+  /** Hard cap on total nodes across the whole expanded subgraph. Default 100; clamped. */
+  maxNodes?: number
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface GraphSearchResult<T extends Doc = Doc> {
+  /** The seed documents the query matched (access-checked). */
+  seeds: T[]
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  /** Plain-text grounding context for each reachable node, suitable for an LLM prompt. */
+  context: GraphContextItem[]
+  truncated: boolean
+}
+
 export interface Kernel {
   readonly config: SanitizedConfig
   readonly db: DatabaseAdapter
@@ -2079,6 +2173,20 @@ export interface Kernel {
    *  rows via trusted (`overrideAccess`) updates. `{ dryRun: true }` reports `matched`
    *  without writing. */
   backfill<T extends Doc = Doc>(opts: BackfillOptions<T>): Promise<BackfillResult>
+  /** Traverse the content knowledge graph from a seed document: a bounded BFS that
+   *  follows BOTH outbound relationship/upload fields AND inbound `join` reverse-
+   *  relations up to `depth` hops. Every node is loaded through the ACCESS-CHECKED
+   *  read path — a node the caller can't read is dropped, and so is the edge to it,
+   *  so the graph never reveals a document (or a relationship to one) the caller may
+   *  not see. Bounded by `depth` + `maxNodes` + per-node fan-out + cycle de-dupe. */
+  graph(opts: GraphOptions): Promise<GraphResult>
+  /** GraphRAG retrieval: seed from semantic-search hits for `query`, expand each seed
+   *  through `graph(...)` to `depth`, and return the seed docs, the connected subgraph
+   *  (nodes + edges), and a plain-text `context` array (label + snippet per reachable
+   *  node) for grounding an LLM. Requires `config.embeddings` (semantic seeds); falls
+   *  back to `find` when no collection has semantic search. Everything access-checked —
+   *  only readable nodes contribute context. The generation step is the caller's. */
+  graphSearch<T extends Doc = Doc>(opts: GraphSearchOptions): Promise<GraphSearchResult<T>>
   destroy(): Promise<void>
 }
 
