@@ -8,8 +8,10 @@ import type {
   EvalRule,
   GlobalConfig,
   KernelConfig,
+  SanitizedAudiences,
   SanitizedConfig,
   SanitizedDiscoverability,
+  SanitizedExperiment,
   SanitizedStructuredData,
   StructuredDataCollectionConfig,
   SanitizedLocalization,
@@ -19,6 +21,7 @@ import type {
 } from './types'
 import { clampRetain } from './realtime'
 import { effectiveFields, joinFields } from './fields'
+import { FORBIDDEN_SEGMENT_KEYS } from './personalization'
 import { consoleEmail, type EmailAdapter } from './email'
 import { createRbacStore, injectRbac } from './rbac'
 import { resolveVersions } from './schema'
@@ -603,6 +606,117 @@ function sanitizeStructuredData(
   return { enabled: true, baseUrl, collections: resolved }
 }
 
+/**
+ * Resolve the audience-segments config (the personalization parallel of localization).
+ * OFF by default. When set: `segments` must be a non-empty list of safe, unique ids
+ * (prototype-pollution keys rejected — a segment id becomes a map key), and `default`
+ * must be one of them. `personalized` fields require this to be enabled.
+ */
+function sanitizeAudiences(audiences: KernelConfig['audiences']): SanitizedAudiences {
+  if (!audiences) return { enabled: false, segments: [], default: '' }
+  assert(
+    Array.isArray(audiences.segments) && audiences.segments.length > 0,
+    'audiences.segments must be a non-empty array',
+  )
+  const seen = new Set<string>()
+  for (const segment of audiences.segments) {
+    assert(typeof segment === 'string' && segment.length > 0, 'every audience segment must be a non-empty string')
+    assert(!FORBIDDEN_SEGMENT_KEYS.has(segment), `audience segment "${segment}" is a reserved key and cannot be used`)
+    assert(!seen.has(segment), `duplicate audience segment "${segment}"`)
+    seen.add(segment)
+  }
+  assert(
+    typeof audiences.default === 'string' && seen.has(audiences.default),
+    `audiences.default "${audiences.default}" must be one of audiences.segments`,
+  )
+  return { enabled: true, segments: [...audiences.segments], default: audiences.default }
+}
+
+/**
+ * Validate A/B experiments. Each needs a unique snake_case slug and at least two
+ * variants, every variant a configured audience segment. `weights` (when given) must be
+ * one-per-variant, finite, non-negative, and sum > 0; default is equal weights. `seed`
+ * defaults to the slug. Requires `audiences` enabled (a variant IS a segment).
+ */
+function sanitizeExperiments(
+  experiments: KernelConfig['experiments'],
+  audiences: SanitizedAudiences,
+): SanitizedExperiment[] {
+  if (!experiments || experiments.length === 0) return []
+  assert(audiences.enabled, 'experiments require `audiences` to be configured (a variant is an audience segment)')
+  const segments = new Set(audiences.segments)
+  const slugs = new Set<string>()
+  const resolved: SanitizedExperiment[] = []
+  for (const exp of experiments) {
+    assert(
+      typeof exp.slug === 'string' && IDENT_RE.test(exp.slug),
+      `experiment slug "${exp.slug}" must be ${NAMING_RULE}`,
+    )
+    assert(!slugs.has(exp.slug), `duplicate experiment slug "${exp.slug}"`)
+    slugs.add(exp.slug)
+    assert(
+      Array.isArray(exp.variants) && exp.variants.length >= 2,
+      `experiment "${exp.slug}" needs at least two variants`,
+    )
+    for (const variant of exp.variants) {
+      assert(
+        segments.has(variant),
+        `experiment "${exp.slug}" variant "${variant}" is not a configured audience segment`,
+      )
+    }
+    let weights: number[]
+    if (exp.weights !== undefined) {
+      assert(
+        Array.isArray(exp.weights) && exp.weights.length === exp.variants.length,
+        `experiment "${exp.slug}" weights must have one entry per variant`,
+      )
+      for (const w of exp.weights) {
+        assert(typeof w === 'number' && Number.isFinite(w) && w >= 0, `experiment "${exp.slug}" has an invalid weight`)
+      }
+      assert(
+        exp.weights.reduce((sum, w) => sum + w, 0) > 0,
+        `experiment "${exp.slug}" weights must sum to a positive number`,
+      )
+      weights = [...exp.weights]
+    } else {
+      weights = exp.variants.map(() => 1)
+    }
+    resolved.push({ slug: exp.slug, variants: [...exp.variants], weights, seed: exp.seed ?? exp.slug })
+  }
+  return resolved
+}
+
+/**
+ * Reject a field that is BOTH `localized` and `personalized`: they are parallel,
+ * mutually-exclusive per-key storage models (one keyed by locale, one by segment) and a
+ * single JSON column can't be both. Also reject a `personalized` field when no
+ * `audiences` are configured (it would have no segments to key by). Recurses into
+ * group/array/blocks children, mirroring `collectFieldNameErrors`.
+ */
+function collectPersonalizationErrors(
+  fields: ConfigField[],
+  path: string,
+  audiencesEnabled: boolean,
+  errors: string[],
+): void {
+  for (const field of effectiveFields(fields)) {
+    const fp = `${path}.${field.name}`
+    if (field.localized && field.personalized) {
+      errors.push(`field "${fp}" cannot be both \`localized\` and \`personalized\``)
+    }
+    if (field.personalized && !audiencesEnabled) {
+      errors.push(`field "${fp}" is \`personalized\` but no \`audiences\` are configured`)
+    }
+    if (field.type === 'group' || field.type === 'array') {
+      collectPersonalizationErrors(field.fields, fp, audiencesEnabled, errors)
+    } else if (field.type === 'blocks') {
+      for (const block of field.blocks) {
+        collectPersonalizationErrors(block.fields, `${fp}.${block.slug}`, audiencesEnabled, errors)
+      }
+    }
+  }
+}
+
 export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   assert(config.db, 'a database adapter is required (config.db)')
   assert(Array.isArray(config.collections), 'config.collections must be an array')
@@ -664,6 +778,21 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     assert(locales.length > 0, 'localization.locales must not be empty')
     assert(locales.includes(defaultLocale), `localization.defaultLocale "${defaultLocale}" must be in locales`)
     localization = { locales, defaultLocale, fallback: fallback ?? true, strict: strict === true }
+  }
+
+  // Personalization: resolve audience segments + A/B experiments, then validate every
+  // field's localized/personalized combo across collections AND globals in one shot.
+  const audiences = sanitizeAudiences(config.audiences)
+  const experiments = sanitizeExperiments(config.experiments, audiences)
+  const experimentsBySlug: Record<string, SanitizedExperiment> = {}
+  for (const exp of experiments) experimentsBySlug[exp.slug] = exp
+  const personalizationErrors: string[] = []
+  for (const c of collections) collectPersonalizationErrors(c.fields, c.slug, audiences.enabled, personalizationErrors)
+  for (const g of globals) collectPersonalizationErrors(g.fields, g.slug, audiences.enabled, personalizationErrors)
+  if (personalizationErrors.length > 0) {
+    throw new Error(
+      `KernelCMS config error: ${personalizationErrors.length} personalization violation(s):\n  - ${personalizationErrors.join('\n  - ')}`,
+    )
   }
 
   // Gate the production secret. This runs inside sanitizeConfig, so every boot
@@ -814,6 +943,9 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     collections,
     globals,
     localization,
+    audiences,
+    experiments,
+    experimentsBySlug,
     routes: { api: config.routes?.api ?? '/api' },
     admin: { user: adminUser },
     secret,

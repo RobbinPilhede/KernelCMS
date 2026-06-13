@@ -9,6 +9,7 @@ import {
 } from '@kernel/richtext'
 import type { AnyField, ConfigField, OnDeleteAction, RequestContext, RichTextField, SelectOption } from './types'
 import type { FieldError } from './errors'
+import { isSafeSegmentKey, resolvePersonalized, segmentMapCopy } from './personalization'
 
 /** Resolve the allow-list schema for a richText field (cached per field object). */
 const richTextSchemaCache = new WeakMap<RichTextField, ResolvedRichTextSchema>()
@@ -104,7 +105,8 @@ export function optionLabel(opt: SelectOption): string {
 
 /** The physical storage type for a field, accounting for localization and arity. */
 export function storageTypeForField(field: AnyField): StorageType {
-  if (field.localized) return 'json'
+  // A localized OR personalized field is stored as a `{ [key]: value }` JSON map.
+  if (field.localized || field.personalized) return 'json'
   switch (field.type) {
     case 'number':
       return field.integer ? 'integer' : 'real'
@@ -404,10 +406,26 @@ function normalizeWrite(field: AnyField, value: unknown): unknown {
 
 export interface SerializeOptions {
   locale: string
+  /** The audience segment a personalized field's value is merged into. Defaults to the
+   *  default segment when omitted (personalization disabled → unused). */
+  segment?: string
   existingRow?: Row | null
 }
 
-/** Build a storage row from public field data, merging localized values. */
+/** Merge a single value into an existing per-key (`{ [key]: value }`) JSON map without
+ *  clobbering the other keys. Used by both the localized and personalized write paths. */
+function mergeKeyedValue(field: AnyField, existing: unknown, key: string, value: unknown): Record<string, unknown> {
+  const map: Record<string, unknown> =
+    existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {}
+  // Never write through a prototype-pollution key (defence in depth; the segment is
+  // already validated against the configured set upstream).
+  if (isSafeSegmentKey(key)) map[key] = normalizeWrite(field, value)
+  return map
+}
+
+/** Build a storage row from public field data, merging localized + personalized values. */
 export function serializeDoc(fieldsIn: ConfigField[], data: Row, opts: SerializeOptions): Row {
   const fields = storageFields(fieldsIn)
   const row: Row = {}
@@ -421,6 +439,17 @@ export function serializeDoc(fieldsIn: ConfigField[], data: Row, opts: Serialize
           : {}
       if (has) map[opts.locale] = normalizeWrite(field, data[field.name])
       row[field.name] = map
+    } else if (field.personalized) {
+      // Merge the write value into the target segment, preserving every other segment.
+      const existing = opts.existingRow?.[field.name]
+      if (has && opts.segment !== undefined) {
+        row[field.name] = mergeKeyedValue(field, existing, opts.segment, data[field.name])
+      } else {
+        row[field.name] =
+          existing && typeof existing === 'object' && !Array.isArray(existing)
+            ? { ...(existing as Record<string, unknown>) }
+            : {}
+      }
     } else if (has) {
       row[field.name] = normalizeWrite(field, data[field.name])
     } else if (opts.existingRow && Object.prototype.hasOwnProperty.call(opts.existingRow, field.name)) {
@@ -443,6 +472,11 @@ export interface DeserializeOptions {
   /** Read EVERY locale: localized fields are returned as their full `{ [locale]: value }`
    *  map (a defensive copy) instead of a single resolved value. */
   allLocales?: boolean
+  /** The active audience segment a personalized field resolves to. When omitted,
+   *  personalized fields resolve to `defaultSegment` (or null). */
+  segment?: string
+  /** The configured default audience segment (the personalization fallback). */
+  defaultSegment?: string
 }
 
 function resolveLocale(raw: unknown, opts: DeserializeOptions): unknown {
@@ -475,6 +509,11 @@ export function deserializeDoc(fieldsIn: ConfigField[], row: Row, opts: Deserial
     const raw = row[field.name]
     if (field.localized) {
       doc[field.name] = opts.allLocales ? localeMapCopy(raw) : resolveLocale(raw, opts)
+    } else if (field.personalized) {
+      const segment = opts.segment ?? opts.defaultSegment ?? ''
+      doc[field.name] = opts.allLocales
+        ? segmentMapCopy(raw)
+        : resolvePersonalized(raw, { segment, defaultSegment: opts.defaultSegment ?? segment })
     } else {
       doc[field.name] = raw === undefined ? null : raw
     }

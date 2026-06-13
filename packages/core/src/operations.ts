@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { DatabaseAdapter, Logger, PaginatedResult, Row, SortSpec, Where } from '@kernel/db'
 import { extForFormat, generateKey, isContentTypeConsistent, sniffMimeType, type StorageAdapter } from '@kernel/storage'
 import type {
+  AssignVariantOptions,
+  AssignVariantResult,
   AuditAction,
   AuditDoc,
   AuthResult,
@@ -111,6 +113,7 @@ import {
   validateLocaleRequired,
 } from './fields'
 import { evalAccess, isAllowed, asWhere } from './access'
+import { bucketVariant, fnv1a32 } from './personalization'
 import { JOBS_SLUG } from './config'
 import { ROLES_TABLE, cloneRoleDef, assertValidRoleDef } from './rbac'
 import { matchesWhere, mergeWhere, parseSort } from './query'
@@ -414,6 +417,22 @@ export function createOperations(ctx: OperationCtx) {
 
   const loc = config.localization || false
   const strictLoc = loc ? loc.strict : false
+  const audiences = config.audiences
+
+  // Prototype-pollution guard for an untrusted `audience` segment used as a map key.
+  const FORBIDDEN_SEGMENT_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+  /** Resolve an untrusted `req.audience` to a KNOWN segment id. Anything not configured
+   *  (absent, unknown, or a prototype-pollution key) collapses to the default segment, so
+   *  a hostile `audience` can never inject a map key or read another segment's content. */
+  function resolveSegment(partial?: Partial<RequestContext>): string {
+    if (!audiences.enabled) return ''
+    const raw = partial?.audience
+    if (typeof raw === 'string' && !FORBIDDEN_SEGMENT_KEYS.has(raw) && audiences.segments.includes(raw)) {
+      return raw
+    }
+    return audiences.default
+  }
 
   function buildReq(partial?: Partial<RequestContext>): RequestContext {
     const defaultLocale = loc ? loc.defaultLocale : 'en'
@@ -433,6 +452,9 @@ export function createOperations(ctx: OperationCtx) {
       user: partial?.user ?? null,
       locale: partial?.locale ?? defaultLocale,
       fallbackLocale: fallback,
+      // Untrusted audience resolved to a known segment (unknown → default). Only set when
+      // personalization is enabled so non-personalized configs stay byte-identical.
+      ...(audiences.enabled ? { audience: resolveSegment(partial) } : {}),
       context: callerSetFallback && strictLoc ? { ...context, __strictFallbackOptIn: true } : context,
     }
   }
@@ -480,7 +502,16 @@ export function createOperations(ctx: OperationCtx) {
       strict: strictLoc,
       strictFallbackOptIn: req.context?.__strictFallbackOptIn === true,
       allLocales: loc !== false && req.locale === 'all',
+      // Personalization: resolve personalized fields to the request's audience segment,
+      // falling back to the configured default segment. Both are already-validated ids.
+      ...(audiences.enabled ? { segment: req.audience ?? audiences.default, defaultSegment: audiences.default } : {}),
     }
+  }
+
+  /** The audience segment a write targets — the resolved request segment, or the default
+   *  when personalization is off / unset. Mirrors `writeLocale` for personalized fields. */
+  function writeSegment(req: RequestContext): string {
+    return audiences.enabled ? (req.audience ?? audiences.default) : ''
   }
 
   function collectionOrThrow(slug: string): CollectionConfig {
@@ -1895,7 +1926,7 @@ export function createOperations(ctx: OperationCtx) {
     if (errors.length) throw new ValidationError(errors)
 
     const localeWritten = writeLocale(req)
-    const row = serializeDoc(collection.fields, data, { locale: localeWritten })
+    const row = serializeDoc(collection.fields, data, { locale: localeWritten, segment: writeSegment(req) })
     // Strict: a newly-written locale must satisfy required localized fields for itself.
     assertLocaleRequired(collection, row, [localeWritten])
     row.id = randomUUID()
@@ -2128,7 +2159,11 @@ export function createOperations(ctx: OperationCtx) {
     // Serialize the post-hook, post-compute document — NOT the raw input — so any
     // field a beforeChange hook (or a stored compute) added/changed is persisted.
     const localeWritten = writeLocale(req)
-    const row = serializeDoc(collection.fields, merged, { locale: localeWritten, existingRow: existing })
+    const row = serializeDoc(collection.fields, merged, {
+      locale: localeWritten,
+      segment: writeSegment(req),
+      existingRow: existing,
+    })
     // Strict: only the locale being written must satisfy its required localized fields;
     // locales already stored are never retroactively failed.
     assertLocaleRequired(collection, row, [localeWritten])
@@ -3242,7 +3277,11 @@ export function createOperations(ctx: OperationCtx) {
     if (errors.length) throw new ValidationError(errors)
 
     // Persist the post-hook, post-compute document (see collection update).
-    const row = serializeDoc(global.fields, merged, { locale: req.locale, existingRow: existing })
+    const row = serializeDoc(global.fields, merged, {
+      locale: req.locale,
+      segment: writeSegment(req),
+      existingRow: existing,
+    })
     let saved: Row | null
     if (existing) {
       saved = await db.update({ collection: table, id: GLOBAL_ROW_ID, data: row })
@@ -3849,8 +3888,38 @@ export function createOperations(ctx: OperationCtx) {
     return { ...result, manifest }
   }
 
+  /**
+   * Deterministically bucket a visitor `key` into an experiment variant. The same key
+   * always maps to the same variant (sticky), and the spread over many keys matches the
+   * configured weights — see {@link bucketVariant}. ONLY the hash of the key is used or
+   * (optionally) recorded; the raw visitor key is never stored (no PII at rest). The
+   * returned `variant`/`segment` is an audience segment, so a caller sets
+   * `req.audience = result.segment` to read that variant's personalized content.
+   */
+  function assignVariant(opts: AssignVariantOptions): AssignVariantResult {
+    const experiment = config.experimentsBySlug[opts.experiment]
+    if (!experiment) {
+      throw new BadRequestError(`Unknown experiment "${opts.experiment}".`)
+    }
+    if (typeof opts.key !== 'string' || opts.key.length === 0) {
+      throw new BadRequestError('`key` must be a non-empty string.')
+    }
+    const variant = bucketVariant(experiment, opts.key)
+    // Record a metadata-only assignment when auditing is on — the HASH of the key, never
+    // the raw key. Best-effort: an audit-write failure must never fail the assignment.
+    if (config.audit.enabled) {
+      void recordAudit({
+        action: 'experiment.assign',
+        principalType: 'system',
+        meta: { experiment: experiment.slug, variant, keyHash: fnv1a32(opts.key).toString(16) },
+      }).catch(() => {})
+    }
+    return { experiment: experiment.slug, variant, segment: variant }
+  }
+
   return {
     create,
+    assignVariant,
     upload,
     find,
     findByID,

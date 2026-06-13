@@ -65,6 +65,10 @@ export interface RequestContext<TUser extends AuthUser = AuthUser> {
   locale: string
   /** Locale to fall back to when a value is missing, or false to disable. */
   fallbackLocale: string | false
+  /** Active audience segment for personalized fields (reads + writes). An unknown or
+   *  absent segment resolves to the configured default segment. Untrusted: only a known
+   *  segment id is ever honoured (see {@link AudiencesConfig}). */
+  audience?: string
   /** Arbitrary per-request data plugins can attach. */
   context: Record<string, unknown>
 }
@@ -216,6 +220,13 @@ export interface FieldBase {
   required?: boolean
   unique?: boolean
   localized?: boolean
+  /** Store this field as a per-audience-segment value map (`{ [segment]: value }`), the
+   *  personalization parallel of `localized`. On write the value is merged into the
+   *  existing map for the request's write segment (other segments untouched); on read it
+   *  resolves to the active `audience` segment, then the default segment, then null.
+   *  Requires `config.audiences`. A field can't be BOTH `localized` and `personalized`
+   *  (rejected at sanitize). Still subject to field read-access. */
+  personalized?: boolean
   index?: boolean
   defaultValue?: unknown
   admin?: FieldAdmin
@@ -561,6 +572,65 @@ export interface LocalizationConfig {
   strict?: boolean
 }
 
+// ---------------------------------------------------------------------------
+// Personalization + A/B experiments
+//
+// The personalization parallel of localization: a `personalized` field stores a
+// `{ [segment]: value }` map keyed by AUDIENCE SEGMENT instead of locale, resolved
+// per request from `req.audience` (→ default segment → null). A/B experiments bucket
+// a caller-supplied visitor key deterministically to a variant — and a variant IS a
+// segment id, so composing the assigned variant as `req.audience` makes reads return
+// that variant's personalized content.
+// ---------------------------------------------------------------------------
+
+/** Audience segments for personalized content. `default` is the resolve-fallback
+ *  segment and must be one of `segments`. */
+export interface AudiencesConfig {
+  segments: string[]
+  default: string
+}
+
+/** Resolved audiences config (after sanitize). `enabled:false` when unconfigured. */
+export interface SanitizedAudiences {
+  enabled: boolean
+  segments: string[]
+  default: string
+}
+
+/** A declarative A/B experiment. Each `variant` must be a configured audience segment.
+ *  `weights` (default equal) bias the deterministic bucketing; `seed` namespaces the
+ *  hash so re-running an experiment under a new seed reshuffles assignments. */
+export interface ExperimentConfig {
+  slug: string
+  variants: string[]
+  weights?: number[]
+  seed?: string
+}
+
+/** Resolved experiment (after sanitize): normalized, non-negative weights that sum > 0. */
+export interface SanitizedExperiment {
+  slug: string
+  variants: string[]
+  weights: number[]
+  seed: string
+}
+
+export interface AssignVariantOptions {
+  /** The experiment slug (must be configured). */
+  experiment: string
+  /** A caller-supplied visitor/session id. Only its HASH is ever used or recorded —
+   *  the raw key is never stored (no PII at rest). */
+  key: string
+}
+
+export interface AssignVariantResult {
+  experiment: string
+  /** The assigned variant — also a valid audience segment id. */
+  variant: string
+  /** Alias of `variant`: set `req.audience = segment` to read that variant's content. */
+  segment: string
+}
+
 export type WebhookEvent = 'create' | 'update' | 'delete'
 
 export interface WebhookConfig {
@@ -668,6 +738,14 @@ export interface KernelConfig {
   collections: CollectionConfig[]
   globals?: GlobalConfig[]
   localization?: LocalizationConfig
+  /** Audience segments for personalized content fields (the personalization parallel of
+   *  `localization`). When set, `personalized` fields store a per-segment value map and
+   *  resolve from `req.audience`. Omit to disable personalization. */
+  audiences?: AudiencesConfig
+  /** Declarative A/B experiments. `kernel.assignVariant` buckets a visitor key to a
+   *  variant deterministically; the variant is an audience segment, so feeding it back as
+   *  `req.audience` reads that variant's personalized content. Requires `audiences`. */
+  experiments?: ExperimentConfig[]
   routes?: { api?: string }
   admin?: { user?: string; meta?: { titleSuffix?: string } }
   /** Secret used to sign auth tokens. Never hardcode; read from env. */
@@ -949,6 +1027,11 @@ export interface SanitizedConfig {
   collections: CollectionConfig[]
   globals: GlobalConfig[]
   localization: SanitizedLocalization | false
+  /** Resolved audience segments. `enabled:false` when unconfigured. */
+  audiences: SanitizedAudiences
+  /** Resolved A/B experiments, keyed lookup via `experimentsBySlug`. Empty when unset. */
+  experiments: SanitizedExperiment[]
+  experimentsBySlug: Record<string, SanitizedExperiment>
   routes: { api: string }
   admin: { user: string }
   secret: string
@@ -1320,6 +1403,7 @@ export type AuditAction =
   | 'workflow.completed'
   | 'workflow.failed'
   | 'workflow.awaiting_review'
+  | 'experiment.assign'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -1972,6 +2056,13 @@ export interface Kernel {
    *  with the JSON HTML-escaped (`<`/`>`/`&`) so document content can never break out of
    *  the script tag (XSS guard). Returns `''` when there is no readable document. */
   jsonLdScript(opts: JsonLdScriptOptions): Promise<string>
+  /** Deterministically bucket a visitor `key` into one of an experiment's variants. The
+   *  SAME key always maps to the SAME variant (sticky); the distribution across many keys
+   *  matches the configured weights. Only the hash of `key` is used — the raw key is never
+   *  stored. The returned `variant`/`segment` is an audience segment: set `req.audience` to
+   *  it to read that variant's personalized content. Throws when experiments are not
+   *  configured or the slug is unknown. */
+  assignVariant(opts: AssignVariantOptions): AssignVariantResult
   /** Apply the schema to the database (create tables / add columns / build indexes),
    *  recording a `_migrations` journal row when anything is applied. Pass
    *  `{ dryRun: true }` to compute the exact SQL it WOULD run and return the report

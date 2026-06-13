@@ -101,6 +101,17 @@ historical read, diff, and restore goes through the **same** access checks and
 field-stripping as a live read: time-travel is a view into the access-checked engine,
 never a side door around it.
 
+And content can **personalize**. Opt into `audiences` and any field becomes
+`personalized: true` — it stores audience variants the way `localized` stores locales,
+resolving per request (`?audience=vip` or `req.audience`) to that segment, then the default,
+then null. Built-in A/B testing rides the same model: declare `experiments` and
+`kernel.assignVariant({ experiment, key })` gives **deterministic sticky bucketing** of a
+visitor — the same key always gets the same variant, the variant *is* a segment, and only a
+hash of the key is ever stored (no PII at rest). Variants still pass field read-access, an
+untrusted audience is honored only if it's a configured segment, and per-segment writes
+merge without clobbering each other — micro-experiences and experiments from the same typed
+model, no separate personalization platform.
+
 ---
 
 ## Quickstart
@@ -215,6 +226,9 @@ A couple of the guides are also kept alongside the source:
   deny-by-default access, `overrideAccess`, drafts→publish, stored vs. virtual
   computed fields, `defaultSort`, the seed convention, env vars, CLI flags, and
   the `.ts` type-stripping requirements for config files.
+- **[Personalization & A/B](docs/personalization.md)** — `personalized` fields and
+  audience variants, the `audiences` config, reading/writing segments (merge semantics),
+  deterministic A/B `experiments` with `assignVariant`, and the access/PII guarantees.
 
 ---
 
@@ -292,6 +306,9 @@ that is persisted at write time and therefore sortable and filterable:
 - Computed (virtual) fields: `virtual: true` + `compute({ doc, req })`, derived on read,
   never stored, read-only in the admin.
 - Per-field localization with a configurable locale set and fallbacks.
+- Per-field **personalization**: `personalized: true` stores audience variants (like
+  `localized`, but keyed by segment) against a configured `audiences` set, plus built-in
+  deterministic A/B `experiments`. See [Personalization & A/B](#personalization--ab-experiments).
 - Conditional fields, default values, validation, read-only and hidden flags, and
   sidebar field positioning.
 
@@ -352,6 +369,46 @@ the *same* read-check and field-stripping as a live read, evaluated against the 
 doc now can't read its `asOf` state, `history`, or `diff`; a read-denied field never
 appears in an `asOf` doc, in `changedFields`, or in a diff; historical drafts stay hidden
 unless `draft: true`. See the [content time-machine guide](docs/time-machine.md).
+
+### Personalization & A/B experiments
+
+`personalized` fields are the audience-keyed twin of localization: where a `localized` field
+stores one value per locale, a `personalized` field stores a `{ [segment]: value }` map and
+resolves per request to the caller's audience → the default segment → null. Opt in with an
+`audiences` config; built-in `experiments` add deterministic A/B testing on the same model.
+
+```ts
+export default defineConfig({
+  audiences: { segments: ['default', 'vip', 'returning'], default: 'default' }, // default ∈ segments
+  experiments: [{ slug: 'cta', variants: ['a', 'b'], weights: [50, 50], seed: 1 }], // variants are segments
+  collections: [
+    { slug: 'posts', fields: [
+      { name: 'headline', type: 'text', personalized: true }, // can't also be `localized`
+    ] },
+  ],
+})
+```
+
+- **Resolve a variant.** Pass `?audience=vip` (REST) or `req.audience` (Local API). A write
+  carrying an audience **merges** that segment without clobbering the others:
+
+```ts
+const { variant } = kernel.assignVariant({ experiment: 'cta', key: visitorId }) // sticky, weight-proportional
+const doc = await kernel.findByID({ collection: 'posts', id, req: { audience: variant } }) // variant IS a segment
+```
+
+```bash
+curl "http://localhost:3000/api/posts/<id>?audience=vip"                                  # read the vip variant
+curl -X PATCH "http://localhost:3000/api/posts/<id>?audience=vip" -d '{"headline":"…"}'    # merge into vip only
+curl -X POST  "http://localhost:3000/api/_experiments/cta/assign" -d '{"key":"visitor-1"}' # public; → {variant, segment}
+```
+
+**The guarantees:** an untrusted `audience` is honored only if it's a configured segment
+(unknown → default); segment keys are guarded against `__proto__`/`constructor`/`prototype`
+(no pollution); personalized fields still pass field read-access, so a read-denied variant
+is stripped for every audience; per-segment writes merge (no variant lost); and bucketing is
+deterministic over an FNV hash of the visitor `key` — **only the hash is recorded, no PII at
+rest**. Red-teamed to Risk LOW. See the [personalization guide](docs/personalization.md).
 
 ### Search (full-text, semantic & hybrid)
 

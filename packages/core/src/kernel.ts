@@ -506,6 +506,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     geoDocument: discoverability.geoDocument,
     jsonLd: structuredData.jsonLd,
     jsonLdScript: structuredData.jsonLdScript,
+    assignVariant: ops.assignVariant,
     async migrate(opts?: MigrateRunOptions): Promise<MigrationReport> {
       const dryRun = opts?.dryRun === true
       const report = await sanitized.db.migrate(schema, { dryRun })

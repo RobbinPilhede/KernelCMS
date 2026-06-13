@@ -30,6 +30,9 @@ export default defineConfig({
   db: sqliteAdapter({ url: ':memory:' }),
   storage: localStorage({ rootDir: './.e2e-uploads', servePath: '/files' }),
   localization: { locales: ['en', 'es'], defaultLocale: 'en' },
+  // Personalization + A/B: audience-targeted content variants + deterministic bucketing.
+  audiences: { segments: ['default', 'vip'], default: 'default' },
+  experiments: [{ slug: 'hero', variants: ['default', 'vip'] }],
   // Agentic workflow demo: a scoped, draft-only agent runs an autonomous step.
   agents: [{ id: 'demo-bot', token: 'demo-bot-token', roles: ['editor'], fieldScope: { allow: ['title', 'summary'] } }],
   workflows: [
@@ -139,6 +142,7 @@ export default defineConfig({
       fields: [
         { name: 'title', type: 'text', required: true },
         { name: 'summary', type: 'text', localized: true },
+        { name: 'tagline', type: 'text', personalized: true },
         { name: 'body', type: 'richText', preset: 'standard' },
       ],
     },

@@ -58,6 +58,15 @@ export {
 } from './fields'
 export { createOperations } from './operations'
 export type { Operations, OperationCtx, RecordAuditArgs } from './operations'
+export {
+  resolvePersonalized,
+  segmentMapCopy,
+  isSafeSegmentKey,
+  bucketVariant,
+  fnv1a32,
+  FORBIDDEN_SEGMENT_KEYS,
+} from './personalization'
+export type { ResolvePersonalizedOptions, BucketExperiment } from './personalization'
 export { memoryCache, createCachedDb } from './cache'
 export type { MemoryCacheOptions, CachedDbOptions } from './cache'
 export { dbCache, redisCache } from './cache-backends'

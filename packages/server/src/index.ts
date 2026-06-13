@@ -465,10 +465,13 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return json({ error: { code: 'FORBIDDEN', message: 'Cross-origin request rejected.' } }, 403)
   }
   const locale = url.searchParams.get('locale') ?? undefined
+  // Personalization: the requested audience segment. Untrusted — core resolves an unknown
+  // segment to the configured default and guards prototype-pollution keys.
+  const audience = url.searchParams.get('audience') ?? undefined
   const depth = toNum(url.searchParams.get('depth'))
   const draft = url.searchParams.get('draft') === 'true'
   const base = {
-    req: { user, ...(locale ? { locale } : {}) },
+    req: { user, ...(locale ? { locale } : {}), ...(audience ? { audience } : {}) },
     overrideAccess,
     ...(depth !== undefined ? { depth } : {}),
     ...(draft ? { draft: true } : {}),
@@ -527,6 +530,29 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   // /_config -> serializable admin schema descriptor
   if (segments.length === 1 && segments[0] === '_config') {
     return json(describeConfig(kernel.config))
+  }
+
+  // POST/GET /_experiments/:slug/assign -> deterministically bucket a visitor `key` into
+  // an experiment variant. PUBLIC: bucketing is not secret, and only the HASH of `key` is
+  // ever used/recorded (never the raw key). The returned `segment` is fed back as
+  // `?audience=` on subsequent reads to serve that variant's personalized content.
+  if (segments[0] === '_experiments' && segments[2] === 'assign' && segments.length === 3) {
+    if (!kernel.config.experiments.length) {
+      return json({ error: { code: 'NOT_FOUND', message: 'Experiments are not enabled.' } }, 404)
+    }
+    const slug = decodeURIComponent(segments[1]!)
+    let key: unknown
+    if (method === 'POST') {
+      key = (await readBody(request)).key
+    } else if (method === 'GET') {
+      key = url.searchParams.get('key') ?? undefined
+    } else {
+      return methodNotAllowed()
+    }
+    if (typeof key !== 'string' || key.length === 0) {
+      return json({ error: { code: 'VALIDATION_ERROR', message: '`key` is required.' } }, 400)
+    }
+    return json(kernel.assignVariant({ experiment: slug, key }))
   }
 
   // /openapi -> machine-readable contract; /docs -> Scalar API reference UI.
@@ -916,7 +942,7 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   const customEndpoints = kernel.config.endpoints ?? []
   if (customEndpoints.length > 0) {
     const match = matchEndpoint(customEndpoints, method, segments)
-    if (match) return runEndpoint(kernel, request, url, match.endpoint, match.params, { user, locale })
+    if (match) return runEndpoint(kernel, request, url, match.endpoint, match.params, { user, locale, audience })
   }
 
   // /globals/:slug
@@ -1314,7 +1340,7 @@ async function runEndpoint(
   url: URL,
   endpoint: EndpointConfig,
   params: Record<string, string>,
-  auth: { user: AuthUser | null; locale?: string },
+  auth: { user: AuthUser | null; locale?: string; audience?: string },
 ): Promise<Response> {
   const { user } = auth
   const requestId = randomUUID()
@@ -1324,6 +1350,7 @@ async function runEndpoint(
     user,
     locale: auth.locale ?? defaultLocale,
     fallbackLocale: false,
+    ...(auth.audience ? { audience: auth.audience } : {}),
     context: { requestId },
   }
 
