@@ -20,6 +20,7 @@
   "dependencies": {
     "@kernel/core": "workspace:*",
     "@kernel/db-sqlite": "workspace:*",
+    "@kernel/mcp": "workspace:*",
     "@kernel/server": "workspace:*"
   }
 }

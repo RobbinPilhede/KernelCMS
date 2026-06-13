@@ -68,6 +68,10 @@
       "types": "./dist/plugin-seo.d.ts",
       "default": "./dist/plugin-seo.js"
     },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    },
     "./visual-editing": {
       "types": "./dist/visual-editing.d.ts",
       "default": "./dist/visual-editing.js"
@@ -98,9 +102,13 @@
     "pg": "^8.13.1"
   },
   "peerDependencies": {
+    "@modelcontextprotocol/sdk": ">=1.0.0",
     "react": ">=18"
   },
   "peerDependenciesMeta": {
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    },
     "react": {
       "optional": true
     }
@@ -118,7 +126,9 @@
     "@kernel/testing": "workspace:*",
     "@kernel/plugin-seo": "workspace:*",
     "@kernel/visual-editing": "workspace:*",
+    "@kernel/mcp": "workspace:*",
     "@kernel/cli": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/pg": "^8.11.10",
     "@types/react": "^18.3.18",
     "tsup": "^8.3.5"

@@ -16,6 +16,7 @@ export default defineConfig({
     graphql: 'src/graphql.ts',
     testing: 'src/testing.ts',
     'plugin-seo': 'src/plugin-seo.ts',
+    mcp: 'src/mcp.ts',
     bin: 'src/bin.ts',
   },
   format: ['esm'],
@@ -24,6 +25,8 @@ export default defineConfig({
   clean: true,
   noExternal: [/^@kernel\//],
   // `pg` is a real third-party dependency; keep it external. node:sqlite is a
-  // Node built-in the SQLite adapter loads lazily.
-  external: ['node:sqlite', 'pg'],
+  // Node built-in the SQLite adapter loads lazily. The MCP SDK is an OPTIONAL
+  // peer — keep it (and its subpaths/transitive runtime deps) external so the
+  // base install stays lean and only MCP users pull it in.
+  external: [/^@modelcontextprotocol\/sdk/, '@hono/node-server', 'node:sqlite', 'pg'],
 })

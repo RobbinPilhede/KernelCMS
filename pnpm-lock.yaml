@@ -156,6 +156,9 @@ importers:
       '@kernel/db-sqlite':
         specifier: workspace:*
         version: link:../db-sqlite
+      '@kernel/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@kernel/server':
         specifier: workspace:*
         version: link:../server
@@ -257,6 +260,9 @@ importers:
       '@kernel/graphql':
         specifier: workspace:*
         version: link:../graphql
+      '@kernel/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@kernel/plugin-seo':
         specifier: workspace:*
         version: link:../plugin-seo
@@ -275,6 +281,9 @@ importers:
       '@kernel/visual-editing':
         specifier: workspace:*
         version: link:../visual-editing
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0

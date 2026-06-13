@@ -90,11 +90,15 @@ Commands:
   generate:module    Scaffold a new module (collection + endpoint) — <name> [--out path]
   dev                Migrate, then start the REST API server (development)
   start              Serve for production (no auto-migrate; doctor-gated)
+  mcp                Serve this kernel as an MCP server (stdio by default; --http for multi-agent)
 
 Options:
   --config <path>    Path to kernel.config.ts (default: ./kernel.config.ts)
-  --port <number>    Port for "dev" (default: $PORT or 3000)
+  --port <number>    Port for "dev"/"mcp --http" (default: $PORT or 3000)
   --out <path>       Output file for "generate:types"
+  --agent <id>       Agent principal for "mcp" stdio (required if config has >1 agent)
+  --http             Serve "mcp" over HTTP (multi-agent; principals come from the request token)
+  --host <host>      Host to bind for "mcp --http" (default: 127.0.0.1)
 `
 
 export async function run(argv: string[]): Promise<void> {
@@ -344,6 +348,104 @@ export async function run(argv: string[]): Promise<void> {
         openapi: process.env.KERNEL_OPENAPI === 'true',
       })
       console.log(`KernelCMS listening on ${server.url} (production)`)
+      const shutdown = async () => {
+        await server.close()
+        await kernel.destroy()
+        process.exit(0)
+      }
+      process.on('SIGINT', shutdown)
+      process.on('SIGTERM', shutdown)
+      break
+    }
+
+    case 'mcp': {
+      // Lazy-load @kernel/mcp (and through it the MCP SDK) only when this command
+      // runs, so the SDK never weighs on the lean core / other commands. A failed
+      // import almost always means the peer SDK isn't installed — say so plainly.
+      let mcp: typeof import('@kernel/mcp')
+      try {
+        mcp = await import('@kernel/mcp')
+      } catch {
+        console.error(
+          'MCP support needs @modelcontextprotocol/sdk — install it: npm install @modelcontextprotocol/sdk',
+        )
+        process.exitCode = 1
+        break
+      }
+
+      const http = flags.http === true
+      const { config } = await loadConfig(flags)
+
+      if (http) {
+        // Multi-agent: principals are resolved per-request from the bearer token by
+        // serveHttp, so no --agent here. Plain logging is fine (stdout isn't a transport).
+        const kernel = await initKernel(config)
+        const port = typeof flags.port === 'string' ? Number(flags.port) : Number(process.env.PORT) || 4000
+        const host = typeof flags.host === 'string' ? flags.host : undefined
+        const server = mcp.serveHttp(kernel, { port, host })
+        const addr = server.address()
+        const shown = addr && typeof addr === 'object' ? `${addr.address}:${addr.port}` : String(port)
+        console.log(`KernelCMS MCP (HTTP) listening on ${shown}/mcp`)
+        console.log(`  Agents authenticate per-request with a bearer token (Authorization: Bearer <token>).`)
+        const shutdown = async () => {
+          await new Promise<void>((res) => server.close(() => res()))
+          await kernel.destroy()
+          process.exit(0)
+        }
+        process.on('SIGINT', shutdown)
+        process.on('SIGTERM', shutdown)
+        break
+      }
+
+      // stdio (default): Claude Desktop / Cursor spawn this process and speak
+      // JSON-RPC over stdout. stdout is the TRANSPORT — nothing human-readable may
+      // touch it, so load the kernel at 'error' level (info/debug go to stdout) and
+      // route every diagnostic here to stderr.
+      const kernel = await initKernel(config, { logLevel: 'error' })
+
+      // Pick the single agent principal for this stdio session: explicit --agent,
+      // else the sole configured agent. Ambiguous/empty is a hard, explained error.
+      const agents = kernel.config.agents
+      const agentId = typeof flags.agent === 'string' ? flags.agent : undefined
+      const agent = agentId ? agents.find((a) => a.id === agentId) : agents.length === 1 ? agents[0] : undefined
+      if (!agent) {
+        await kernel.destroy()
+        if (agentId) {
+          console.error(`No agent with id "${agentId}" found in kernel.config.agents.`)
+        } else if (agents.length === 0) {
+          console.error(
+            'No agents configured. Add an `agents: [...]` entry to your kernel.config (id + token) ' +
+              'so the MCP server has a principal to act as.',
+          )
+        } else {
+          console.error(
+            `Multiple agents configured (${agents.map((a) => a.id).join(', ')}). ` +
+              'Pick one with --agent <id>.',
+          )
+        }
+        process.exitCode = 1
+        break
+      }
+
+      const principal = mcp.resolveAgentPrincipal(kernel, agent.token)
+      // resolveAgentPrincipal can't realistically miss here (we read the token from
+      // the same config), but never connect a transport without a principal.
+      if (!principal) {
+        await kernel.destroy()
+        console.error(`Could not resolve a principal for agent "${agent.id}".`)
+        process.exitCode = 1
+        break
+      }
+
+      // Diagnostics to stderr only — stdout stays pure protocol.
+      console.error(`KernelCMS MCP (stdio) serving as agent "${agent.id}".`)
+      const server = await mcp.serveStdio(kernel, {
+        principal: {
+          id: principal.id,
+          ...(principal.roles ? { roles: principal.roles } : {}),
+          ...(principal.fieldScope ? { fieldScope: principal.fieldScope } : {}),
+        },
+      })
       const shutdown = async () => {
         await server.close()
         await kernel.destroy()
