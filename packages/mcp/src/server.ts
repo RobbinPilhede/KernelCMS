@@ -9,10 +9,16 @@
  * every call exactly as it does for a human — same rules, plus the agent brakes
  * (fieldScope allow/deny, draft-only). Do not add access checks here.
  */
+import { timingSafeEqual } from 'node:crypto'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { EndpointConfig, FieldScope, Kernel, RequestContext, Where } from '@kernel/core'
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js'
+import type { AdminCollection, AdminSchema, AuthUser, EndpointConfig, FieldScope, Kernel, RequestContext, Where } from '@kernel/core'
 import { describeConfig, invokeEndpoint, isKernelError } from '@kernel/core'
 import { generateTools, type ToolDef } from './generate'
 
@@ -29,6 +35,43 @@ export interface McpServerOptions {
   /** Server identity reported to the client during initialize. */
   name?: string
   version?: string
+}
+
+/** Constant-time string compare that never short-circuits on content; length
+ *  mismatch is the only early-out (and reveals nothing about the secret bytes). */
+function timingEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
+}
+
+/**
+ * Resolve a presented bearer token to a configured agent principal, or null.
+ * Mirrors `@kernel/server`'s `matchAgent`/`resolveAuth` agent branch EXACTLY:
+ * every candidate is compared with a constant-time check and the loop never
+ * short-circuits on the first match, so a timing side-channel can't reveal which
+ * agent (if any) a token belongs to. The returned principal is always an agent
+ * (`principalType:'agent'`) and carries no `overrideAccess` — the core access
+ * pipeline (plus the agent draft-only brake + fieldScope) is the only gate.
+ */
+export function resolveAgentPrincipal(kernel: Kernel, token: string): AuthUser | null {
+  if (token.length === 0) return null
+  let matched: AgentPrincipal | null = null
+  for (const agent of kernel.config.agents) {
+    // No early-out on the first hit: keep scanning so total work (and thus timing)
+    // doesn't depend on WHICH agent matched.
+    if (timingEqual(token, agent.token) && !matched) {
+      matched = { id: agent.id, roles: agent.roles ?? [], ...(agent.fieldScope ? { fieldScope: agent.fieldScope } : {}) }
+    }
+  }
+  if (!matched) return null
+  return {
+    id: matched.id,
+    principalType: 'agent',
+    roles: matched.roles ?? [],
+    ...(matched.fieldScope ? { fieldScope: matched.fieldScope } : {}),
+  }
 }
 
 /** Args arrive as untyped JSON from the client; narrow at the boundary. */
@@ -76,14 +119,50 @@ function errorResult(err: unknown): CallToolResult {
   return { content: [{ type: 'text', text: message }], isError: true }
 }
 
+// Resource URIs. `kernel://schema` is the whole model; `kernel://collections/<slug>`
+// is one collection's descriptor.
+const SCHEMA_URI = 'kernel://schema'
+const COLLECTION_PREFIX = 'kernel://collections/'
+
+function collectionUri(slug: string): string {
+  return `${COLLECTION_PREFIX}${encodeURIComponent(slug)}`
+}
+
+/** Extract the slug from a `kernel://collections/<slug>` URI, or null if it isn't one. */
+function collectionSlugFromUri(uri: string): string | null {
+  if (!uri.startsWith(COLLECTION_PREFIX)) return null
+  const raw = uri.slice(COLLECTION_PREFIX.length)
+  if (!raw) return null
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return null
+  }
+}
+
+/** Wrap a JSON-serializable descriptor as a single text resource content block. */
+function jsonResource(uri: string, payload: AdminSchema | AdminCollection): ReadResourceResult {
+  return {
+    contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(payload, null, 2) }],
+  }
+}
+
 /**
  * Create an MCP server bound to `kernel`, acting as `options.principal`.
  * The returned `Server` is transport-agnostic — wire it to stdio (see `stdio.ts`)
  * or any other transport the SDK provides.
  */
 export function createMcpServer(kernel: Kernel, options: McpServerOptions): Server {
-  const tools = generateTools(describeConfig(kernel.config), kernel.config.endpoints ?? [])
+  // describeConfig already strips secrets/hidden columns and auth-collection
+  // internals, so the descriptor is safe to expose verbatim as a resource.
+  const schema = describeConfig(kernel.config)
+  const tools = generateTools(schema, kernel.config.endpoints ?? [])
   const byName = new Map<string, ToolDef>(tools.map((t) => [t.name, t]))
+
+  // Resources let an agent DISCOVER the content model before calling tools. The
+  // per-collection descriptors exclude hidden + auth collections, matching the
+  // tool surface (no user/credential schema is ever introspectable).
+  const visibleCollections = schema.collections.filter((c) => !c.hidden && !c.auth)
 
   // Build the request context once per call. principalType is hard-pinned to
   // 'agent'; overrideAccess is deliberately omitted (falsy) so access is enforced.
@@ -98,8 +177,40 @@ export function createMcpServer(kernel: Kernel, options: McpServerOptions): Serv
 
   const server = new Server(
     { name: options.name ?? 'kernelcms', version: options.version ?? '0.0.0' },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   )
+
+  // ── Resources (introspection) ─────────────────────────────────────────────
+  // Read-only and unauthenticated at this layer: they expose only the already
+  // secret-stripped descriptor, nothing that depends on the caller's identity.
+  server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    resources: [
+      {
+        uri: SCHEMA_URI,
+        name: 'Content model',
+        description: 'The full KernelCMS content-model descriptor (collections, globals, fields).',
+        mimeType: 'application/json',
+      },
+      ...visibleCollections.map((c) => ({
+        uri: collectionUri(c.slug),
+        name: `${c.labels.singular} schema`,
+        description: `Descriptor for the "${c.slug}" collection.`,
+        mimeType: 'application/json',
+      })),
+    ],
+  }))
+
+  server.setRequestHandler(ReadResourceRequestSchema, (request): ReadResourceResult => {
+    const { uri } = request.params
+    if (uri === SCHEMA_URI) return jsonResource(uri, schema)
+    const slug = collectionSlugFromUri(uri)
+    if (slug !== null) {
+      const coll = visibleCollections.find((c) => c.slug === slug)
+      if (coll) return jsonResource(uri, coll)
+    }
+    // Unknown/hidden/auth collection: refuse rather than disclose its existence.
+    throw new Error(`Unknown resource: ${uri}`)
+  })
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({
     tools: tools.map((t) => ({

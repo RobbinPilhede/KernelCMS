@@ -4,6 +4,8 @@
 
 export { generateTools } from './generate'
 export type { ToolDef, ToolOp, ToolAnnotations } from './generate'
-export { createMcpServer } from './server'
+export { createMcpServer, resolveAgentPrincipal } from './server'
 export type { AgentPrincipal, McpServerOptions } from './server'
 export { serveStdio } from './stdio'
+export { serveHttp } from './http'
+export type { ServeHttpOptions } from './http'
