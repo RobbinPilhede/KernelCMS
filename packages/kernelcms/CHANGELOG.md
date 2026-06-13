@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.18.0
+
+### Minor Changes
+
+- **The agentic CMS: autonomous content workflows with hard guardrails.** The defining shift of 2026 is AI agents acting as members of the content team. KernelCMS makes that _safe_ — you define a pipeline, an agent runs it autonomously, and nothing it produces can go live unchecked.
+  - **Declarative pipelines.** `workflows: [{ slug, agent, trigger: { on: 'create'|'update'|'manual', collection }, steps }]`. Each step is a function that operates through `ctx.kernel` — a Local-API surface **pinned to the workflow's scoped agent principal**. A step physically cannot publish (draft-only brake), cannot write fields outside the agent's `fieldScope`, and cannot pass `overrideAccess` or a forged principal. The autonomy is real; the blast radius is zero.
+  - **Quality + human gates are the only way content advances.** `await ctx.evalGate({ collection, id })` runs your content-CI evals and fails the run on a blocking violation. `await ctx.requestReview({ collection, id })` submits the draft to the review inbox and pauses the run as `awaiting_review` — it goes live only when a human approves. An agent drafts; a human (or a passing eval) decides.
+  - **Durable + observable.** `create`/`update` triggers enqueue the run on the jobs queue (drained by `kernel jobs:run`), so a slow agent step never blocks the content write and a failed run is retryable. Every run is recorded in `_workflow_runs` with per-step status (`pending → running → completed | failed | awaiting_review`), queryable via `kernel.workflowRuns(...)` and the admin-gated `GET /api/_admin/workflow-runs` / `POST /api/_admin/workflows/:slug/run`. Run logs carry error messages only — never stacks or secrets. Self-triggering loops are guarded.
+
+  Built on the existing agent principals, review inbox, evals, and jobs system. Red-teamed with deliberately hostile steps — **Risk: LOW, zero guardrail breaches** (a step cannot publish, escape scope, or override) — verified by a live harness and a Playwright end-to-end test driving the real workflow routes. Opt-in via `workflows`; fully backward-compatible.
+
 ## 0.17.0
 
 ### Minor Changes
