@@ -772,6 +772,15 @@ export interface KernelConfig {
    *  every collection that has a public read rule and a title field (never auth/upload
    *  /system collections). */
   discoverability?: DiscoverabilityConfig
+  /** schema.org structured data (JSON-LD) generated from the typed content model. When
+   *  set, `kernel.jsonLd`/`jsonLdScript` and the public `GET /api/:collection/:id/jsonld`
+   *  route emit a document as a schema.org JSON-LD object so search engines and AI answer
+   *  engines parse it with explicit semantics. Reads run through the real access pipeline
+   *  (typically as an ANONYMOUS principal for public embedding), so drafts and access-
+   *  restricted documents (and read-denied fields) can never appear. Each configured
+   *  collection names a schema.org `type`; field → property mapping is either explicit or
+   *  derived from sensible smart defaults. Omit to disable. */
+  structuredData?: StructuredDataConfig
 }
 
 /** Per-collection discoverability options. */
@@ -860,6 +869,68 @@ export interface GeoDocumentOptions {
   id: string
 }
 
+// ---------------------------------------------------------------------------
+// Structured data — schema.org JSON-LD generated from the typed content model
+//
+// A sibling of the discoverability layer: it emits a document as a schema.org
+// JSON-LD object (and an embeddable `<script type="application/ld+json">`) so search
+// engines AND AI answer engines parse the content with explicit semantics. Reads go
+// through the SAME access-checked path as a normal read — a draft/private doc, or a
+// read-denied field, is NEVER emitted. When embedded, doc-derived VALUES are HTML-
+// escaped so content can never break out of the `<script>` tag (XSS guard).
+// ---------------------------------------------------------------------------
+
+/** Per-collection structured-data options. */
+export interface StructuredDataCollectionConfig {
+  slug: string
+  /** A schema.org type, e.g. `'Article'`, `'Product'`, `'Person'`, `'BlogPosting'`,
+   *  `'Organization'`. Required, non-empty. Trusted config (never doc-derived). */
+  type: string
+  /** Explicit schema.org property → field-name mapping. When set, it OVERRIDES the smart
+   *  defaults: each entry maps a schema.org property (e.g. `headline`) to the document
+   *  field whose value supplies it. Prototype-pollution keys are rejected at sanitize. */
+  mapping?: Record<string, string>
+  /** URL template for a document, e.g. `/blog/:slug`. `:field` tokens are replaced with
+   *  the document's (safely-encoded) field values; `:id` resolves to the document id.
+   *  Defaults to `/<slug>/:id`. Joined onto `baseUrl` to form the canonical `@id`. */
+  urlPattern?: string
+}
+
+/** schema.org JSON-LD config. See {@link KernelConfig.structuredData}. */
+export interface StructuredDataConfig {
+  /** Absolute origin prepended to every document `@id` URL (e.g. `https://example.com`).
+   *  Defaults to `config.serverURL`. Trusted config — never derived from documents. */
+  baseUrl?: string
+  /** Collections to emit JSON-LD for, each with its schema.org `type`. A collection not
+   *  listed here yields no JSON-LD (opt-in: a schema.org type is required per collection). */
+  collections?: StructuredDataCollectionConfig[]
+}
+
+/** Resolved structured-data settings (after sanitize). `enabled` is false when the
+ *  feature was not configured; the ops then return null / `''` cleanly. */
+export interface SanitizedStructuredData {
+  enabled: boolean
+  baseUrl: string
+  collections: StructuredDataCollectionConfig[]
+}
+
+export interface JsonLdOptions {
+  collection: string
+  id: string
+  req?: Partial<RequestContext>
+  /** Trusted server call: read with access checks bypassed. Never set from an untrusted
+   *  boundary — the REST route always passes the request principal (typically anonymous
+   *  for public SEO embedding). */
+  overrideAccess?: boolean
+}
+
+export interface JsonLdScriptOptions {
+  collection: string
+  id: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
 export interface SanitizedLocalization {
   locales: string[]
   defaultLocale: string
@@ -946,6 +1017,9 @@ export interface SanitizedConfig {
   evals: EvalRule[]
   /** Resolved AI-discoverability / GEO settings. `enabled:false` when unconfigured. */
   discoverability: SanitizedDiscoverability
+  /** Resolved schema.org structured-data (JSON-LD) settings. `enabled:false` when
+   *  unconfigured (the ops then return null / `''`). */
+  structuredData: SanitizedStructuredData
 }
 
 // ---------------------------------------------------------------------------
@@ -1887,6 +1961,17 @@ export interface Kernel {
    *  and a citation block (author, last-updated, canonical URL, signature-verified status).
    *  Returns null when the document is not found, not published, or not publicly readable. */
   geoDocument(opts: GeoDocumentOptions): Promise<string | null>
+  /** One document as a schema.org JSON-LD object (`{ '@context':'https://schema.org',
+   *  '@type':<type>, '@id':<canonical url>, …mapped properties }`). Read through the
+   *  access-checked path: a draft/private doc or a read-denied field is NEVER emitted —
+   *  returns null when the document is not found / not readable. richText renders to
+   *  plain text; dates to ISO strings; URLs are built injection-safely. Requires
+   *  `config.structuredData` with the collection configured (else null). */
+  jsonLd(opts: JsonLdOptions): Promise<Record<string, unknown> | null>
+  /** The embeddable `<script type="application/ld+json">…</script>` string for a document,
+   *  with the JSON HTML-escaped (`<`/`>`/`&`) so document content can never break out of
+   *  the script tag (XSS guard). Returns `''` when there is no readable document. */
+  jsonLdScript(opts: JsonLdScriptOptions): Promise<string>
   /** Apply the schema to the database (create tables / add columns / build indexes),
    *  recording a `_migrations` journal row when anything is applied. Pass
    *  `{ dryRun: true }` to compute the exact SQL it WOULD run and return the report

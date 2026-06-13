@@ -52,6 +52,11 @@ export default defineConfig({
   ],
   // Real-time: a durable change feed (CDC) + live SSE stream for reactive UIs/agents.
   realtime: { enabled: true },
+  // Structured data: schema.org JSON-LD generated from the typed model for SEO + AI.
+  structuredData: {
+    baseUrl: 'http://localhost:3100',
+    collections: [{ slug: 'articles', type: 'Article', urlPattern: '/articles/:id' }],
+  },
   // RAG-native: full-text adapter + a pluggable embedder power /semantic + /hybrid.
   search: memorySearch(),
   embeddings: { embed: demoEmbed, dimensions: DIM },

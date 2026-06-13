@@ -68,6 +68,15 @@ Perplexity, Google AI) can ingest and cite your content. Every byte is generated
 anonymous principal over the same access-checked read path: only published, publicly
 readable content ever ships.
 
+And it emits **structured data**. Opt into `structuredData` and KernelCMS generates
+schema.org **JSON-LD** for any collection straight from your typed model — so search
+engines get rich results and AI answer engines get machine-understandable facts, without
+you hand-writing `<script type="application/ld+json">` by hand. Smart defaults map your
+fields to schema.org properties (override per-collection), and every read goes through the
+same access-checked pipeline: a draft, private, or read-denied document or field is never
+emitted, and the embeddable `<script>` is HTML-escaped so content can't break out of the
+tag. With semantic search and llms.txt/GEO it completes the discoverability trio.
+
 It is also the **agentic CMS**. Define `workflows` and an agent can run an autonomous
 content pipeline — ideation → draft → quality gate → human review — entirely inside the
 engine, with hard guardrails. Every step runs as a scoped agent principal: it physically
@@ -493,6 +502,56 @@ and read-denied fields never appear. Output is size-bounded by `maxDocsPerCollec
 (default 1000) and `maxDocsTotal` (default 5000). See the
 [AI discoverability guide](docs/ai-discoverability.md). (`toMarkdown(richTextDoc)` is
 also exported from `kernelcms/richtext`.)
+
+### Structured data (schema.org JSON-LD)
+
+- **JSON-LD from your model.** Opt into `structuredData` and KernelCMS generates
+  schema.org [JSON-LD](https://json-ld.org) for a collection's documents — so search
+  engines render rich results and AI answer engines get machine-understandable facts,
+  generated automatically from your typed fields. Off until you add the block; you pick the
+  schema.org `type` (`'Article'`, `'Product'`, `'Person'`, `'BlogPosting'`, …) per
+  collection.
+- **Smart defaults, explicit override.** With no `mapping`, the title / `useAsTitle` field
+  becomes `name` + `headline`, the first rich-text/textarea becomes `articleBody` (plus a
+  truncated `description`), a publish/posted/created date becomes `datePublished` (else
+  `createdAt`) and updated/modified becomes `dateModified` (else `updatedAt`), `email` → `email`,
+  an image/upload → `image` (URL), and an author-ish relationship → `author`
+  (`{ '@type': 'Person', name }`). A `mapping: { schemaProperty: fieldName }` overrides the lot.
+
+```ts
+export default defineConfig({
+  structuredData: {
+    baseUrl: 'https://acme.com',
+    collections: [
+      { slug: 'posts', type: 'BlogPosting', urlPattern: '/blog/:slug' }, // smart defaults
+      { slug: 'authors', type: 'Person', mapping: { name: 'full_name', email: 'contact' } },
+    ],
+  },
+  collections: [/* … */],
+})
+
+// Local API — the JSON-LD object, or null:
+const ld = await kernel.jsonLd({ collection: 'posts', id, req })
+// or the ready-to-embed, HTML-escaped <script> string ('' when no doc):
+const script = await kernel.jsonLdScript({ collection: 'posts', id, req })
+```
+
+```html
+<!-- drop the escaped <script> into your page head -->
+<head>{{ script }}</head>
+```
+
+```bash
+curl http://localhost:3000/api/posts/<id>/jsonld   # application/ld+json (404 when null/disabled)
+```
+
+**The guarantees:** reads go through the same access-checked pipeline as every live read —
+a draft, private, or read-denied document or field is **never** emitted (a public/anonymous
+caller sees only published, publicly readable content). `jsonLdScript` HTML-escapes
+`<`/`>`/`&` so content can't break out of the `<script>` tag (XSS-safe), and the `@id` /
+`image` URLs are injection-safe (no `javascript:` / `data:` / path traversal). The
+standalone op is the surface — it is not auto-injected into the GEO output. See the
+[structured data guide](docs/structured-data.md).
 
 ### Agentic workflows (autonomous, governed AI pipelines)
 

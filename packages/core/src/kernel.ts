@@ -18,6 +18,7 @@ import { sanitizeConfig } from './config'
 import { compileSchema, MIGRATIONS_TABLE } from './schema'
 import { createOperations } from './operations'
 import { createDiscoverability } from './discoverability'
+import { createStructuredData } from './structured-data'
 import { createCachedDb } from './cache'
 import { CACHE_SLUG, JOBS_SLUG } from './config'
 import { BadRequestError, isKernelError } from './errors'
@@ -281,6 +282,13 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     verifyContentCredential: ops.verifyContentCredential,
   })
 
+  // schema.org structured data (JSON-LD). Reads each document through the same access-
+  // checked path with the CALLER's principal (anonymous for public embedding, never
+  // overrideAccess from an untrusted boundary), so drafts/private docs + read-denied
+  // fields can never appear. Built unconditionally; the ops return null/'' when
+  // `config.structuredData` is not enabled.
+  const structuredData = createStructuredData(sanitized, { find: ops.find })
+
   // RBAC boot: reconcile the runtime store with the `_roles` table. On first boot
   // (table empty) the config-seeded roles are written so they're persisted/editable;
   // on later boots the persisted rows are merged into the store so runtime edits made
@@ -496,6 +504,8 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     llmsFullTxt: discoverability.llmsFullTxt,
     contentChunks: discoverability.contentChunks,
     geoDocument: discoverability.geoDocument,
+    jsonLd: structuredData.jsonLd,
+    jsonLdScript: structuredData.jsonLdScript,
     async migrate(opts?: MigrateRunOptions): Promise<MigrationReport> {
       const dryRun = opts?.dryRun === true
       const report = await sanitized.db.migrate(schema, { dryRun })

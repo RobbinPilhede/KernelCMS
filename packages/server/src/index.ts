@@ -1263,6 +1263,17 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       if (markdown == null) throw new NotFoundError()
       return textResponse(markdown, 'text/markdown; charset=utf-8')
     }
+    // GET /:collection/:id/jsonld -> one document as a schema.org JSON-LD object, served as
+    // `application/ld+json`. Access-checked with the REQUEST principal (anonymous for public
+    // SEO embedding), so a draft/private/read-denied doc yields null -> 404 (never leaked).
+    if (segments[2] === 'jsonld' && method === 'GET') {
+      if (!kernel.config.structuredData.enabled) {
+        return json({ error: { code: 'NOT_FOUND', message: 'Structured data is not enabled.' } }, 404)
+      }
+      const obj = await kernel.jsonLd({ collection, id, ...base })
+      if (obj == null) throw new NotFoundError()
+      return textResponse(JSON.stringify(obj), 'application/ld+json; charset=utf-8')
+    }
     return methodNotAllowed()
   }
 

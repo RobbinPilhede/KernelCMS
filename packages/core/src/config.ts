@@ -10,6 +10,8 @@ import type {
   KernelConfig,
   SanitizedConfig,
   SanitizedDiscoverability,
+  SanitizedStructuredData,
+  StructuredDataCollectionConfig,
   SanitizedLocalization,
   SanitizedRealtime,
   SanitizedSigningConfig,
@@ -542,6 +544,65 @@ function sanitizeDiscoverability(
   }
 }
 
+/** Mapping keys that would be prototype-pollution vectors if used as object property
+ *  names when building the JSON-LD output. A configured `mapping` is trusted config, but
+ *  we still reject these fail-closed so a copy-pasted hostile config can't poison output. */
+const FORBIDDEN_JSONLD_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/**
+ * Resolve the schema.org structured-data (JSON-LD) setting. OFF by default. When
+ * configured, each listed collection must reference a real collection and carry a
+ * non-empty `type` (a schema.org type, trusted config). An explicit `mapping`'s keys
+ * (schema.org property names, used as output object keys) are validated against
+ * prototype-pollution vectors. `baseUrl` falls back to `serverURL` (trailing slash
+ * stripped) so canonical `@id` URLs join cleanly.
+ */
+function sanitizeStructuredData(
+  config: KernelConfig,
+  collectionsBySlug: Record<string, CollectionConfig>,
+): SanitizedStructuredData {
+  const sd = config.structuredData
+  const baseUrl = (sd?.baseUrl ?? config.serverURL ?? 'http://localhost:3000').replace(/\/+$/, '')
+  if (!sd) {
+    return { enabled: false, baseUrl, collections: [] }
+  }
+
+  const seen = new Set<string>()
+  const resolved: StructuredDataCollectionConfig[] = []
+  for (const entry of sd.collections ?? []) {
+    assert(
+      typeof entry.slug === 'string' && Boolean(collectionsBySlug[entry.slug]),
+      `structuredData references unknown collection "${entry.slug}"`,
+    )
+    assert(
+      typeof entry.type === 'string' && entry.type.trim().length > 0,
+      `structuredData collection "${entry.slug}" requires a non-empty schema.org \`type\``,
+    )
+    assert(!seen.has(entry.slug), `structuredData lists collection "${entry.slug}" more than once`)
+    seen.add(entry.slug)
+    let mapping: Record<string, string> | undefined
+    if (entry.mapping) {
+      const clean: Record<string, string> = {}
+      for (const [property, field] of Object.entries(entry.mapping)) {
+        assert(
+          !FORBIDDEN_JSONLD_KEYS.has(property),
+          `structuredData mapping for "${entry.slug}" uses an illegal property key "${property}"`,
+        )
+        if (typeof field === 'string' && field.length > 0) clean[property] = field
+      }
+      mapping = clean
+    }
+    resolved.push({
+      slug: entry.slug,
+      type: entry.type.trim(),
+      ...(mapping ? { mapping } : {}),
+      ...(entry.urlPattern ? { urlPattern: entry.urlPattern } : {}),
+    })
+  }
+
+  return { enabled: true, baseUrl, collections: resolved }
+}
+
 export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   assert(config.db, 'a database adapter is required (config.db)')
   assert(Array.isArray(config.collections), 'config.collections must be an array')
@@ -774,6 +835,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     evals: sanitizeEvals(config.evals),
     workflows,
     discoverability: sanitizeDiscoverability(config, collections, collectionsBySlug),
+    structuredData: sanitizeStructuredData(config, collectionsBySlug),
     ...(config.search ? { search: config.search } : {}),
     ...(config.embeddings ? { embeddings: config.embeddings } : {}),
     ...(vector ? { vector } : {}),
