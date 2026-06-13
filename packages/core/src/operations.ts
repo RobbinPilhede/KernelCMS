@@ -420,70 +420,197 @@ export function createOperations(ctx: OperationCtx) {
     return current
   }
 
-  async function populate(collection: CollectionConfig, doc: Doc, depth: number, req: RequestContext): Promise<Doc> {
-    if (depth <= 0) return doc
-    for (const rel of relationshipFields(collection.fields)) {
-      const value = doc[rel.name]
-      if (rel.polymorphic) {
-        // Values are `{ relationTo, value }`; populate `value` from its own collection.
-        const resolveRef = async (ref: unknown): Promise<unknown> => {
-          if (!ref || typeof ref !== 'object') return ref
-          const { relationTo, value: id } = ref as { relationTo?: string; value?: unknown }
-          if (!relationTo || id == null || !config.collectionsBySlug[relationTo]) return ref
-          const related = await safeFindByID(relationTo, String(id), depth - 1, req)
-          return { relationTo, value: related ?? id }
-        }
-        if (rel.hasMany && Array.isArray(value)) {
-          doc[rel.name] = await Promise.all(value.map(resolveRef))
-        } else if (!rel.hasMany && value != null) {
-          doc[rel.name] = await resolveRef(value)
-        }
-        continue
-      }
-      const relTo = rel.relationTo as string
-      if (!config.collectionsBySlug[relTo]) continue
-      if (rel.hasMany && Array.isArray(value)) {
-        const out: unknown[] = []
-        for (const id of value) {
-          const related = await safeFindByID(relTo, String(id), depth - 1, req)
-          out.push(related ?? id)
-        }
-        doc[rel.name] = out
-      } else if (!rel.hasMany && value != null) {
-        const related = await safeFindByID(relTo, String(value), depth - 1, req)
-        doc[rel.name] = related ?? value
-      }
+  /**
+   * Finish a raw storage row into a public read document: the per-doc pipeline
+   * shared by `findByID` and the batched relationship loader. Returns null when the
+   * row is filtered (draft hidden, read denied, or row-scope mismatch) — exactly the
+   * cases `findByID` turns into null/Forbidden. Populate of THIS doc's own relations
+   * is the caller's responsibility (so it can be batched across a level), hence the
+   * `depth`-aware recursion is driven externally; here we only run the leaf pipeline
+   * (afterRead hook + field-access + computed). Access parity with the old per-id
+   * `findByID` populate path is preserved bit-for-bit: same draft check, same
+   * `evalAccess(read,{req,id})`, same scope `matchesWhere`. Only the DB row fetch is
+   * hoisted out and batched.
+   */
+  async function finishReadDoc(
+    collection: CollectionConfig,
+    row: Row,
+    req: RequestContext,
+    override: boolean,
+    draft: boolean,
+  ): Promise<Doc | null> {
+    // Published-only view unless drafts are explicitly requested.
+    if (draftsOn(collection) && !draft && row._status !== 'published') return null
+    if (!override) {
+      const access = await evalAccess(collection.access?.read, { req, id: String(row.id) })
+      if (!isAllowed(access)) return null
+      const scope = asWhere(access)
+      if (scope && !matchesWhere(row, scope)) return null
     }
-    // Reverse relationships: query the related collection for back-references.
-    for (const join of joinFields(collection.fields)) {
-      if (!config.collectionsBySlug[join.collection]) {
-        doc[join.name] = []
-        continue
-      }
-      try {
-        const related = await find({
-          collection: join.collection,
-          where: { [join.on]: { equals: doc.id } },
-          limit: join.limit,
-          depth: depth - 1,
-          req,
-        })
-        doc[join.name] = related.docs
-      } catch (err) {
-        if (isKernelError(err)) doc[join.name] = []
-        else throw err
-      }
-    }
+    let doc = rowToDoc(collection, row, req)
+    doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     return doc
   }
 
-  async function safeFindByID(slug: string, id: string, depth: number, req: RequestContext): Promise<Doc | null> {
-    try {
-      return await findByID({ collection: slug, id, depth, req })
-    } catch (err) {
-      if (isKernelError(err)) return null
-      throw err
+  /** Strip read-restricted fields + run computed fields on a finished doc (the tail of
+   *  the read pipeline). Mirrors the strip→compute→strip order used everywhere else. */
+  async function applyReadTail(collection: CollectionConfig, doc: Doc, req: RequestContext, override: boolean): Promise<void> {
+    if (!override) await applyReadFieldAccess(collection.fields, doc, req)
+    await applyComputed(collection.fields, doc, req)
+    if (!override) await applyReadFieldAccess(collection.fields, doc, req)
+  }
+
+  /**
+   * Batched relationship population. Resolves every relationship/upload + reverse-join
+   * field across ALL `docs` at this level, recursing per depth level — but issuing ONE
+   * access-checked read per (related collection) per level instead of one per id per doc.
+   *
+   * This is the N+1 fix: a 20-row page with a hasMany relation used to fan out into
+   * 20×N `findByID` calls; now it's O(collections × depth) batched `db.find`s. Output
+   * shape, order, polymorphic `{relationTo,value}`, dangling-id fallback (`related ?? id`),
+   * and per-doc ACCESS decisions are identical to the old per-id path — each fetched row
+   * still goes through `finishReadDoc` (same draft/access/scope checks with the row's id).
+   */
+  async function populateMany(
+    collection: CollectionConfig,
+    docs: Doc[],
+    depth: number,
+    req: RequestContext,
+  ): Promise<void> {
+    if (depth <= 0 || docs.length === 0) return
+
+    const rels = relationshipFields(collection.fields)
+    const joins = joinFields(collection.fields)
+    if (rels.length === 0 && joins.length === 0) return
+
+    // 1) Collect the set of ids needed per related collection across every doc + field.
+    const idsByCollection = new Map<string, Set<string>>()
+    const need = (slug: string, id: unknown): void => {
+      if (id == null || !config.collectionsBySlug[slug]) return
+      let set = idsByCollection.get(slug)
+      if (!set) idsByCollection.set(slug, (set = new Set()))
+      set.add(String(id))
     }
+    for (const doc of docs) {
+      for (const rel of rels) {
+        const value = doc[rel.name]
+        if (rel.polymorphic) {
+          const refs = rel.hasMany ? (Array.isArray(value) ? value : []) : value != null ? [value] : []
+          for (const ref of refs) {
+            if (ref && typeof ref === 'object') {
+              const { relationTo, value: id } = ref as { relationTo?: string; value?: unknown }
+              if (relationTo) need(relationTo, id)
+            }
+          }
+        } else {
+          const relTo = rel.relationTo as string
+          const ids = rel.hasMany ? (Array.isArray(value) ? value : []) : value != null ? [value] : []
+          for (const id of ids) need(relTo, id)
+        }
+      }
+    }
+
+    // 2) One batched, access-checked read per related collection; build id→doc maps.
+    //    Recurse INTO the related docs (depth-1) as another batched level — so depth>1
+    //    is still O(collections×depth), not exponential. Dangling/denied ids are simply
+    //    absent from the map, yielding the `related ?? id` fallback at stitch time.
+    const resolved = new Map<string, Map<string, Doc>>()
+    for (const [slug, idSet] of idsByCollection) {
+      const related = collectionOrThrow(slug)
+      const ids = [...idSet]
+      const rows = await fetchRowsByIds(related, ids)
+      const byId = new Map<string, Doc>()
+      const finished: Doc[] = []
+      for (const r of rows) {
+        const finishedDoc = await finishReadDoc(related, r, req, false, false)
+        if (finishedDoc) {
+          byId.set(String(r.id), finishedDoc)
+          finished.push(finishedDoc)
+        }
+      }
+      // Recurse one level deeper across all related docs of this collection at once.
+      await populateMany(related, finished, depth - 1, req)
+      for (const d of finished) await applyReadTail(related, d, req, false)
+      resolved.set(slug, byId)
+    }
+
+    // 3) Stitch resolved docs back into each parent, preserving shape + order.
+    for (const doc of docs) {
+      for (const rel of rels) {
+        const value = doc[rel.name]
+        if (rel.polymorphic) {
+          const resolveRef = (ref: unknown): unknown => {
+            if (!ref || typeof ref !== 'object') return ref
+            const { relationTo, value: id } = ref as { relationTo?: string; value?: unknown }
+            if (!relationTo || id == null || !config.collectionsBySlug[relationTo]) return ref
+            const related = resolved.get(relationTo)?.get(String(id))
+            return { relationTo, value: related ?? id }
+          }
+          if (rel.hasMany && Array.isArray(value)) doc[rel.name] = value.map(resolveRef)
+          else if (!rel.hasMany && value != null) doc[rel.name] = resolveRef(value)
+        } else {
+          const relTo = rel.relationTo as string
+          if (!config.collectionsBySlug[relTo]) continue
+          const byId = resolved.get(relTo)
+          if (rel.hasMany && Array.isArray(value)) {
+            doc[rel.name] = value.map((id) => byId?.get(String(id)) ?? id)
+          } else if (!rel.hasMany && value != null) {
+            doc[rel.name] = byId?.get(String(value)) ?? value
+          }
+        }
+      }
+    }
+
+    // Reverse relationships (joins) remain per-parent: each is a distinct `on = doc.id`
+    // query and they're rare relative to forward relations. Routed through `find` so the
+    // join target's own read access + scope still apply (a caller can't read back-refs
+    // they couldn't read directly).
+    for (const doc of docs) {
+      for (const join of joins) {
+        if (!config.collectionsBySlug[join.collection]) {
+          doc[join.name] = []
+          continue
+        }
+        try {
+          const related = await find({
+            collection: join.collection,
+            where: { [join.on]: { equals: doc.id } },
+            limit: join.limit,
+            depth: depth - 1,
+            req,
+          })
+          doc[join.name] = related.docs
+        } catch (err) {
+          if (isKernelError(err)) doc[join.name] = []
+          else throw err
+        }
+      }
+    }
+  }
+
+  /** Single-doc populate — thin wrapper over the batched path. */
+  async function populate(collection: CollectionConfig, doc: Doc, depth: number, req: RequestContext): Promise<Doc> {
+    await populateMany(collection, [doc], depth, req)
+    return doc
+  }
+
+  /** Fetch many rows by id in as few queries as possible (chunked to the adapter cap).
+   *  The adapter applies `id IN (...)`; access is enforced afterwards per row by
+   *  `finishReadDoc`, so this raw fetch never widens what a caller can see. */
+  async function fetchRowsByIds(collection: CollectionConfig, ids: string[]): Promise<Row[]> {
+    if (ids.length === 0) return []
+    const out: Row[] = []
+    for (let i = 0; i < ids.length; i += MAX_LIMIT) {
+      const chunk = ids.slice(i, i + MAX_LIMIT)
+      const res = await db.find({
+        collection: collection.slug,
+        where: { id: { in: chunk } },
+        limit: MAX_LIMIT,
+        page: 1,
+      })
+      out.push(...res.docs)
+    }
+    return out
   }
 
   // -------------------------------------------------------------------------
@@ -837,19 +964,18 @@ export function createOperations(ctx: OperationCtx) {
     const page = Math.max(opts.page ?? 1, 1)
 
     const result = await db.find({ collection: collection.slug, where, sort, limit, page })
-    const docs: T[] = []
+    const docs: Doc[] = []
     for (const row of result.docs) {
       let doc = rowToDoc(collection, row, req)
       doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
-      doc = await populate(collection, doc, opts.depth ?? 0, req)
-      // Strip read-restricted fields before computing (so a virtual field can't
-      // leak a restricted sibling), then strip again for the virtual fields' rules.
-      if (!override) await applyReadFieldAccess(collection.fields, doc, req)
-      await applyComputed(collection.fields, doc, req)
-      if (!override) await applyReadFieldAccess(collection.fields, doc, req)
-      docs.push(doc as T)
+      docs.push(doc)
     }
-    return { ...result, docs }
+    // Populate the whole page in one batched pass (O(collections×depth) reads), then
+    // run the read tail per doc. Each doc is independent, so doing populate-all-then-
+    // tail-all is observably identical to the old per-doc populate→tail loop.
+    await populateMany(collection, docs, opts.depth ?? 0, req)
+    for (const doc of docs) await applyReadTail(collection, doc, req, override)
+    return { ...result, docs: docs as T[] }
   }
 
   async function findByID<T extends Doc = Doc>(opts: FindByIDOptions): Promise<T | null> {
@@ -875,9 +1001,7 @@ export function createOperations(ctx: OperationCtx) {
     // Strip read-restricted fields BEFORE computing, so a virtual field's `compute`
     // cannot observe (and thus cannot leak) a sibling the caller may not read; then
     // strip again to apply any access rule on the virtual fields themselves.
-    if (!override) await applyReadFieldAccess(collection.fields, doc, req)
-    await applyComputed(collection.fields, doc, req)
-    if (!override) await applyReadFieldAccess(collection.fields, doc, req)
+    await applyReadTail(collection, doc, req, override)
     return doc as T
   }
 
