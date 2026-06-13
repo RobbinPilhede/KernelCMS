@@ -1040,12 +1040,15 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   // /:collection
   if (segments.length === 1) {
     if (method === 'GET') {
+      // Time-machine list: `?asOf=<iso>` returns every document's as-of state at that instant.
+      const asOf = url.searchParams.get('asOf') ?? undefined
       const result = await kernel.find({
         collection,
         where: parseWhere(url.searchParams),
         sort: url.searchParams.get('sort') ?? undefined,
         limit: toNum(url.searchParams.get('limit')),
         page: toNum(url.searchParams.get('page')),
+        ...(asOf !== undefined ? { asOf } : {}),
         ...base,
       })
       return json(result)
@@ -1136,7 +1139,11 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   if (segments.length === 2) {
     const id = segments[1]!
     if (method === 'GET') {
-      const doc = await kernel.findByID({ collection, id, ...base })
+      // Time-machine: `?asOf=<iso>` reconstructs the document as it existed at that instant
+      // (latest snapshot <= asOf). Core access-checks + field-strips it exactly like a live
+      // read; an unversioned collection / bad timestamp -> a clean 400.
+      const asOf = url.searchParams.get('asOf') ?? undefined
+      const doc = await kernel.findByID({ collection, id, ...(asOf !== undefined ? { asOf } : {}), ...base })
       if (!doc) throw new NotFoundError()
       // Hand the client a concurrency token (ETag/Last-Modified = current updatedAt) so
       // it can send it back as If-Match on its next save and get a 409 instead of a
@@ -1182,6 +1189,27 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
           ...base,
         }),
       )
+    }
+    // Time-machine: the document's change timeline (oldest -> newest), access-checked.
+    if (segments[2] === 'history' && method === 'GET') {
+      return json(await kernel.history({ collection, id, ...base }))
+    }
+    // Time-machine: field-level diff between two points. `from`/`to` are each a versionId or
+    // an ISO timestamp. Both are required; only fields the caller may read appear.
+    if (segments[2] === 'diff' && method === 'GET') {
+      const from = url.searchParams.get('from')
+      const to = url.searchParams.get('to')
+      if (!from || !to) throw new BadRequestError('Both `from` and `to` query parameters are required.')
+      return json(await kernel.diffVersions({ collection, id, from, to, ...base }))
+    }
+    // Time-machine: restore the document to its state at `?asOf=<iso>` through the normal
+    // update path (access + agent brake + validation all apply; no override). Gated like update.
+    if (segments[2] === 'restore-as-of' && method === 'POST') {
+      const asOf = url.searchParams.get('asOf') ?? (await readBody(request))._asOf
+      if (typeof asOf !== 'string') throw new BadRequestError('`asOf` is required (query param or body `_asOf`).')
+      const doc = await kernel.restoreAsOf({ collection, id, asOf, ...base })
+      if (!doc) throw new NotFoundError()
+      return withConcurrencyHeaders(json(doc), doc)
     }
     if (segments[2] === 'publish' && method === 'POST') {
       const doc = await kernel.publish({ collection, id, ...base })

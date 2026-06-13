@@ -76,6 +76,14 @@ cannot publish (draft-only brake), cannot write outside its `fieldScope`, and ne
 checks) and `requestReview` (a human approval in the inbox). Hand a job to an agent;
 nothing it produces goes live unchecked.
 
+And content has a **time-machine**. On any collection with `versions` enabled, you can
+read a document (or a whole list) as it existed at any past instant (`asOf`), walk its
+complete change timeline, diff any two points field-by-field, and revert in one call —
+*git for content*, built on the version history KernelCMS already keeps. Every
+historical read, diff, and restore goes through the **same** access checks and
+field-stripping as a live read: time-travel is a view into the access-checked engine,
+never a side door around it.
+
 ---
 
 ## Quickstart
@@ -289,6 +297,43 @@ that is persisted at write time and therefore sortable and filterable:
   Publishing is a distinct, access-controlled transition: `access.publish` gates the
   draft → published edge separately from `update` (and falls back to `update` when
   omitted, so existing behavior is unchanged).
+
+### Content time-machine (point-in-time reads, diff & restore)
+
+On any collection with `versions` enabled, the version history becomes a queryable
+*git-for-content* surface — no extra storage, no second access path. (Without
+`versions`, these ops raise `BadRequestError` — there's no history to reconstruct.)
+
+- **Point-in-time reads.** Pass `asOf: '<iso>'` to `kernel.findByID(...)` or
+  `kernel.find(...)` and the engine reconstructs the document(s) from the latest
+  snapshot with `createdAt <= asOf` (`null` if it didn't exist yet; current when
+  `asOf` is omitted). List reads honor `where` / `limit` / `page`.
+- **History timeline.** `kernel.history({ collection, id })` →
+  `Array<{ versionId, at, by, byType, status, autosave, changedFields }>`, oldest →
+  newest; `changedFields` are the fields that differ from the previous snapshot.
+- **Field-level diff.** `kernel.diffVersions({ collection, id, from, to })` →
+  `Record<field, { from, to }>`. `from`/`to` are each a versionId **or** an ISO
+  timestamp (resolved to the snapshot at-or-before it).
+- **Restore as-of.** `kernel.restoreAsOf({ collection, id, asOf })` reverts by writing
+  that historical content through the **normal update path** — content fields only
+  (`_status`/system columns excluded, so a restore is never a publish), no
+  `overrideAccess`, the agent draft-only brake still applies, and it records a new
+  version.
+
+```bash
+curl "http://localhost:3000/api/posts/<id>?asOf=2025-12-31T23:59:59Z"  # point-in-time read
+curl "http://localhost:3000/api/posts?asOf=2025-12-31T23:59:59Z"       # point-in-time list
+curl "http://localhost:3000/api/posts/<id>/history"                    # the change timeline
+curl "http://localhost:3000/api/posts/<id>/diff?from=<a>&to=<b>"       # field-level diff
+curl -X POST "http://localhost:3000/api/posts/<id>/restore-as-of?asOf=2026-06-01T00:00:00Z" # gated like an update
+```
+
+**The access-parity guarantee:** every historical read, diff, and timeline runs through
+the *same* read-check and field-stripping as a live read, evaluated against the caller's
+**current** access — no time-travel around revoked access. A caller who can't read the
+doc now can't read its `asOf` state, `history`, or `diff`; a read-denied field never
+appears in an `asOf` doc, in `changedFields`, or in a diff; historical drafts stay hidden
+unless `draft: true`. See the [content time-machine guide](docs/time-machine.md).
 
 ### Search (full-text, semantic & hybrid)
 

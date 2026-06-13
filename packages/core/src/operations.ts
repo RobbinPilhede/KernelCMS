@@ -26,6 +26,11 @@ import type {
   FindGlobalOptions,
   FindOptions,
   FindVersionsOptions,
+  HistoryEntry,
+  HistoryOptions,
+  DiffVersionsOptions,
+  VersionDiff,
+  RestoreAsOfOptions,
   ForgotPasswordOptions,
   GlobalConfig,
   LoginOptions,
@@ -122,6 +127,7 @@ import {
 } from './schema'
 import { createSigner, hashContent, signManifest, verifyManifest, type Signer, type ContentManifest } from './signing'
 import { runEvals } from './evals'
+import { changedFieldNames, diffDocs, parseTimestamp } from './timemachine'
 
 export interface OperationCtx {
   config: SanitizedConfig
@@ -1447,6 +1453,334 @@ export function createOperations(ctx: OperationCtx) {
     })
   }
 
+  // -------------------------------------------------------------------------
+  // Content time-machine — point-in-time reads, history timeline, diff, restore
+  //
+  // A navigable timeline over the existing version snapshots. Every surface enforces
+  // the SAME access read-check + field stripping as a live read, so the time-machine
+  // can never become a read-access bypass: a caller who can't read the current doc
+  // can't read its history/diff/as-of state, and a read-denied field never appears in
+  // any reconstructed doc, `changedFields`, or diff.
+  // -------------------------------------------------------------------------
+
+  /** Require `versions` enabled for the time-machine, else a clear 400. */
+  function assertVersioned(collection: CollectionConfig): void {
+    if (!versionsOf(collection).enabled) {
+      throw new BadRequestError(`Collection "${collection.slug}" does not have versions enabled.`)
+    }
+  }
+
+  /** Top-level user-meaningful field names of a collection (the diffable surface). System
+   *  columns (`_status`, timestamps, …) are excluded — they are not user content and aren't
+   *  attributed as field changes (mirrors the audit field skip). */
+  function contentFieldNames(collection: CollectionConfig): string[] {
+    return effectiveFields(collection.fields)
+      .map((f) => f.name)
+      .filter((n) => !AUDIT_FIELD_SKIP.has(n))
+  }
+
+  /** The version snapshot rows for one document, oldest → newest. Bounded by MAX_LIMIT. */
+  async function snapshotsOf(collection: CollectionConfig, id: string): Promise<Row[]> {
+    const res = await db.find({
+      collection: tableForVersions(collection.slug),
+      where: { parent: { equals: id } },
+      sort: [{ field: 'createdAt', direction: 'asc' }],
+      limit: MAX_LIMIT,
+      page: 1,
+    })
+    return res.docs
+  }
+
+  /** The latest snapshot row with `createdAt <= asOfMs`, or null when the doc did not exist
+   *  yet. Linear over the (bounded) ascending snapshot list — picks the last qualifying row. */
+  function pickAsOf(snapshots: Row[], asOfMs: number): Row | null {
+    let chosen: Row | null = null
+    for (const s of snapshots) {
+      const t = s.createdAt != null ? new Date(String(s.createdAt)).getTime() : NaN
+      if (Number.isFinite(t) && t <= asOfMs) chosen = s
+      else if (Number.isFinite(t) && t > asOfMs) break
+    }
+    return chosen
+  }
+
+  /** Enforce the doc's read access + row scope before exposing ANY historical data, exactly
+   *  like a live read. Returns false when the document does not exist (so callers can map to
+   *  null/empty); throws Forbidden when it exists but the caller may not read it. */
+  async function canReadDocForHistory(
+    collection: CollectionConfig,
+    id: string,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<boolean> {
+    const row = await db.findByID({ collection: collection.slug, id })
+    if (!row) return false
+    if (override) return true
+    const access = await evalAccess(collection.access?.read, { req, id })
+    if (!isAllowed(access)) throw new ForbiddenError()
+    const scope = asWhere(access)
+    if (scope && !matchesWhere(row, scope)) throw new ForbiddenError()
+    return true
+  }
+
+  /** Reconstruct a document from a version snapshot row, applying the read tail (field-access
+   *  strip → computed → strip) so a historical read can never reveal a read-denied field. The
+   *  snapshot's `version` JSON is the full doc at that point; we re-derive a clean Doc from it. */
+  async function reconstructFromSnapshot(
+    collection: CollectionConfig,
+    snapshot: Row,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<Doc> {
+    const content = (snapshot.version ?? {}) as Row
+    const doc: Doc = { ...content, id: String(snapshot.parent) }
+    // Read-field-access strip BEFORE computed (so a virtual field can't observe a sibling the
+    // caller may not read), then strip again to honour any rule on the virtual fields.
+    if (!override) await applyReadFieldAccess(collection.fields, doc, req, doc.id)
+    await applyComputed(collection.fields, doc, req)
+    if (!override) await applyReadFieldAccess(collection.fields, doc, req, doc.id)
+    return doc
+  }
+
+  /** Point-in-time read of one document (the `asOf` branch of findByID). Access read-check is
+   *  enforced against the CURRENT row first (never leak history for a doc the caller can't
+   *  read), then the snapshot `<= asOf` is reconstructed + field-stripped. Null when the doc
+   *  did not exist at `asOf`, or its current row is gone / unreadable. */
+  async function findByIDAsOf<T extends Doc = Doc>(
+    collection: CollectionConfig,
+    opts: FindByIDOptions,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<T | null> {
+    const asOfMs = parseTimestamp(opts.asOf, (v) => {
+      throw new BadRequestError(`Invalid \`asOf\` timestamp: ${JSON.stringify(v)}.`)
+    })
+    if (!(await canReadDocForHistory(collection, opts.id, req, override))) return null
+    const snapshot = pickAsOf(await snapshotsOf(collection, opts.id), asOfMs)
+    if (!snapshot) return null
+    // Published-only by default, exactly like a live read: the as-of snapshot's OWN status at
+    // that instant must have been 'published' unless drafts were explicitly requested. This
+    // stops the time-machine surfacing a historical draft a live read would have hidden.
+    if (draftsOn(collection) && !(opts.draft ?? false) && snapshot.status !== 'published') return null
+    return (await reconstructFromSnapshot(collection, snapshot, req, override)) as T
+  }
+
+  /**
+   * Point-in-time `find`: every document's as-of state at `opts.asOf`. The candidate id set
+   * is the distinct `parent` of the version table (every doc that ever had a snapshot). Each
+   * candidate is reconstructed through `findByIDAsOf`, which enforces the SAME read-access gate
+   * against the CURRENT row as a live read — so a doc the caller can't read, a doc whose current
+   * row is gone (deleted), or a doc not yet created at `asOf` simply yields null and is dropped.
+   * Pagination is applied AFTER access filtering over the assembled, deterministically-ordered
+   * (newest snapshot first) set. `where` is applied to the reconstructed as-of docs.
+   */
+  async function findAsOf<T extends Doc = Doc>(
+    collection: CollectionConfig,
+    opts: FindOptions,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<PaginatedResult<T>> {
+    assertWhereFields(collection, opts.where)
+    // Fail fast on a garbage timestamp before scanning the version table (the per-id path
+    // re-validates too, but rejecting here avoids a wasted scan).
+    parseTimestamp(opts.asOf, (v) => {
+      throw new BadRequestError(`Invalid \`asOf\` timestamp: ${JSON.stringify(v)}.`)
+    })
+    const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
+    const page = Math.max(opts.page ?? 1, 1)
+
+    // Distinct parent ids across the (bounded) version table. The table is per-collection,
+    // so this is the full id universe that ever existed; we cap the scan at MAX_LIMIT rows
+    // per page and walk pages until exhausted or a hard ceiling, keeping it bounded.
+    const ids = new Set<string>()
+    for (let p = 1; p <= 50; p++) {
+      const res = await db.find({
+        collection: tableForVersions(collection.slug),
+        where: { parent: { exists: true } },
+        sort: [{ field: 'parent', direction: 'asc' }],
+        limit: MAX_LIMIT,
+        page: p,
+      })
+      for (const r of res.docs) if (r.parent != null) ids.add(String(r.parent))
+      if (res.docs.length < MAX_LIMIT) break
+    }
+
+    const matched: Doc[] = []
+    for (const id of ids) {
+      // A doc the caller can't read throws Forbidden in the per-id path; in a LIST it must be
+      // silently dropped (parity with `find`'s scope-filtering), never surfaced or 403-ing the
+      // whole page — so the time-machine list never leaks another tenant's existence.
+      let doc: Doc | null
+      try {
+        doc = await findByIDAsOf<Doc>(
+          collection,
+          {
+            collection: collection.slug,
+            id,
+            asOf: opts.asOf,
+            ...(opts.draft !== undefined ? { draft: opts.draft } : {}),
+          },
+          req,
+          override,
+        )
+      } catch (err) {
+        if (err instanceof ForbiddenError) continue
+        throw err
+      }
+      if (!doc) continue
+      if (opts.where && !matchesWhere(doc as Row, opts.where)) continue
+      matched.push(doc)
+    }
+    // Deterministic order: newest as-of `createdAt` first (fall back to id for stability).
+    matched.sort((a, b) => {
+      const at = String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))
+      return at !== 0 ? at : String(a.id).localeCompare(String(b.id))
+    })
+
+    const totalDocs = matched.length
+    const start = (page - 1) * limit
+    const docs = matched.slice(start, start + limit)
+    const totalPages = Math.max(1, Math.ceil(totalDocs / limit))
+    const hasNextPage = start + limit < totalDocs
+    const hasPrevPage = page > 1
+    return {
+      docs: docs as T[],
+      totalDocs,
+      limit,
+      page,
+      totalPages,
+      hasNextPage,
+      hasPrevPage,
+      prevPage: hasPrevPage ? page - 1 : null,
+      nextPage: hasNextPage ? page + 1 : null,
+      pagingCounter: start + 1,
+    }
+  }
+
+  async function history(opts: HistoryOptions): Promise<HistoryEntry[]> {
+    const collection = collectionOrThrow(opts.collection)
+    assertVersioned(collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    // Must be able to read the live doc; otherwise history would leak it.
+    if (!(await canReadDocForHistory(collection, opts.id, req, override))) return []
+
+    const snapshots = await snapshotsOf(collection, opts.id)
+    // The diffable field surface, minus any field the caller may not read — so a read-denied
+    // field never surfaces as "changed". Evaluated against the latest snapshot's content.
+    const fieldNames = await readableFieldNames(collection, snapshots, req, override)
+
+    const entries: HistoryEntry[] = []
+    let prev: Row | null = null
+    for (const s of snapshots) {
+      const content = (s.version ?? {}) as Row
+      const changedFields = prev === null ? [...fieldNames] : changedFieldNames(prev, content, fieldNames)
+      entries.push({
+        versionId: String(s.id),
+        at: s.createdAt != null ? String(s.createdAt) : '',
+        by: s.createdBy != null ? String(s.createdBy) : null,
+        byType: normalizePrincipalType(s.createdByType),
+        status: typeof s.status === 'string' ? s.status : 'draft',
+        autosave: s.autosave === true,
+        changedFields,
+      })
+      prev = content
+    }
+    return entries
+  }
+
+  /** The content field names the caller may READ, derived from a representative snapshot
+   *  (the latest). A field whose `access.read` denies the caller is dropped, so neither
+   *  `changedFields` nor a diff can reveal it. Override sees all content fields. */
+  async function readableFieldNames(
+    collection: CollectionConfig,
+    snapshots: Row[],
+    req: RequestContext,
+    override: boolean,
+  ): Promise<string[]> {
+    const all = contentFieldNames(collection)
+    if (override) return all
+    const sample = (snapshots.length ? (snapshots[snapshots.length - 1]!.version ?? {}) : {}) as Row
+    const readable: string[] = []
+    for (const field of effectiveFields(collection.fields)) {
+      if (!all.includes(field.name)) continue
+      const rule = field.access?.read
+      if (rule) {
+        const decision = await evalAccess(rule, { req, id: String(snapshots[0]?.parent ?? ''), data: sample })
+        if (!isAllowed(decision)) continue
+      }
+      readable.push(field.name)
+    }
+    return readable
+  }
+
+  /** Resolve a `from`/`to` selector — a versionId OR an ISO timestamp — to a snapshot row.
+   *  A versionId must belong to THIS document (a foreign/forged id → NotFound, never a leak).
+   *  A timestamp resolves to the latest snapshot `<= it` (null when before creation). */
+  function resolveSnapshotSelector(snapshots: Row[], selector: string): Row | null {
+    if (typeof selector !== 'string' || selector.length === 0) {
+      throw new BadRequestError('A diff selector must be a versionId or an ISO timestamp.')
+    }
+    const byId = snapshots.find((s) => String(s.id) === selector)
+    if (byId) return byId
+    // Not an id of this doc — try to read it as a timestamp.
+    const t = new Date(selector).getTime()
+    if (!Number.isFinite(t)) {
+      throw new NotFoundError('Diff selector did not match a version of this document, nor a valid timestamp.')
+    }
+    return pickAsOf(snapshots, t)
+  }
+
+  async function diffVersions(opts: DiffVersionsOptions): Promise<VersionDiff> {
+    const collection = collectionOrThrow(opts.collection)
+    assertVersioned(collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    if (!(await canReadDocForHistory(collection, opts.id, req, override))) return {}
+
+    const snapshots = await snapshotsOf(collection, opts.id)
+    const fromSnap = resolveSnapshotSelector(snapshots, opts.from)
+    const toSnap = resolveSnapshotSelector(snapshots, opts.to)
+    // A selector before the document existed yields no snapshot → treat its side as empty,
+    // so a diff "from before creation to now" shows every field appearing.
+    const fromContent = (fromSnap?.version ?? {}) as Row
+    const toContent = (toSnap?.version ?? {}) as Row
+    const fieldNames = await readableFieldNames(collection, snapshots, req, override)
+    return diffDocs(fromContent, toContent, fieldNames)
+  }
+
+  async function restoreAsOf<T extends Doc = Doc>(opts: RestoreAsOfOptions): Promise<T | null> {
+    const collection = collectionOrThrow(opts.collection)
+    assertVersioned(collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    const asOfMs = parseTimestamp(opts.asOf, (v) => {
+      throw new BadRequestError(`Invalid \`asOf\` timestamp: ${JSON.stringify(v)}.`)
+    })
+    // Read-gate the document first (parity with restoreVersion); the update() below
+    // re-checks WRITE access + the agent draft-only brake independently.
+    if (!(await canReadDocForHistory(collection, opts.id, req, override))) return null
+
+    const snapshot = pickAsOf(await snapshotsOf(collection, opts.id), asOfMs)
+    if (!snapshot) return null
+    const content = (snapshot.version ?? {}) as Row
+    // Restore ONLY real schema fields (never system/auth columns or `_status`) — the as-of
+    // state is content, not a publish action. Routing through update() means access control,
+    // validation, the agent brake, and a fresh snapshot all apply with NO override bypass.
+    const data: Row = {}
+    for (const f of effectiveFields(collection.fields)) {
+      if (AUDIT_FIELD_SKIP.has(f.name)) continue
+      if (Object.prototype.hasOwnProperty.call(content, f.name)) data[f.name] = content[f.name]
+    }
+    return update<T>({
+      collection: opts.collection,
+      id: opts.id,
+      data,
+      req: opts.req,
+      overrideAccess: opts.overrideAccess,
+      depth: opts.depth,
+    })
+  }
+
   async function publish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
     if (!draftsOn(collection))
@@ -1638,6 +1972,13 @@ export function createOperations(ctx: OperationCtx) {
     const req = buildReq(opts.req)
     const override = opts.overrideAccess ?? false
 
+    // Time-machine: every document's as-of state. Delegated to a dedicated path so the live
+    // read below stays untouched when `asOf` is omitted.
+    if (opts.asOf !== undefined) {
+      assertVersioned(collection)
+      return findAsOf<T>(collection, opts, req, override)
+    }
+
     assertWhereFields(collection, opts.where)
     let where = opts.where
     if (!override) {
@@ -1680,6 +2021,13 @@ export function createOperations(ctx: OperationCtx) {
     const collection = collectionOrThrow(opts.collection)
     const req = buildReq(opts.req)
     const override = opts.overrideAccess ?? false
+
+    // Time-machine: reconstruct from the snapshot `<= asOf` instead of the live row. Requires
+    // versions; access read-check + field stripping apply exactly like the live path below.
+    if (opts.asOf !== undefined) {
+      assertVersioned(collection)
+      return findByIDAsOf<T>(collection, opts, req, override)
+    }
 
     const row = await db.findByID({ collection: collection.slug, id: opts.id })
     if (!row) return null
@@ -3530,6 +3878,9 @@ export function createOperations(ctx: OperationCtx) {
     updateGlobal,
     findVersions,
     restoreVersion,
+    history,
+    diffVersions,
+    restoreAsOf,
     publish,
     unpublish,
     processScheduledPublishes,

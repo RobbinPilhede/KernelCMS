@@ -941,11 +941,22 @@ export interface FindOptions extends OperationBase {
   sort?: string | string[]
   limit?: number
   page?: number
+  /** Time-machine read: an ISO timestamp. When set, each matched document is returned
+   *  as it existed at that instant — its latest version snapshot with `createdAt <= asOf`.
+   *  Documents not yet created at `asOf` are excluded. Requires `versions` enabled on the
+   *  collection (else a BadRequestError). Access-checked + field-stripped per doc, exactly
+   *  like a live read — the time-machine never widens visibility. */
+  asOf?: string
 }
 
 export interface FindByIDOptions extends OperationBase {
   collection: string
   id: string
+  /** Time-machine read: an ISO timestamp. When set, the document is reconstructed from
+   *  its latest version snapshot with `createdAt <= asOf` (null if it did not yet exist).
+   *  Requires `versions` enabled (else a BadRequestError). Access read-check + field
+   *  stripping apply to the reconstructed doc, exactly like a live read. */
+  asOf?: string
 }
 
 export interface CreateOptions extends OperationBase {
@@ -1083,6 +1094,60 @@ export interface RestoreVersionOptions extends OperationBase {
   collection: string
   id: string
   versionId: string
+}
+
+// ---------------------------------------------------------------------------
+// Content time-machine — navigate the version history of one document
+//
+// A read-only timeline over the version snapshots (plus a write-through restore).
+// Every surface goes through the SAME access read-check + field stripping as a live
+// read: a caller who cannot read the current document cannot read its history, diff,
+// or as-of state either, and a read-denied field never surfaces in any output. Requires
+// `versions` enabled on the collection (else a BadRequestError).
+// ---------------------------------------------------------------------------
+
+/** One entry in a document's change timeline (oldest → newest). */
+export interface HistoryEntry {
+  /** The version snapshot id this entry corresponds to. */
+  versionId: string
+  /** ISO timestamp the snapshot was recorded. */
+  at: string
+  /** Principal id that authored the snapshot (null when unknown). */
+  by: string | null
+  /** Principal kind that authored the snapshot. */
+  byType: 'user' | 'agent' | 'system'
+  /** The snapshot's content status. */
+  status: string
+  /** Whether the snapshot came from an autosave. */
+  autosave: boolean
+  /** Field names that differ from the PREVIOUS snapshot (all fields for the create
+   *  entry). Read-denied fields are excluded — their change is never revealed. */
+  changedFields: string[]
+}
+
+export interface HistoryOptions extends OperationBase {
+  collection: string
+  id: string
+}
+
+export interface DiffVersionsOptions extends OperationBase {
+  collection: string
+  id: string
+  /** A versionId OR an ISO timestamp (resolved to the snapshot with `createdAt <= it`). */
+  from: string
+  /** A versionId OR an ISO timestamp (resolved to the snapshot with `createdAt <= it`). */
+  to: string
+}
+
+/** Field-level diff: each changed field maps to its before/after values. Only fields the
+ *  caller may read appear. */
+export type VersionDiff = Record<string, { from: unknown; to: unknown }>
+
+export interface RestoreAsOfOptions extends OperationBase {
+  collection: string
+  id: string
+  /** ISO timestamp: restore the document to its state at this instant. */
+  asOf: string
 }
 
 /** A recorded mutating/auth event in the append-only audit log. */
@@ -1622,6 +1687,20 @@ export interface Kernel {
   updateGlobal<T extends Row = Row>(opts: UpdateGlobalOptions): Promise<T>
   findVersions(opts: FindVersionsOptions): Promise<PaginatedResult<VersionDoc>>
   restoreVersion<T extends Doc = Doc>(opts: RestoreVersionOptions): Promise<T | null>
+  /** Content time-machine — a document's ordered change timeline (oldest → newest). Each
+   *  entry's `changedFields` are the fields that differ from the previous snapshot. The
+   *  caller must be able to read the document (else Forbidden / empty); read-denied fields
+   *  never appear in `changedFields`. Requires `versions` enabled (else BadRequestError). */
+  history(opts: HistoryOptions): Promise<HistoryEntry[]>
+  /** Field-level diff of one document between two points in time. `from`/`to` may each be
+   *  a versionId or an ISO timestamp. Only fields the caller can read appear. Access-checked
+   *  exactly like a read. Requires `versions` enabled (else BadRequestError). */
+  diffVersions(opts: DiffVersionsOptions): Promise<VersionDiff>
+  /** Restore a document to its state at `asOf` by writing the reconstructed state through
+   *  the NORMAL update path — access control, the agent draft-only brake, and validation
+   *  all apply (no override bypass). Records a new version (the restore is auditable).
+   *  Returns null when the document did not exist at `asOf`. */
+  restoreAsOf<T extends Doc = Doc>(opts: RestoreAsOfOptions): Promise<T | null>
   publish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null>
   unpublish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null>
   processScheduledPublishes(opts?: ProcessScheduledOptions): Promise<ProcessScheduledResult>
