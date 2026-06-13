@@ -5,7 +5,7 @@ const pkg = (p: string) => fileURLToPath(new URL(p, import.meta.url))
 
 export default defineConfig({
   test: {
-    include: ['packages/**/*.test.ts', 'examples/**/*.test.ts'],
+    include: ['packages/**/*.test.ts', 'examples/**/*.test.ts', 'apps/**/*.test.ts', 'apps/**/*.test.tsx'],
     environment: 'node',
     pool: 'forks',
     // node:sqlite is a recent built-in; keep it external so Node resolves it.
