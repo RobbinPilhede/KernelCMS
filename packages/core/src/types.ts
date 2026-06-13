@@ -7,6 +7,7 @@ import type {
   PaginatedResult,
   Row,
   SearchAdapter,
+  VectorAdapter,
   Where,
 } from '@kernel/db'
 import type { RichTextFeature, RichTextPreset } from '@kernel/richtext'
@@ -488,8 +489,10 @@ export interface CollectionConfig {
    *  the database layer and invalidated on any write to this collection. */
   cache?: boolean | { ttl?: number }
   /** Full-text search for this collection (requires `config.search`). Index the
-   *  listed text fields; query with `kernel.search({ collection, query })`. */
-  search?: { fields: string[] }
+   *  listed text fields; query with `kernel.search({ collection, query })`.
+   *  Set `semantic: true` to ALSO embed each document (requires `config.embeddings`)
+   *  for vector / hybrid search via `kernel.semanticSearch` / `kernel.hybridSearch`. */
+  search?: { fields: string[]; semantic?: boolean }
 }
 
 export interface ImageSize {
@@ -576,6 +579,17 @@ export interface WebhookConfig {
   timeoutMs?: number
 }
 
+/** A pluggable embeddings provider: maps N input strings to N equal-dimension
+ *  vectors. Provider-agnostic (OpenAI/Cohere/local/etc.) — the user supplies it. */
+export type EmbedFn = (texts: string[]) => Promise<number[][]>
+
+/** Embeddings provider config for semantic search. See {@link KernelConfig.embeddings}. */
+export interface EmbeddingsConfig {
+  embed: EmbedFn
+  /** Expected vector dimensionality (informational; used as a sanity bound). */
+  dimensions?: number
+}
+
 export interface KernelConfig {
   serverURL?: string
   db: DatabaseAdapter
@@ -620,6 +634,16 @@ export interface KernelConfig {
   /** Search adapter (e.g. `memorySearch()`). Collections with `search` enabled
    *  are indexed on write and queried via `kernel.search`. */
   search?: SearchAdapter
+  /** Pluggable, provider-agnostic embeddings. `embed` maps N strings to N
+   *  equal-dimension vectors (OpenAI/Cohere/local — you supply it). When set,
+   *  collections with `search: { semantic: true }` are embedded on write into a
+   *  vector store and queried via `kernel.semanticSearch` / `kernel.hybridSearch`.
+   *  The closure may hold an API key — KernelCMS NEVER logs its inputs/outputs. */
+  embeddings?: EmbeddingsConfig
+  /** Vector store adapter for semantic search. Defaults to `memoryVector()` when
+   *  `embeddings` is set (mirrors how `search` works). Swap for a pgvector-backed
+   *  adapter in production — it implements the same `VectorAdapter` contract. */
+  vector?: VectorAdapter
   /** Default cache TTL in ms applied to cached collections that don't set their own.
    *  0 (default) means entries live until invalidated by a write. */
   cacheDefaults?: { ttl?: number }
@@ -708,6 +732,13 @@ export interface SanitizedConfig {
   search?: SearchAdapter
   /** Per-collection searchable field names. */
   searchableFields: Record<string, string[]>
+  /** Resolved embeddings provider, when configured (`config.embeddings`). */
+  embeddings?: EmbeddingsConfig
+  /** Resolved vector store adapter, when semantic search is active. */
+  vector?: VectorAdapter
+  /** Per-collection field names embedded for semantic search (subset of
+   *  `searchableFields` whose collection set `search.semantic: true`). */
+  semanticFields: Record<string, string[]>
   /** Validated non-human principals (see `agents`). The server resolves a bearer
    *  token against these to build an `overrideAccess:false`, field-scoped principal. */
   agents: AgentConfig[]
@@ -758,6 +789,24 @@ export interface PublishOptions extends OperationBase {
 }
 
 export interface SearchDocsOptions extends OperationBase {
+  collection: string
+  query: string
+  /** Max documents to return (after access filtering). Default 25. */
+  limit?: number
+}
+
+export interface SemanticSearchOptions extends OperationBase {
+  collection: string
+  query: string
+  /** Max documents to return (after access filtering). Default 25. */
+  limit?: number
+  /** Exact-match scalar metadata pre-filter passed to the vector store. Keys are
+   *  validated against the collection's fields (unknown / prototype-pollution keys
+   *  are rejected) before the query. */
+  filter?: Record<string, string | number | boolean | null>
+}
+
+export interface HybridSearchOptions extends OperationBase {
   collection: string
   query: string
   /** Max documents to return (after access filtering). Default 25. */
@@ -1409,6 +1458,16 @@ export interface Kernel {
   /** Full-text search a collection, returning access-checked documents in
    *  relevance order. Requires `config.search` and `collection.search`. */
   searchDocs<T extends Doc = Doc>(opts: SearchDocsOptions): Promise<{ docs: T[] }>
+  /** Semantic (vector) search: embed the query, find nearest neighbours in the vector
+   *  store, then load each hit through the access-checked read path (docs the caller
+   *  can't read are dropped — never leaked). Requires `config.embeddings` and a
+   *  collection with `search: { semantic: true }`. */
+  semanticSearch<T extends Doc = Doc>(opts: SemanticSearchOptions): Promise<{ docs: T[] }>
+  /** Hybrid search: run BOTH full-text and semantic search and fuse the two ranked
+   *  id-lists with Reciprocal Rank Fusion (k=60), then access-checked-load the fused
+   *  top ids. Falls back gracefully to whichever signal is available (full-text only
+   *  when no embeddings; semantic only when no full-text fields). */
+  hybridSearch<T extends Doc = Doc>(opts: HybridSearchOptions): Promise<{ docs: T[] }>
   find<T extends Doc = Doc>(opts: FindOptions): Promise<PaginatedResult<T>>
   findByID<T extends Doc = Doc>(opts: FindByIDOptions): Promise<T | null>
   create<T extends Doc = Doc>(opts: CreateOptions): Promise<T>

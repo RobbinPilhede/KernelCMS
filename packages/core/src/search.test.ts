@@ -1,7 +1,62 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { sqliteAdapter } from '@kernel/db-sqlite'
 import type { Doc, Kernel, RequestContext } from './index'
-import { initKernel, memorySearch } from './index'
+import { initKernel, memorySearch, memoryVector, sanitizeConfig } from './index'
+
+describe('semantic search config sanitize', () => {
+  const embed = async (texts: string[]) => texts.map(() => [1, 0])
+
+  it('collects semantic fields and defaults a vector store when embeddings are set', () => {
+    const sanitized = sanitizeConfig({
+      secret: 'sanitize-test-32-characters-long!',
+      db: sqliteAdapter({ url: ':memory:' }),
+      search: memorySearch(),
+      embeddings: { embed },
+      collections: [
+        { slug: 'posts', search: { fields: ['title'], semantic: true }, fields: [{ name: 'title', type: 'text' }] },
+      ],
+    })
+    expect(sanitized.semanticFields.posts).toEqual(['title'])
+    expect(sanitized.vector).toBeDefined()
+    expect(sanitized.embeddings).toBeDefined()
+  })
+
+  it('does not mark a collection semantic without `semantic: true`', () => {
+    const sanitized = sanitizeConfig({
+      secret: 'sanitize-test-32-characters-long!',
+      db: sqliteAdapter({ url: ':memory:' }),
+      search: memorySearch(),
+      embeddings: { embed },
+      collections: [{ slug: 'posts', search: { fields: ['title'] }, fields: [{ name: 'title', type: 'text' }] }],
+    })
+    expect(sanitized.semanticFields.posts).toBeUndefined()
+  })
+
+  it('honours an explicitly provided vector adapter', () => {
+    const vector = memoryVector()
+    const sanitized = sanitizeConfig({
+      secret: 'sanitize-test-32-characters-long!',
+      db: sqliteAdapter({ url: ':memory:' }),
+      embeddings: { embed },
+      vector,
+      collections: [
+        { slug: 'posts', search: { fields: ['title'], semantic: true }, fields: [{ name: 'title', type: 'text' }] },
+      ],
+    })
+    expect(sanitized.vector).toBe(vector)
+  })
+
+  it('throws when embeddings.embed is not a function', () => {
+    expect(() =>
+      sanitizeConfig({
+        secret: 'sanitize-test-32-characters-long!',
+        db: sqliteAdapter({ url: ':memory:' }),
+        embeddings: { embed: 'nope' as never },
+        collections: [{ slug: 'posts', fields: [{ name: 'title', type: 'text' }] }],
+      }),
+    ).toThrow()
+  })
+})
 
 describe('memorySearch through a real kernel', () => {
   let kernel: Kernel

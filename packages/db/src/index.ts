@@ -47,7 +47,7 @@ export interface KernelSchema {
 // Adapter base
 // ---------------------------------------------------------------------------
 
-export type AdapterKind = 'db' | 'storage' | 'auth' | 'email' | 'search' | 'cache' | 'queue'
+export type AdapterKind = 'db' | 'storage' | 'auth' | 'email' | 'search' | 'cache' | 'queue' | 'vector'
 
 export interface Logger {
   debug: (msg: string, meta?: unknown) => void
@@ -283,3 +283,59 @@ export interface SearchAdapter extends Adapter {
 }
 
 export type SearchAdapterFactory = () => SearchAdapter
+
+// ---------------------------------------------------------------------------
+// Vector (embeddings) adapter contract
+// ---------------------------------------------------------------------------
+
+export interface VectorHit {
+  id: string
+  /** Cosine similarity in [-1, 1]; higher is more similar. Backend-defined scale. */
+  score: number
+}
+
+export interface VectorResult {
+  hits: VectorHit[]
+}
+
+/**
+ * A per-collection vector store backing semantic + hybrid search. KernelCMS keeps
+ * it in sync by embedding a document's metadata-enriched text on write (when the
+ * collection opts into `search.semantic`) and removing it on delete. The semantic
+ * ops query it for nearest neighbours, then load each hit through the normal
+ * access-checked read path — so the store never bypasses access control.
+ *
+ * The bundled `memoryVector()` is an in-process cosine store (fine for a single
+ * node / modest corpora). A pgvector-backed adapter is the production follow-up:
+ * it implements this same contract (upsert → `INSERT … ON CONFLICT`, query →
+ * `ORDER BY embedding <=> $1 LIMIT k`, `filter` → a `WHERE` clause), so it is a
+ * drop-in swap with no change to core. The interface is the seam.
+ *
+ * `metadata`/`filter` carry plain scalar values only (no nested objects) so a
+ * SQL-backed adapter can map them to indexed columns; core validates `filter`
+ * keys against the collection before passing them here.
+ */
+export interface VectorAdapter extends Adapter {
+  readonly kind: 'vector'
+  /** Add or replace a document's vector (and optional scalar metadata). */
+  upsert(args: {
+    collection: string
+    id: string
+    vector: number[]
+    metadata?: Record<string, string | number | boolean | null>
+  }): Promise<void>
+  /** Return the top-`limit` nearest vectors for a query vector, optionally filtered
+   *  by exact-match scalar metadata. */
+  query(args: {
+    collection: string
+    vector: number[]
+    limit: number
+    filter?: Record<string, string | number | boolean | null>
+  }): Promise<VectorResult>
+  /** Remove a document's vector. */
+  remove(args: { collection: string; id: string }): Promise<void>
+  /** Drop the store for one collection, or everything when no slug is given. */
+  clear(collection?: string): Promise<void>
+}
+
+export type VectorAdapterFactory = () => VectorAdapter

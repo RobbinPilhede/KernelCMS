@@ -18,6 +18,7 @@ import { CACHE_SLUG, JOBS_SLUG } from './config'
 import { BadRequestError, isKernelError } from './errors'
 import { attachWebhooks } from './webhooks'
 import { attachSearch } from './search'
+import { attachSemantic, reciprocalRankFusion } from './vector'
 import { applyPlugins } from './plugins'
 import { ROLES_TABLE, cloneRoleDef } from './rbac'
 import { storageFields } from './fields'
@@ -41,6 +42,101 @@ const FORBIDDEN_BACKFILL_KEYS = new Set([
 /** Coerce a journal column (stored as JSON, decoded to an array) into a string[]. */
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((v) => String(v)) : []
+}
+
+/** Max documents a single semantic/hybrid query may return — clamps a hostile or
+ *  fat-fingered `limit` (a huge value would over-fetch the vector store + read path). */
+const MAX_SEMANTIC_LIMIT = 100
+
+function clampLimit(limit: number | undefined): number {
+  const n = Math.floor(Number(limit ?? 25))
+  if (!Number.isFinite(n)) return 25
+  return Math.min(Math.max(1, n), MAX_SEMANTIC_LIMIT)
+}
+
+/** Embed a query string, converting any provider error into a generic one. The user's
+ *  `embed` closure may hold an API key and its thrown message could carry it — so the
+ *  original error is never propagated to the request boundary (which logs it). */
+async function embedQuery(embed: (texts: string[]) => Promise<number[][]>, query: string): Promise<number[] | null> {
+  let vectors: number[][]
+  try {
+    vectors = await embed([query])
+  } catch {
+    throw new Error('Embedding provider failed while embedding the search query.')
+  }
+  const vec = vectors?.[0]
+  return vec && vec.length > 0 ? vec : null
+}
+
+// Keys a vector filter may never carry: prototype-pollution vectors. Validity beyond
+// these is "must be a real storage field of the collection".
+const FORBIDDEN_FILTER_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/**
+ * Validate a semantic-search metadata filter against the target collection. Every key
+ * must be a real storage field (rejects prototype-pollution keys and unknown columns);
+ * every value must be a scalar. Returns `undefined` when there is nothing to filter, or
+ * a clean, null-prototype object safe to hand to the vector store.
+ */
+function validateVectorFilter(
+  config: import('./types').SanitizedConfig,
+  collection: string,
+  filter: Record<string, string | number | boolean | null> | undefined,
+): Record<string, string | number | boolean | null> | undefined {
+  if (!filter) return undefined
+  const col = config.collectionsBySlug[collection]
+  if (!col) return undefined
+  const fieldNames = new Set(storageFields(col.fields).map((f) => f.name))
+  const out: Record<string, string | number | boolean | null> = Object.create(null)
+  let any = false
+  for (const key of Object.keys(filter)) {
+    if (FORBIDDEN_FILTER_KEYS.has(key)) throw new BadRequestError(`Illegal filter key "${key}".`)
+    if (!fieldNames.has(key)) throw new BadRequestError(`"${key}" is not a filterable field of "${collection}".`)
+    const value = filter[key]
+    if (value !== null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+      throw new BadRequestError(`Filter value for "${key}" must be a scalar.`)
+    }
+    out[key] = value
+    any = true
+  }
+  return any ? out : undefined
+}
+
+/**
+ * Load an ordered list of candidate ids through the access-checked read path, in rank
+ * order, dropping any the caller cannot read (a hit for a forbidden doc either returns
+ * null or raises an access error — both skipped), and de-duplicating ids. Returns up
+ * to `limit` documents. The single chokepoint that guarantees neither semantic nor
+ * hybrid search ever surfaces a document the caller is not allowed to read.
+ */
+async function loadAccessChecked<T extends Doc = Doc>(
+  ops: import('./operations').Operations,
+  collection: string,
+  ids: string[],
+  limit: number,
+  opts: import('./types').OperationBase,
+): Promise<T[]> {
+  const docs: T[] = []
+  const seen = new Set<string>()
+  for (const id of ids) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    let doc: T | null = null
+    try {
+      doc = await ops.findByID<T>({
+        collection,
+        id,
+        req: opts.req,
+        overrideAccess: opts.overrideAccess,
+        depth: opts.depth,
+      })
+    } catch (err) {
+      if (!isKernelError(err)) throw err
+    }
+    if (doc) docs.push(doc)
+    if (docs.length >= limit) break
+  }
+  return docs
 }
 
 export function createLogger(level: keyof typeof LEVELS = 'info'): Logger {
@@ -80,6 +176,16 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   if (sanitized.search && Object.keys(sanitized.searchableFields).length > 0) {
     attachSearch(sanitized.collections, sanitized.search, sanitized.searchableFields, logger)
   }
+  // Semantic search: attach embed-on-write / remove-on-delete hooks alongside full-text.
+  if (sanitized.embeddings && sanitized.vector && Object.keys(sanitized.semanticFields).length > 0) {
+    attachSemantic(
+      sanitized.collections,
+      sanitized.vector,
+      sanitized.embeddings.embed,
+      sanitized.semanticFields,
+      logger,
+    )
+  }
   const schema = compileSchema(sanitized)
 
   await sanitized.db.init({ logger })
@@ -102,6 +208,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     })
   }
   if (sanitized.search) await sanitized.search.init({ logger, db: sanitized.db })
+  if (sanitized.vector) await sanitized.vector.init({ logger, db: sanitized.db })
 
   const ops = createOperations({ config: sanitized, db: opDb, logger })
 
@@ -168,6 +275,66 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
         if (doc) docs.push(doc)
         if (docs.length >= limit) break
       }
+      return { docs }
+    },
+    async semanticSearch<T extends Doc = Doc>(opts: import('./types').SemanticSearchOptions): Promise<{ docs: T[] }> {
+      const { embeddings, vector } = sanitized
+      if (!embeddings || !vector) throw new Error('Semantic search requires `config.embeddings` (and a vector store).')
+      const fields = sanitized.semanticFields[opts.collection]
+      if (!fields) throw new Error(`Collection "${opts.collection}" does not have semantic search enabled.`)
+      const limit = clampLimit(opts.limit)
+      // Validate the metadata filter against the collection (reject unknown /
+      // prototype-pollution keys) BEFORE it reaches the vector store.
+      const filter = validateVectorFilter(sanitized, opts.collection, opts.filter)
+      const query = String(opts.query ?? '')
+      if (query.trim().length === 0) return { docs: [] }
+      const vec = await embedQuery(embeddings.embed, query)
+      if (!vec) return { docs: [] }
+      // Over-fetch so access filtering on load does not starve the result.
+      const { hits } = await vector.query({ collection: opts.collection, vector: vec, limit: limit * 4, filter })
+      const docs = await loadAccessChecked<T>(
+        ops,
+        opts.collection,
+        hits.map((h) => h.id),
+        limit,
+        opts,
+      )
+      return { docs }
+    },
+    async hybridSearch<T extends Doc = Doc>(opts: import('./types').HybridSearchOptions): Promise<{ docs: T[] }> {
+      const { search, embeddings, vector } = sanitized
+      const hasFullText = Boolean(search && sanitized.searchableFields[opts.collection])
+      const hasSemantic = Boolean(embeddings && vector && sanitized.semanticFields[opts.collection])
+      if (!hasFullText && !hasSemantic) {
+        throw new Error(`Collection "${opts.collection}" has neither full-text nor semantic search enabled.`)
+      }
+      const limit = clampLimit(opts.limit)
+      const query = String(opts.query ?? '')
+      const over = limit * 4
+      const rankedLists: string[][] = []
+      // Run both available signals (in parallel) and collect their ranked id-lists.
+      const [textHits, semHits] = await Promise.all([
+        hasFullText && query.trim().length > 0
+          ? search!.search({ collection: opts.collection, query, limit: over })
+          : Promise.resolve({ hits: [] as { id: string }[] }),
+        hasSemantic && query.trim().length > 0
+          ? (async () => {
+              const vec = await embedQuery(embeddings!.embed, query)
+              if (!vec) return { hits: [] as { id: string }[] }
+              return vector!.query({ collection: opts.collection, vector: vec, limit: over })
+            })()
+          : Promise.resolve({ hits: [] as { id: string }[] }),
+      ])
+      if (textHits.hits.length > 0) rankedLists.push(textHits.hits.map((h) => h.id))
+      if (semHits.hits.length > 0) rankedLists.push(semHits.hits.map((h) => h.id))
+      const fused = reciprocalRankFusion(rankedLists)
+      const docs = await loadAccessChecked<T>(
+        ops,
+        opts.collection,
+        fused.map((f) => f.id),
+        limit,
+        opts,
+      )
       return { docs }
     },
     find: ops.find,
@@ -346,6 +513,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     async destroy() {
       if (sanitized.cache) await sanitized.cache.destroy()
       if (sanitized.search) await sanitized.search.destroy()
+      if (sanitized.vector) await sanitized.vector.destroy()
       await sanitized.db.destroy()
     },
   }

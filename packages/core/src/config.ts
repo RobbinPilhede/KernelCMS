@@ -15,6 +15,7 @@ import { effectiveFields, joinFields } from './fields'
 import { consoleEmail, type EmailAdapter } from './email'
 import { createRbacStore, injectRbac } from './rbac'
 import { resolveVersions } from './schema'
+import { memoryVector } from './vector'
 
 let warnedNoEmail = false
 function consoleEmailFallback(): EmailAdapter {
@@ -536,6 +537,28 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     }
   }
 
+  // Resolve semantic (vector) search. A collection opts in with `search.semantic`,
+  // but it only takes effect when an embeddings provider is configured. The vector
+  // store defaults to an in-memory cosine adapter (mirroring how `search` works),
+  // so `embeddings` alone is enough to get working semantic search. Validate the
+  // `embed` shape fail-fast at boot.
+  const semanticFields: Record<string, string[]> = {}
+  let vector = config.vector
+  if (config.embeddings) {
+    assert(
+      typeof config.embeddings.embed === 'function',
+      'config.embeddings.embed must be a function (texts) => Promise<number[][]>',
+    )
+    for (const collection of collections) {
+      if (collection.slug === JOBS_SLUG || collection.slug === CACHE_SLUG) continue
+      const s = collection.search
+      if (s && s.semantic === true && Array.isArray(s.fields) && s.fields.length > 0) {
+        semanticFields[collection.slug] = s.fields
+      }
+    }
+    if (Object.keys(semanticFields).length > 0 && !vector) vector = memoryVector()
+  }
+
   // Granular RBAC (opt-in via config.rbac). Create the mutable runtime store, seed it
   // from config, and INJECT a default access rule for every collection×op / global×op
   // that has no explicit rule. Explicit rules are left untouched (they win). The
@@ -566,6 +589,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     cacheTtlBySlug,
     cacheDefaultTtl,
     searchableFields,
+    semanticFields,
     agents,
     audit: sanitizeAudit(config.audit),
     rbac: { enabled: rbacEnabled },
@@ -574,6 +598,8 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     signing: sanitizeSigning(config.signing),
     evals: sanitizeEvals(config.evals),
     ...(config.search ? { search: config.search } : {}),
+    ...(config.embeddings ? { embeddings: config.embeddings } : {}),
+    ...(vector ? { vector } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),
     ...(email ? { email } : {}),

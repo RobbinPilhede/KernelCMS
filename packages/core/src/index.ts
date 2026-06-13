@@ -60,6 +60,15 @@ export type { DbCacheOptions, RedisCacheOptions } from './cache-backends'
 export { deliverWebhook, attachWebhooks } from './webhooks'
 export type { WebhookPayload } from './webhooks'
 export { memorySearch, attachSearch, extractSearchText } from './search'
+export {
+  memoryVector,
+  attachSemantic,
+  reciprocalRankFusion,
+  enrichedEmbeddingText,
+  cosineSimilarity,
+  dot,
+  MAX_VECTOR_DIMENSIONS,
+} from './vector'
 export { testPayment, stripePayment, signTestWebhook, verifyStripeSignature, PaymentError } from './payments'
 export { commerce } from './commerce'
 export type { CommerceOptions } from './commerce'
@@ -163,4 +172,8 @@ export type {
   SearchAdapterFactory,
   SearchHit,
   SearchResult,
+  VectorAdapter,
+  VectorAdapterFactory,
+  VectorHit,
+  VectorResult,
 } from '@kernel/db'

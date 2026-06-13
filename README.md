@@ -55,6 +55,12 @@ KernelCMS takes the opposite stance.
 The guiding rule of the whole codebase: heavy or opinionated dependencies live behind
 optional adapters, never in `@kernel/core`. The lean default is the product.
 
+One more stance worth calling out: KernelCMS is **RAG-native**. Bring any embedder and a
+collection's content is indexed into a vector store on every write, with built-in
+semantic and hybrid (Reciprocal Rank Fusion) search served through the same
+access-checked read path. Your CMS *is* your RAG knowledge base, instead of a CMS plus a
+Lambda plus a separate vector database you have to keep in sync.
+
 ---
 
 ## Quickstart
@@ -144,6 +150,7 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Postgres:** swap `sqliteAdapter` for `postgresAdapter()` and set `DATABASE_URL` (or pick it in the first-run Connectors step). Configs scaffolded by `npx kernel init` are already env-driven: set `DATABASE_URL` and they use Postgres, otherwise a local SQLite file.
 - **Caching:** add `cache: memoryCache()` (or `dbCache()` / `redisCache()`) and mark a collection `cache: true`. Reads are served read-through and invalidated automatically on write.
 - **Search:** add `search: memorySearch()` and give a collection `search: { fields: ['title', 'body'] }`, then `kernel.searchDocs({ collection, query })`. Hits are loaded through the access-checked read path, so search never surfaces a document the caller cannot read.
+- **Semantic & hybrid search (RAG-native):** set a pluggable `embeddings: { embed }` (your OpenAI/Cohere/local model — no embedding dependency baked in) and mark a collection's search `semantic: true`. Fields are embedded on every write into a vector store, and `kernel.semanticSearch(...)` / `kernel.hybridSearch(...)` (Reciprocal Rank Fusion of full-text + vector) plus `GET /api/:collection/semantic` and `/hybrid` are served through the same access-checked read path. Your CMS becomes your RAG knowledge base — see the [semantic search guide](docs/semantic-search.md).
 - **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change; the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
 - **Payments & orders:** add the `commerce({ payment: stripePayment({ ... }) })` plugin and you get `products` + `orders` collections, a `POST /commerce/checkout` (totals recomputed server-side from real prices), and a signature-verified `POST /commerce/webhook` that transitions orders to paid/refunded. Stripe and a deterministic `testPayment()` adapter included.
 - **AI agents (MCP):** register `agents: [{ id, token, roles, fieldScope }]` and serve your kernel over the Model Context Protocol — `npx kernel mcp` (stdio, for Claude Desktop / Cursor) or `kernel mcp --http` (multi-agent, per-request scoped tokens). Tools are auto-generated from the same model that builds the OpenAPI spec (CRUD, count, version history, your opt-in `defineEndpoint` business logic, plus `kernel://schema` resources to introspect), and every call runs through the in-process Local API as a scoped principal — so an agent goes through the **same access pipeline as a human**: it only touches the fields you allow, **cannot publish** (drafts only, enforced by the engine), and is attributed in version history. The MCP layer enforces nothing on its own. Import from `kernelcms/mcp`; the MCP SDK is an optional peer dependency.
@@ -266,6 +273,58 @@ that is persisted at write time and therefore sortable and filterable:
   Publishing is a distinct, access-controlled transition: `access.publish` gates the
   draft → published edge separately from `update` (and falls back to `update` when
   omitted, so existing behavior is unchanged).
+
+### Search (full-text, semantic & hybrid)
+
+- Adapter-based **full-text** search (`search: memorySearch()` + a collection's
+  `search: { fields }`), with hits loaded through the access-checked read path.
+- **RAG-native semantic search.** Supply a pluggable embedder — KernelCMS has no hard
+  embedding dependency, so OpenAI, Cohere, or a local model all work — and a collection's
+  fields are embedded on every write into a vector store (the built-in in-process
+  `memoryVector()` by default; a pgvector adapter is the documented production follow-up).
+- **Hybrid search** fuses full-text and vector results with Reciprocal Rank Fusion
+  (RRF, k=60), the 2026-standard ranking. Both ops degrade gracefully — semantic-only with
+  no full-text fields, full-text-only with no embedder.
+- Every result goes through the **access-checked read path**: a vector hit for a document
+  the caller cannot read is dropped, never leaked. `limit` is clamped (max 100) and
+  `filter` is validated to real columns. Indexing is real-time (a governance requirement
+  for AI agents), and an embed failure is logged (never with the text or key) without
+  breaking the content write.
+
+```ts
+import { defineConfig } from 'kernelcms'
+import OpenAI from 'openai'
+
+const openai = new OpenAI()
+
+export default defineConfig({
+  search: memorySearch(), // full-text (hybrid fuses this with the vector store)
+  embeddings: {
+    // Bring any embedder; KernelCMS just needs string[] → number[][].
+    embed: async (texts) => {
+      const res = await openai.embeddings.create({ model: 'text-embedding-3-small', input: texts })
+      return res.data.map((d) => d.embedding)
+    },
+  },
+  collections: [
+    {
+      slug: 'posts',
+      access: { read: () => true },
+      search: { fields: ['title', 'body'], semantic: true }, // index + embed on write
+      fields: [/* … */],
+    },
+  ],
+})
+
+// Local API — fused full-text + vector, access-checked:
+const { docs } = await kernel.hybridSearch({ collection: 'posts', query: 'how do I deploy?', req })
+// or pure vector: kernel.semanticSearch({ collection, query, limit, filter, req })
+```
+
+```bash
+curl "http://localhost:3000/api/posts/semantic?q=how%20do%20I%20deploy&limit=10"
+curl "http://localhost:3000/api/posts/hybrid?q=how%20do%20I%20deploy"
+```
 
 ### Auth
 

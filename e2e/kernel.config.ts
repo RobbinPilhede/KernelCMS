@@ -1,6 +1,27 @@
-import { defineConfig } from '@kernel/core'
+import { defineConfig, memorySearch } from '@kernel/core'
 import { sqliteAdapter } from '@kernel/db-sqlite'
 import { localStorage } from '@kernel/storage'
+
+// Deterministic, dependency-free embedder for the E2E demo: bag-of-words hashed
+// into a fixed 64-dim vector. Topically-overlapping text shares dimensions, so
+// cosine similarity ranks related content together — enough to exercise the real
+// semantic/hybrid pipeline end-to-end over HTTP (a production app plugs in a real
+// embedding provider here: OpenAI, Cohere, a local model, etc.).
+const DIM = 64
+function demoEmbed(texts: string[]): Promise<number[][]> {
+  return Promise.resolve(
+    texts.map((text) => {
+      const v = new Array(DIM).fill(0)
+      for (const tokenRaw of text.toLowerCase().split(/[^a-z0-9]+/)) {
+        if (tokenRaw.length < 2) continue
+        let h = 0
+        for (let i = 0; i < tokenRaw.length; i++) h = (h * 31 + tokenRaw.charCodeAt(i)) >>> 0
+        v[h % DIM] += 1
+      }
+      return v
+    }),
+  )
+}
 
 // Isolated E2E fixture: fresh in-memory DB each boot, built-in preview renderer
 // (no external frontend needed). Mirrors the demo content model.
@@ -9,6 +30,9 @@ export default defineConfig({
   db: sqliteAdapter({ url: ':memory:' }),
   storage: localStorage({ rootDir: './.e2e-uploads', servePath: '/files' }),
   localization: { locales: ['en', 'es'], defaultLocale: 'en' },
+  // RAG-native: full-text adapter + a pluggable embedder power /semantic + /hybrid.
+  search: memorySearch(),
+  embeddings: { embed: demoEmbed, dimensions: DIM },
   collections: [
     {
       slug: 'media',
@@ -75,6 +99,8 @@ export default defineConfig({
       admin: { useAsTitle: 'title', defaultColumns: ['title'] },
       access: { read: () => true },
       versions: { drafts: true },
+      // Semantic + hybrid search index the title + summary on every write.
+      search: { fields: ['title', 'summary'], semantic: true },
       fields: [
         { name: 'title', type: 'text', required: true },
         { name: 'summary', type: 'text', localized: true },

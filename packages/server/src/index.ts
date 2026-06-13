@@ -1038,6 +1038,28 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return json(result)
   }
 
+  // /:collection/semantic?q=...  (vector search; access-checked load)
+  if (segments.length === 2 && segments[1] === 'semantic' && method === 'GET') {
+    const result = await kernel.semanticSearch({
+      collection,
+      query: url.searchParams.get('q') ?? '',
+      limit: toNum(url.searchParams.get('limit')),
+      ...base,
+    })
+    return json(result)
+  }
+
+  // /:collection/hybrid?q=...  (full-text + semantic, fused with RRF)
+  if (segments.length === 2 && segments[1] === 'hybrid' && method === 'GET') {
+    const result = await kernel.hybridSearch({
+      collection,
+      query: url.searchParams.get('q') ?? '',
+      limit: toNum(url.searchParams.get('limit')),
+      ...base,
+    })
+    return json(result)
+  }
+
   // /:collection/:id
   if (segments.length === 2) {
     const id = segments[1]!
