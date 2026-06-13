@@ -4,6 +4,13 @@
   "description": "The TanStack-native, adapter-based, end-to-end type-safe headless CMS. Config-as-code, self-hosted.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RobbinPilhede/KernelCMS.git",
+    "directory": "packages/kernelcms"
+  },
+  "homepage": "https://github.com/RobbinPilhede/KernelCMS#readme",
+  "bugs": "https://github.com/RobbinPilhede/KernelCMS/issues",
   "engines": {
     "node": ">=22"
   },
