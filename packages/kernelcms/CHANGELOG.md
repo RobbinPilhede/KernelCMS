@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.10.0
+
+### Minor Changes
+
+- **Localization grows up: strict mode, bulk multi-locale, and translation status.** KernelCMS already stores every locale of every field; this exposes the three things Payload users ask for.
+  - **Strict mode** (`localization: { strict: true }`). Stops silently masking untranslated content: a field with no value for the requested locale returns `null` instead of quietly falling back to another language — so your API (and your readers) see the truth, not English wearing a French label. Strict also enforces required localized fields per locale on write, and **gates publishing**: you can't publish a document whose default-locale required fields are empty (the error lists exactly which `locale.field` pairs are missing). A caller can still opt into fallback explicitly per request.
+  - **Bulk multi-locale.** `kernel.updateLocales({ collection, id, locales: { en: {...}, fr: {...}, de: {...} } })` fills or updates many locales in one call, merging into each locale's slot — it never clobbers a locale you didn't pass. Read every locale at once with `locale: 'all'` (or `?locale=all`), which returns each localized field as its full `{ en, fr, de }` map.
+  - **Translation status.** `kernel.translationStatus({ collection, id })` reports, per locale, whether it's complete and which required fields are missing; `kernel.translationStatusList({ collection })` powers a translation dashboard (completeLocales / incompleteLocales per doc), and an admin/editor route at `/api/_admin/translation-status/:collection` exposes it. Field names and counts only — never field values.
+
+  Untrusted locale keys are validated against your configured locales and prototype-pollution-guarded; every new read/write runs the normal access + field-scope pipeline with no override. Red-teamed to **Risk: LOW** (7 attack classes, zero bypasses). Fully backward-compatible — non-strict behavior is unchanged. Verified end-to-end against a live kernel.
+
 ## 0.9.0
 
 ### Minor Changes
