@@ -1,5 +1,17 @@
 # kernelcms
 
+## 0.24.0
+
+### Minor Changes
+
+- **Content releases: ship a coordinated set of changes as one atomic unit.** A launch or a campaign is rarely one document — it's a bundle of edits that should go live together, or not at all. KernelCMS now stages drafts into a named release and publishes them atomically, optionally on a schedule.
+  - **Stage, preview, publish together.** `kernel.createRelease({ name })`, then `addToRelease({ release, collection, id })` for each draft. `previewRelease(...)` shows the whole bundle in its draft state before you ship; `publishRelease(...)` publishes every member as a unit. Admin/editor-gated REST under `/api/_admin/releases` (create, items, preview, publish, schedule).
+  - **All-or-nothing — no partial go-live.** Before publishing anything, the release dry-runs the publish gate for _every_ member: the per-document publish access check, the agent draft-only brake, and your blocking content-CI evals against current draft content. If any member would fail, **none** are published (you get the reasons; the release stays open). A campaign never ships half-broken.
+  - **Schedule a launch.** `scheduleRelease({ release, at })` sets it to go live at a future time; a cron drain (`processScheduledReleases()`, alongside `processScheduledPublishes()`) publishes it when due, re-checking the eval gate. Like scheduled per-document publishes, publishability is gate-checked at schedule time.
+  - **Same gates, no shortcuts.** Publishing a release goes through the exact per-document publish gate as a direct publish — a caller can only publish a release whose every member they could publish directly, an agent can never publish a release, and you can't pull a document you can't read into a release. Red-teamed exhaustively — **Risk: LOW** — verified by a live harness and a Playwright end-to-end test driving the real release routes over HTTP. This release also hardens the core publish gate to enforce a row-scoped `access.publish` rule against the target row (parity with `access.update`).
+
+  Opt-in via `releases: true`; fully backward-compatible.
+
 ## 0.23.0
 
 ### Minor Changes
