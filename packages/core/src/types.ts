@@ -679,6 +679,102 @@ export interface KernelConfig {
    *  a `blocking` rule that returns an `error` finding rejects the publish. Built-in
    *  factories (`a11yEval`, `seoEval`, `policyEval`, `brandEval`) can be dropped in. */
   evals?: EvalRule[]
+  /** AI-discoverability / GEO (Generative Engine Optimization) layer. When set,
+   *  `kernel.llmsTxt`/`llmsFullTxt`/`contentChunks`/`geoDocument` and the public
+   *  `GET /api/llms.txt`, `/api/llms-full.txt`, `/api/:collection/:id/geo`, and
+   *  `/api/content-chunks` routes emit your PUBLISHED, publicly-readable content as
+   *  llms.txt / clean markdown for AI answer engines. Generation runs through the real
+   *  access pipeline as an ANONYMOUS principal, so drafts and access-restricted
+   *  documents (and read-denied fields) can never appear. Omit to expose, by default,
+   *  every collection that has a public read rule and a title field (never auth/upload
+   *  /system collections). */
+  discoverability?: DiscoverabilityConfig
+}
+
+/** Per-collection discoverability options. */
+export interface DiscoverabilityCollectionConfig {
+  slug: string
+  /** Field used as the document title in output. Defaults to `admin.useAsTitle`,
+   *  then a `title`/`name` field if present. */
+  titleField?: string
+  /** Field used for the one-line summary in llms.txt (falls back to a truncated body). */
+  descriptionField?: string
+  /** URL template for a document, e.g. `/blog/:slug`. `:field` tokens are replaced with
+   *  the document's (safely-encoded) field values; `:id` resolves to the document id.
+   *  Defaults to `/<slug>/:id`. Joined onto `baseUrl`. */
+  urlPattern?: string
+  /** Field whose rendered markdown is the document body (richText/text/textarea).
+   *  Defaults to the first richText field, then the first textarea/text field. */
+  bodyField?: string
+  /** Explicitly include (`true`) or exclude (`false`) this collection. */
+  include?: boolean
+}
+
+/** AI-discoverability / GEO config. See {@link KernelConfig.discoverability}. */
+export interface DiscoverabilityConfig {
+  /** Site/project title for the llms.txt `# heading`. Defaults to the admin title or 'KernelCMS'. */
+  title?: string
+  /** One-line description for the llms.txt `> blockquote`. */
+  description?: string
+  /** Absolute origin prepended to every document URL (e.g. `https://example.com`).
+   *  Defaults to `config.serverURL`. Trusted config — never derived from documents. */
+  baseUrl?: string
+  /** Per-collection overrides. Collections not listed use sensible defaults; an entry
+   *  with `include:false` is excluded even if it would otherwise qualify. */
+  collections?: DiscoverabilityCollectionConfig[]
+  /** Max documents emitted per collection (bounds output size → DoS guard). Default 1000. */
+  maxDocsPerCollection?: number
+  /** Max documents emitted across the whole corpus (llms-full.txt / chunks). Default 5000. */
+  maxDocsTotal?: number
+}
+
+/** Resolved discoverability settings (after sanitize). `enabled` is false when the
+ *  feature was not configured; the ops then throw a clean "not enabled" error. */
+export interface SanitizedDiscoverability {
+  enabled: boolean
+  title?: string
+  description?: string
+  baseUrl?: string
+  collections: DiscoverabilityCollectionConfig[]
+  maxDocsPerCollection: number
+  maxDocsTotal: number
+}
+
+export interface LlmsTxtOptions {
+  /** Override the configured per-collection document cap for this call (clamped). */
+  limit?: number
+}
+
+export interface ContentChunksOptions {
+  /** Narrow to a single collection; omit to chunk every discoverable collection. */
+  collection?: string
+  /** Max chunks to return (clamped to the configured corpus cap). */
+  limit?: number
+}
+
+/** A retrieval-ready content chunk for RAG / GEO ingestion. One per published doc. */
+export interface ContentChunk {
+  id: string
+  collection: string
+  title: string
+  /** Absolute canonical URL (baseUrl + resolved urlPattern). */
+  url: string
+  /** The chunk text (clean markdown body, title-prefixed). */
+  text: string
+  /** Rough token estimate (~4 chars/token) for budgeting an ingestion pipeline. */
+  tokensEstimate: number
+  /** ISO last-updated timestamp, when the collection keeps timestamps. */
+  updatedAt: string | null
+  /** Provenance rollup (created/last-edited principals), when version history exists. */
+  provenance?: {
+    createdBy: PrincipalRef | null
+    lastEditedBy: PrincipalRef | null
+  }
+}
+
+export interface GeoDocumentOptions {
+  collection: string
+  id: string
 }
 
 export interface SanitizedLocalization {
@@ -760,6 +856,8 @@ export interface SanitizedConfig {
   signing: SanitizedSigningConfig
   /** Pre-publish eval rules, run at the publish chokepoint. Empty when unset. */
   evals: EvalRule[]
+  /** Resolved AI-discoverability / GEO settings. `enabled:false` when unconfigured. */
+  discoverability: SanitizedDiscoverability
 }
 
 // ---------------------------------------------------------------------------
@@ -1570,6 +1668,24 @@ export interface Kernel {
    *  the live content still matches the signed hash. Returns `valid:false` with a reason
    *  when the document was modified after signing (tamper) or the signature doesn't verify. */
   verifyContentCredential(opts: VerifyCredentialOptions): Promise<VerifyCredentialResult>
+  /** The llms.txt index for AI answer engines: the project `# title`, `> description`,
+   *  then a `## <Plural label>` section per discoverable collection listing each PUBLISHED,
+   *  publicly-readable document as `- [title](url): summary`. Generated as an anonymous
+   *  principal through the access pipeline, so drafts/private docs never appear. */
+  llmsTxt(opts?: LlmsTxtOptions): Promise<string>
+  /** The full llms-full.txt corpus: the same header, then a `## <title>` section per
+   *  published doc with its body rendered to clean markdown and a provenance/citation
+   *  footer (canonical URL, last-updated, signature-verified note when signed). Public
+   *  content only; output size is bounded by the configured caps. */
+  llmsFullTxt(opts?: LlmsTxtOptions): Promise<string>
+  /** Retrieval-ready content chunks (one per published doc) for RAG / GEO ingestion —
+   *  title, canonical URL, clean-markdown text, token estimate, and provenance. Public
+   *  content only; bounded by the configured caps. */
+  contentChunks(opts?: ContentChunksOptions): Promise<ContentChunk[]>
+  /** One published document as GEO-optimized markdown: a `# title`, the clean prose body,
+   *  and a citation block (author, last-updated, canonical URL, signature-verified status).
+   *  Returns null when the document is not found, not published, or not publicly readable. */
+  geoDocument(opts: GeoDocumentOptions): Promise<string | null>
   /** Apply the schema to the database (create tables / add columns / build indexes),
    *  recording a `_migrations` journal row when anything is applied. Pass
    *  `{ dryRun: true }` to compute the exact SQL it WOULD run and return the report

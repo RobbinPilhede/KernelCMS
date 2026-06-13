@@ -61,6 +61,13 @@ semantic and hybrid (Reciprocal Rank Fusion) search served through the same
 access-checked read path. Your CMS *is* your RAG knowledge base, instead of a CMS plus a
 Lambda plus a separate vector database you have to keep in sync.
 
+And the same content engine is **AI-discoverable**. Opt into `discoverability` and KernelCMS
+serves `llms.txt`, a full-text corpus, retrieval-ready content chunks, and per-document
+GEO markdown with provenance-backed citations — so answer engines (ChatGPT, Claude,
+Perplexity, Google AI) can ingest and cite your content. Every byte is generated as an
+anonymous principal over the same access-checked read path: only published, publicly
+readable content ever ships.
+
 ---
 
 ## Quickstart
@@ -325,6 +332,55 @@ const { docs } = await kernel.hybridSearch({ collection: 'posts', query: 'how do
 curl "http://localhost:3000/api/posts/semantic?q=how%20do%20I%20deploy&limit=10"
 curl "http://localhost:3000/api/posts/hybrid?q=how%20do%20I%20deploy"
 ```
+
+### AI discoverability (llms.txt & GEO)
+
+- **GEO-native.** Opt into `discoverability` and KernelCMS exposes your content to AI
+  answer engines through the emerging **llms.txt** standard — an index of your content
+  plus a full-text corpus, both with provenance/citation footers — so ChatGPT, Claude,
+  Perplexity, and Google AI can ingest and *cite* it. Omitting the key disables the
+  feature; defaults are safe — only collections with a public read and a title are
+  exposed, never auth/upload/system collections (unless `include: true`).
+- **Four ops, one access pipeline.** `kernel.llmsTxt()` (the index),
+  `kernel.llmsFullTxt()` (the full markdown corpus), `kernel.contentChunks({ collection?,
+  limit? })` (retrieval-ready chunks for RAG/GEO ingestion), and
+  `kernel.geoDocument({ collection, id })` (one published doc as GEO markdown with a
+  citation block — author, last-updated, canonical URL, and a signature-verified note
+  when content credentials are configured).
+
+```ts
+export default defineConfig({
+  discoverability: {
+    title: 'Acme Blog',
+    description: 'Guides and changelog from the Acme team.',
+    baseUrl: 'https://acme.com',
+    collections: [
+      { slug: 'posts', titleField: 'title', descriptionField: 'excerpt',
+        bodyField: 'body', urlPattern: '/blog/:slug' },
+    ],
+    // maxDocsPerCollection defaults to 1000, maxDocsTotal to 5000
+  },
+  collections: [/* … */],
+})
+
+// Local API — the llms.txt index (title, description, per-collection link lists):
+const indexTxt = await kernel.llmsTxt()
+```
+
+```bash
+curl http://localhost:3000/api/llms.txt          # text/plain — proxy to your site root /llms.txt
+curl http://localhost:3000/api/llms-full.txt     # text/plain — the full content corpus
+curl "http://localhost:3000/api/content-chunks?collection=posts&limit=50"  # JSON chunks
+curl http://localhost:3000/api/posts/<id>/geo    # text/markdown — one doc, with citation
+```
+
+The **published-only guarantee:** every generator reads through the access-checked
+pipeline as an *anonymous* principal filtering `_status === 'published'`, with no
+`overrideAccess`. Drafts, scheduled-but-unpublished docs, access-restricted documents,
+and read-denied fields never appear. Output is size-bounded by `maxDocsPerCollection`
+(default 1000) and `maxDocsTotal` (default 5000). See the
+[AI discoverability guide](docs/ai-discoverability.md). (`toMarkdown(richTextDoc)` is
+also exported from `kernelcms/richtext`.)
 
 ### Auth
 

@@ -13,6 +13,7 @@ import type {
 import { sanitizeConfig } from './config'
 import { compileSchema, MIGRATIONS_TABLE } from './schema'
 import { createOperations } from './operations'
+import { createDiscoverability } from './discoverability'
 import { createCachedDb } from './cache'
 import { CACHE_SLUG, JOBS_SLUG } from './config'
 import { BadRequestError, isKernelError } from './errors'
@@ -212,6 +213,17 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
 
   const ops = createOperations({ config: sanitized, db: opDb, logger })
 
+  // AI-discoverability / GEO generators. They read PUBLISHED, publicly-readable content
+  // through the access-checked ops as an anonymous principal (never overrideAccess), so
+  // drafts/private docs can never leak. Built unconditionally; the ops throw cleanly when
+  // `config.discoverability` is not enabled.
+  const discoverability = createDiscoverability(sanitized, {
+    find: ops.find,
+    provenance: ops.provenance,
+    getContentCredential: ops.getContentCredential,
+    verifyContentCredential: ops.verifyContentCredential,
+  })
+
   // RBAC boot: reconcile the runtime store with the `_roles` table. On first boot
   // (table empty) the config-seeded roles are written so they're persisted/editable;
   // on later boots the persisted rows are merged into the store so runtime edits made
@@ -387,6 +399,10 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     provenance: ops.provenance,
     getContentCredential: ops.getContentCredential,
     verifyContentCredential: ops.verifyContentCredential,
+    llmsTxt: discoverability.llmsTxt,
+    llmsFullTxt: discoverability.llmsFullTxt,
+    contentChunks: discoverability.contentChunks,
+    geoDocument: discoverability.geoDocument,
     async migrate(opts?: MigrateRunOptions): Promise<MigrationReport> {
       const dryRun = opts?.dryRun === true
       const report = await sanitized.db.migrate(schema, { dryRun })

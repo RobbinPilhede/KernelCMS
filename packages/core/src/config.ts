@@ -4,10 +4,12 @@ import type {
   AnyField,
   CollectionConfig,
   ConfigField,
+  DiscoverabilityCollectionConfig,
   EvalRule,
   GlobalConfig,
   KernelConfig,
   SanitizedConfig,
+  SanitizedDiscoverability,
   SanitizedLocalization,
   SanitizedSigningConfig,
 } from './types'
@@ -395,6 +397,84 @@ function sanitizeReview(review: KernelConfig['review'], hasAgents: boolean): { e
   return { enabled: hasAgents }
 }
 
+/** Default per-collection document cap for discoverability output (DoS guard). */
+const DEFAULT_DISCO_DOCS_PER_COLLECTION = 1000
+/** Default whole-corpus document cap for discoverability output (DoS guard). */
+const DEFAULT_DISCO_DOCS_TOTAL = 5000
+
+/** A positive, finite integer clamp with a fallback (for the output-size bounds). */
+function clampPositiveInt(value: unknown, fallback: number): number {
+  const n = Math.floor(Number(value))
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
+/**
+ * Resolve the AI-discoverability / GEO setting. OFF by default. When configured,
+ * collections are selected by an opt-in/opt-out list merged with a safe default:
+ * a collection is exposed only if it is NOT an auth/upload/system collection and is
+ * not admin-hidden — the kinds of content a site would never publish to an AI engine.
+ * The REAL security boundary is the anonymous access pipeline at generation time; this
+ * selection just bounds WHICH collections are even considered. Per-collection entries
+ * are validated against real collections (unknown slugs rejected fail-fast).
+ */
+function sanitizeDiscoverability(
+  config: KernelConfig,
+  collections: CollectionConfig[],
+  collectionsBySlug: Record<string, CollectionConfig>,
+): SanitizedDiscoverability {
+  const disco = config.discoverability
+  if (!disco) {
+    return {
+      enabled: false,
+      collections: [],
+      maxDocsPerCollection: DEFAULT_DISCO_DOCS_PER_COLLECTION,
+      maxDocsTotal: DEFAULT_DISCO_DOCS_TOTAL,
+    }
+  }
+
+  const overrides = new Map<string, DiscoverabilityCollectionConfig>()
+  for (const entry of disco.collections ?? []) {
+    assert(
+      typeof entry.slug === 'string' && Boolean(collectionsBySlug[entry.slug]),
+      `discoverability references unknown collection "${entry.slug}"`,
+    )
+    overrides.set(entry.slug, entry)
+  }
+
+  // System collections are never exposed. Auth (user accounts) and upload (binary
+  // metadata) collections are excluded by default but MAY be force-included via an
+  // explicit `{ include: true }` override (the anonymous read still gates content).
+  const SYSTEM_SLUGS = new Set([JOBS_SLUG, CACHE_SLUG])
+  const resolved: DiscoverabilityCollectionConfig[] = []
+  for (const c of collections) {
+    if (SYSTEM_SLUGS.has(c.slug)) continue
+    const override = overrides.get(c.slug)
+    const defaultInclude = !c.auth && !c.upload && !c.admin?.hidden
+    const include = override?.include ?? defaultInclude
+    if (!include) continue
+    resolved.push({
+      slug: c.slug,
+      ...(override?.titleField ? { titleField: override.titleField } : {}),
+      ...(override?.descriptionField ? { descriptionField: override.descriptionField } : {}),
+      ...(override?.bodyField ? { bodyField: override.bodyField } : {}),
+      ...(override?.urlPattern ? { urlPattern: override.urlPattern } : {}),
+    })
+  }
+
+  // baseUrl falls back to serverURL; strip a trailing slash so URL joins are clean.
+  const baseUrl = (disco.baseUrl ?? config.serverURL ?? 'http://localhost:3000').replace(/\/+$/, '')
+
+  return {
+    enabled: true,
+    ...(disco.title ? { title: disco.title } : {}),
+    ...(disco.description ? { description: disco.description } : {}),
+    baseUrl,
+    collections: resolved,
+    maxDocsPerCollection: clampPositiveInt(disco.maxDocsPerCollection, DEFAULT_DISCO_DOCS_PER_COLLECTION),
+    maxDocsTotal: clampPositiveInt(disco.maxDocsTotal, DEFAULT_DISCO_DOCS_TOTAL),
+  }
+}
+
 export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   assert(config.db, 'a database adapter is required (config.db)')
   assert(Array.isArray(config.collections), 'config.collections must be an array')
@@ -597,6 +677,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     review: sanitizeReview(config.review, agents.length > 0),
     signing: sanitizeSigning(config.signing),
     evals: sanitizeEvals(config.evals),
+    discoverability: sanitizeDiscoverability(config, collections, collectionsBySlug),
     ...(config.search ? { search: config.search } : {}),
     ...(config.embeddings ? { embeddings: config.embeddings } : {}),
     ...(vector ? { vector } : {}),

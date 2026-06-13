@@ -490,6 +490,40 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return json({ status: 'ok', db: health }, health.status === 'ok' ? 200 : 503)
   }
 
+  // AI-discoverability / GEO surface. ALL of these are PUBLIC (no auth) but emit ONLY
+  // PUBLISHED, publicly-readable content: core generates them as an anonymous principal
+  // through the access pipeline, so drafts/private docs can never appear. Users typically
+  // proxy GET /api/llms.txt to their site root /llms.txt.
+  if (
+    segments.length === 1 &&
+    method === 'GET' &&
+    (segments[0] === 'llms.txt' || segments[0] === 'llms-full.txt' || segments[0] === 'content-chunks')
+  ) {
+    if (!kernel.config.discoverability.enabled) {
+      return json({ error: { code: 'NOT_FOUND', message: 'Discoverability is not enabled.' } }, 404)
+    }
+    const limit = toNum(url.searchParams.get('limit'))
+    if (segments[0] === 'llms.txt') {
+      return textResponse(
+        await kernel.llmsTxt({ ...(limit !== undefined ? { limit } : {}) }),
+        'text/plain; charset=utf-8',
+      )
+    }
+    if (segments[0] === 'llms-full.txt') {
+      return textResponse(
+        await kernel.llmsFullTxt({ ...(limit !== undefined ? { limit } : {}) }),
+        'text/plain; charset=utf-8',
+      )
+    }
+    // /content-chunks?collection=&limit= -> JSON array of retrieval-ready chunks.
+    const collectionParam = url.searchParams.get('collection')
+    const chunks = await kernel.contentChunks({
+      ...(collectionParam ? { collection: collectionParam } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    })
+    return json({ chunks })
+  }
+
   // /_config -> serializable admin schema descriptor
   if (segments.length === 1 && segments[0] === '_config') {
     return json(describeConfig(kernel.config))
@@ -1121,6 +1155,17 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       if (!doc) throw new NotFoundError()
       return json(doc)
     }
+    // GET /:collection/:id/geo -> one published doc as GEO-optimized markdown. PUBLIC,
+    // published-only: core resolves it as an anonymous principal, so a draft/private id
+    // yields null -> 404 (never leaked).
+    if (segments[2] === 'geo' && method === 'GET') {
+      if (!kernel.config.discoverability.enabled) {
+        return json({ error: { code: 'NOT_FOUND', message: 'Discoverability is not enabled.' } }, 404)
+      }
+      const markdown = await kernel.geoDocument({ collection, id })
+      if (markdown == null) throw new NotFoundError()
+      return textResponse(markdown, 'text/markdown; charset=utf-8')
+    }
     return methodNotAllowed()
   }
 
@@ -1484,6 +1529,12 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
   })
+}
+
+/** A plain-text/markdown body response (llms.txt / geo). `nosniff` is added by the
+ *  shared security-header pass; the explicit content-type keeps AI crawlers happy. */
+function textResponse(body: string, contentType: string): Response {
+  return new Response(body, { status: 200, headers: { 'content-type': contentType } })
 }
 
 /**

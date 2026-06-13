@@ -33,6 +33,14 @@ export default defineConfig({
   // RAG-native: full-text adapter + a pluggable embedder power /semantic + /hybrid.
   search: memorySearch(),
   embeddings: { embed: demoEmbed, dimensions: DIM },
+  // AI discoverability (GEO): /api/llms.txt, /api/llms-full.txt, /geo — public,
+  // published-only. Exposes articles for AI answer engines to ingest + cite.
+  discoverability: {
+    title: 'KernelCMS Demo',
+    description: 'Demo content served for AI discoverability tests.',
+    baseUrl: 'http://localhost:3100',
+    collections: [{ slug: 'articles', titleField: 'title', descriptionField: 'summary', urlPattern: '/articles/:id' }],
+  },
   collections: [
     {
       slug: 'media',

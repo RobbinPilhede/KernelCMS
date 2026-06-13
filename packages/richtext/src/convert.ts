@@ -164,3 +164,147 @@ function linkHtml(node: LinkNode, opts: ToHTMLOptions): string {
   if (node.newTab) attrs.push('target="_blank"', `rel="${escapeHtml(node.rel ?? 'noopener noreferrer')}"`)
   return `<a ${attrs.join(' ')}>${inlineHtml(node.children, opts)}</a>`
 }
+
+// ── toMarkdown ──────────────────────────────────────────────────────────────
+//
+// KernelRichText → clean CommonMark, the inverse of `fromMarkdown`. Mirrors
+// `toHTML`'s node handling node-for-node (same exhaustive switch + assertNever),
+// so a new node/mark type is a compile error until handled here too. Used by the
+// AI-discoverability layer (llms-full.txt, geoDocument) where models ingest
+// markdown. Pure + deterministic; no DOM, no editor dependency.
+
+export interface ToMarkdownOptions {
+  /** Resolve an internal document link to a URL. Defaults to `#`. */
+  resolveHref?: (ref: { relationTo: string; value: string }) => string
+}
+
+/** Marks wrap inner→outer as `[open, close]`, mirroring `MARK_TAGS`. Underline,
+ *  sub, and sup have no portable markdown form, so they pass through verbatim
+ *  (the text is preserved; only the styling is dropped). */
+const MARK_MD: Record<Mark['type'], [open: string, close: string]> = {
+  bold: ['**', '**'],
+  italic: ['_', '_'],
+  strike: ['~~', '~~'],
+  code: ['`', '`'],
+  underline: ['', ''],
+  sub: ['', ''],
+  sup: ['', ''],
+}
+
+/** Escape the characters that would otherwise be parsed as markdown syntax in a
+ *  text run. Conservative on purpose: only the structural metacharacters, so
+ *  ordinary prose stays readable. */
+function escapeMarkdown(s: string): string {
+  return s.replace(/([\\`*_{}\[\]()#+\-!>])/g, '\\$1')
+}
+
+/** Escape link/image label text: only `[` and `]` can break the `[label]` span. */
+function escapeMarkdownLabel(s: string): string {
+  return s.replace(/([\\\[\]])/g, '\\$1')
+}
+
+/** Escape a URL placed inside `(...)`: parentheses and whitespace would break the
+ *  `(url)` span. `encodeURIComponent` leaves `(` `)` untouched (they're unreserved),
+ *  so percent-encode them explicitly. */
+function escapeMarkdownUrl(s: string): string {
+  return s.replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/\s/g, '%20')
+}
+
+export function toMarkdown(doc: KernelRichText, opts: ToMarkdownOptions = {}): string {
+  return doc.children
+    .map((n) => blockMd(n, opts))
+    .filter((s) => s.length > 0)
+    .join('\n\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function blockMd(node: RichBlockNode, opts: ToMarkdownOptions): string {
+  switch (node.type) {
+    case 'paragraph':
+      return inlineMd(node.children, opts)
+    case 'heading':
+      return `${'#'.repeat(node.level)} ${inlineMd(node.children, opts)}`
+    case 'quote':
+      return node.children
+        .map((n) => blockMd(n, opts))
+        .filter((s) => s.length > 0)
+        .join('\n\n')
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n')
+    case 'list':
+      return listMd(node, opts)
+    case 'listItem':
+      // A bare listItem (outside a list) renders as a single bullet line.
+      return `- ${itemBody(node, opts)}`
+    case 'codeBlock':
+      return `\`\`\`${node.language ?? ''}\n${node.code}\n\`\`\``
+    case 'hr':
+      return '---'
+    case 'upload':
+      return node.alt ? `![${escapeMarkdownLabel(node.alt)}]()` : ''
+    case 'block':
+      return ''
+    default:
+      return assertNever(node)
+  }
+}
+
+function listMd(node: { ordered: boolean; children: RichBlockNode[] }, opts: ToMarkdownOptions): string {
+  return node.children
+    .map((item, i) => {
+      const marker = node.ordered ? `${i + 1}.` : '-'
+      const body = item.type === 'listItem' ? itemBody(item, opts) : blockMd(item, opts)
+      // Continuation lines (multi-block items) are indented to align under the marker.
+      const indented = body.split('\n').join(`\n${' '.repeat(marker.length + 1)}`)
+      return `${marker} ${indented}`
+    })
+    .join('\n')
+}
+
+/** Render a listItem's children to inline-ish markdown (paragraphs joined by blank
+ *  lines, nested lists/blocks rendered then indented by the caller). */
+function itemBody(node: { children: RichBlockNode[] }, opts: ToMarkdownOptions): string {
+  return node.children
+    .map((n) => blockMd(n, opts))
+    .filter((s) => s.length > 0)
+    .join('\n\n')
+}
+
+function inlineMd(nodes: RichInlineNode[], opts: ToMarkdownOptions): string {
+  return nodes.map((n) => inlineNodeMd(n, opts)).join('')
+}
+
+function inlineNodeMd(node: RichInlineNode, opts: ToMarkdownOptions): string {
+  switch (node.type) {
+    case 'text':
+      return wrapMarksMd(node)
+    case 'link':
+      return linkMd(node, opts)
+    case 'relationship':
+      return ''
+    case 'upload':
+      return node.alt ? `![${escapeMarkdownLabel(node.alt)}]()` : ''
+    default:
+      return assertNever(node)
+  }
+}
+
+function wrapMarksMd(node: TextNode): string {
+  // A code mark escapes nothing inside the backticks; other marks wrap escaped text.
+  const isCode = node.marks?.some((m) => m.type === 'code') ?? false
+  let md = isCode ? node.text : escapeMarkdown(node.text)
+  for (let i = (node.marks?.length ?? 0) - 1; i >= 0; i--) {
+    const [open, close] = MARK_MD[node.marks![i]!.type]
+    md = `${open}${md}${close}`
+  }
+  return md
+}
+
+function linkMd(node: LinkNode, opts: ToMarkdownOptions): string {
+  const raw = node.doc ? (opts.resolveHref?.(node.doc) ?? '#') : (node.url ?? '#')
+  const href = safeHref(String(raw))
+  const label = inlineMd(node.children, opts)
+  return `[${label}](${escapeMarkdownUrl(href)})`
+}
