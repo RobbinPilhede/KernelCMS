@@ -1,5 +1,15 @@
 # kernelcms
 
+## 0.14.0
+
+### Minor Changes
+
+- **It just works at scale and on serverless — now tested promises, not claims.**
+  - **No artificial ceilings.** Other systems cap you (Contentful's 48 content types; Payload has been reported to struggle past ~100 collections). KernelCMS has no per-collection limit in the engine — you're bound only by your database and hardware. This is now proven by a harness that boots a real kernel with **200 collections** (deep relationship chains, drafts, a blocks page-builder) in ~30ms, migrates all 200 tables, and runs correct CRUD + relationship population across them — plus a 201st for good measure.
+  - **Serverless / connection-pool sanity.** The Postgres adapter is hardened for edge/serverless where connection mismanagement bites (the footgun Payload hits on Vercel): one module-scoped pool is reused across invocations, **every** checked-out client is released in a `finally` (audited path by path — the init probe was the one gap, now fixed), `idleTimeoutMillis` drains idle clients between invocations, `max` stays low-tunable, and shutdown is idempotent. Backed by a unit test with an instrumented pool proving **zero leaked clients** across migrate/CRUD/transactions (even when a transaction throws mid-flight), that the pool is created exactly once, and that shutting down twice is safe.
+
+  Both are pure hardening/proof — no API changes, fully backward-compatible.
+
 ## 0.13.0
 
 ### Minor Changes
