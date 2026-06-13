@@ -407,7 +407,10 @@ function BlocksInput({ field, value, onChange }: InputProps) {
               return (
                 <SortableItem id={key} key={key}>
                   {(handle) => (
-                    <div className={`block-card${isCollapsed ? ' is-collapsed' : ''}`}>
+                    <div
+                      className={`block-card${isCollapsed ? ' is-collapsed' : ''}`}
+                      data-path={`${field.name}.${i}`}
+                    >
                       <div className="block-head">
                         <button
                           ref={handle.ref}

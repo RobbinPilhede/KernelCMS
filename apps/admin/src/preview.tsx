@@ -4,7 +4,8 @@
 // renders the page's `blocks` into section markup. The built-in renderer knows
 // the common section types and falls back to a generic view otherwise. A real
 // project points live preview at its own frontend URL instead.
-import { useEffect, useState } from 'react'
+import { cloneElement, useEffect, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import DOMPurify from 'dompurify'
 import { fetchSchema } from './api'
 import type { AdminBlockMeta, AdminCollection, AdminFieldMeta } from './api'
@@ -62,21 +63,80 @@ export function PreviewPage({ collection }: { collection: string }) {
   if (!coll) return <div className="pv pv-empty">Loading preview…</div>
 
   const blockFields = coll.fields.filter((f) => f.type === 'blocks')
+  // Carry the source field name + its row index so each section knows its editor
+  // dot-path ("layout.0") for click-to-edit.
   const sections = blockFields.flatMap((f) =>
-    rows(data[f.name]).map((row) => ({ row, def: (f.blocks ?? []).find((b) => b.slug === row.blockType) })),
+    rows(data[f.name]).map((row, i) => ({
+      row,
+      def: (f.blocks ?? []).find((b) => b.slug === row.blockType),
+      path: `${f.name}.${i}`,
+    })),
   )
 
   return (
-    <div className="pv">
+    <div className="pv" onClick={onPreviewClick} onPointerOver={onPreviewHover} onPointerLeave={onPreviewLeave}>
       {sections.length === 0 && <div className="pv-empty">Add sections to see the page here.</div>}
-      {sections.map(({ row, def }, i) => (
-        <Section key={i} data={row} def={def} />
+      {sections.map(({ row, def, path }) => (
+        <Section key={path} data={row} def={def} path={path} />
       ))}
     </div>
   )
 }
 
-function Section({ data, def }: { data: Data; def?: AdminBlockMeta }) {
+// --- click-to-edit bridge (preview → editor) -------------------------------
+// Posts to the hosting editor on the admin origin only; never wildcard.
+function postToEditor(type: string, path: string | null): void {
+  window.parent?.postMessage({ type, path }, window.location.origin)
+}
+
+// Only `[data-kernel-path]` is ever stamped (see Section); nothing emits
+// `data-kernel-field`, so the walk-up resolves the section path alone.
+function nearestEl(target: EventTarget | null): Element | null {
+  if (!(target instanceof Element)) return null
+  return target.closest('[data-kernel-path]')
+}
+
+function nearestPath(target: EventTarget | null): string | null {
+  return nearestEl(target)?.getAttribute('data-kernel-path') ?? null
+}
+
+// Single local selection highlight, mirroring the editor-side focus. Reused on
+// each click so only the active section carries `.kernel-pv-selected`.
+let selectedEl: Element | null = null
+function onPreviewClick(e: ReactMouseEvent): void {
+  const el = nearestEl(e.target)
+  if (!el) return
+  if (selectedEl !== el) {
+    selectedEl?.classList.remove('kernel-pv-selected')
+    el.classList.add('kernel-pv-selected')
+    selectedEl = el
+  }
+  const path = el.getAttribute('data-kernel-path')
+  if (path) postToEditor('kernel-preview-select', path)
+}
+
+let lastHover: string | null = null
+function onPreviewHover(e: ReactPointerEvent): void {
+  const path = nearestPath(e.target)
+  if (path === lastHover) return
+  lastHover = path
+  postToEditor('kernel-preview-hover', path)
+}
+
+function onPreviewLeave(): void {
+  if (lastHover === null) return
+  lastHover = null
+  postToEditor('kernel-preview-hover', null)
+}
+
+function Section({ data, def, path }: { data: Data; def?: AdminBlockMeta; path: string }) {
+  const el = renderSection(data, def) as ReactElement<Record<string, unknown> & { className?: string }>
+  const className = [el.props.className, 'kernel-pv-block'].filter(Boolean).join(' ')
+  // Stamp the section's own root element so it stays full-bleed (no extra wrapper).
+  return cloneElement(el, { 'data-kernel-path': path, className })
+}
+
+function renderSection(data: Data, def?: AdminBlockMeta): ReactElement {
   switch (str(data.blockType)) {
     case 'hero':
       return <Hero data={data} />

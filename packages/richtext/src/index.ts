@@ -25,7 +25,7 @@ export type { RichTextFeature, RichTextPreset, ResolvedRichTextSchema, ResolveOp
 export { resolveRichTextSchema, presetFeatures } from './schema'
 
 export type { SanitizeResult, SanitizeWarning } from './sanitize'
-export { sanitizeRichText, textNode } from './sanitize'
+export { sanitizeRichText, textNode, safeHref } from './sanitize'
 
 export type { ToHTMLOptions } from './convert'
 export { toPlainText, toHTML, escapeHtml } from './convert'

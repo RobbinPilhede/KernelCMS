@@ -130,7 +130,7 @@ function FieldRow({
   error?: string
 }) {
   return (
-    <div className="field">
+    <div className="field" data-path={field.name}>
       <label className="field-label">
         {field.label}
         {field.required && <span className="req">*</span>}
@@ -168,7 +168,19 @@ const DEVICES = [
 
 /** Live preview iframe. Loads the same admin app in preview mode (same origin)
  *  and posts the current form data to it on every change. */
-function LivePreview({ slug, form, url }: { slug: string; form: Record<string, unknown>; url?: string }) {
+function LivePreview({
+  slug,
+  form,
+  url,
+  onSelectPath,
+  onHoverPath,
+}: {
+  slug: string
+  form: Record<string, unknown>
+  url?: string
+  onSelectPath?: (path: string) => void
+  onHoverPath?: (path: string | null) => void
+}) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [device, setDevice] = useState<(typeof DEVICES)[number]['id']>('desktop')
 
@@ -176,6 +188,11 @@ function LivePreview({ slug, form, url }: { slug: string; form: Record<string, u
   const formRef = useRef(form)
   formRef.current = form
   const readyRef = useRef(false)
+  // Same stale-closure guard for the click/hover callbacks the parent passes in.
+  const selectRef = useRef(onSelectPath)
+  selectRef.current = onSelectPath
+  const hoverRef = useRef(onHoverPath)
+  hoverRef.current = onHoverPath
 
   // When a frontend URL is configured, iframe the real site and post cross-origin
   // to its origin. Otherwise use the built-in same-origin preview renderer.
@@ -196,9 +213,15 @@ function LivePreview({ slug, form, url }: { slug: string; form: Record<string, u
     const onMessage = (e: MessageEvent) => {
       // Only react to the iframe we host, on the origin we post to.
       if (e.source !== iframeRef.current?.contentWindow || e.origin !== targetOrigin) return
-      if (e.data && e.data.type === 'kernel-preview-ready') {
+      if (!e.data || typeof e.data !== 'object') return
+      const msg = e.data as { type?: unknown; path?: unknown }
+      if (msg.type === 'kernel-preview-ready') {
         readyRef.current = true
         post()
+      } else if (msg.type === 'kernel-preview-select' && typeof msg.path === 'string') {
+        selectRef.current?.(msg.path)
+      } else if (msg.type === 'kernel-preview-hover') {
+        hoverRef.current?.(typeof msg.path === 'string' ? msg.path : null)
       }
     }
     window.addEventListener('message', onMessage)
@@ -245,6 +268,29 @@ function LivePreview({ slug, form, url }: { slug: string; form: Record<string, u
       </div>
     </aside>
   )
+}
+
+/** Progressively shorter prefixes of a dot-path, longest first:
+ *  "layout.0.heading" → ["layout.0.heading", "layout.0", "layout"]. Lets a
+ *  preview click on a nested field fall back to the nearest stamped wrapper. */
+export function resolvePathPrefixes(path: string): string[] {
+  const segs = path.split('.')
+  const out: string[] = []
+  for (let i = segs.length; i > 0; i--) out.push(segs.slice(0, i).join('.'))
+  return out
+}
+
+/** First editor field wrapper matching `path` or one of its shorter prefixes. */
+function findFieldNode(path: string): HTMLElement | null {
+  for (const p of resolvePathPrefixes(path)) {
+    const el = document.querySelector<HTMLElement>(`[data-path="${CSS.escape(p)}"]`)
+    if (el) return el
+  }
+  return null
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 }
 
 /** Turn a validation path like "layout.0.heading" into "layout › #1 › heading". */
@@ -1952,6 +1998,24 @@ export function EditView() {
   const errorFor = (name: string) => errors.find((e) => e.path === name || e.path.startsWith(`${name}.`))?.message
   const setField = (name: string) => (value: unknown) => setForm((prev) => ({ ...prev, [name]: value }))
 
+  // A click in the preview iframe focuses the matching editor field. The exact
+  // dot-path may target a node that isn't stamped (a leaf inside a block row), so
+  // fall back to progressively shorter prefixes until a wrapper is found.
+  const focusFieldByPath = (path: string) => {
+    const el = findFieldNode(path)
+    if (!el) return
+    el.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    const focusable = el.querySelector<HTMLElement>('input, textarea, select, [contenteditable="true"]')
+    focusable?.focus()
+    el.classList.add('is-flash')
+    window.setTimeout(() => el.classList.remove('is-flash'), 900)
+  }
+
+  const hoverFieldByPath = (path: string | null) => {
+    document.querySelectorAll('.is-hover-target').forEach((n) => n.classList.remove('is-hover-target'))
+    if (path) findFieldNode(path)?.classList.add('is-hover-target')
+  }
+
   const sidebarFields = fields.filter((f) => f.admin?.position === 'sidebar')
   const tabs = groupTabs(fields.filter((f) => f.admin?.position !== 'sidebar'))
   const tab = tabs[Math.min(activeTab, tabs.length - 1)] ?? tabs[0]
@@ -2114,7 +2178,13 @@ export function EditView() {
           </motion.div>
         </div>
         {showPreview && (
-          <LivePreview slug={slug} form={form} url={collection.livePreview ? collection.livePreview.url : undefined} />
+          <LivePreview
+            slug={slug}
+            form={form}
+            url={collection.livePreview ? collection.livePreview.url : undefined}
+            onSelectPath={focusFieldByPath}
+            onHoverPath={hoverFieldByPath}
+          />
         )}
       </div>
     </div>
@@ -2318,7 +2388,7 @@ export function GlobalView() {
       {saved && !saveError && <div className="ok">Saved.</div>}
       <motion.div className="form" variants={listContainer} initial="initial" animate="animate">
         {global.fields.map((field) => (
-          <motion.div className="field" key={field.name} variants={itemVariants}>
+          <motion.div className="field" data-path={field.name} key={field.name} variants={itemVariants}>
             <label className="field-label">
               {field.label}
               {field.required && <span className="req">*</span>}

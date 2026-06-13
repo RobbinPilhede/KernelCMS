@@ -1176,6 +1176,34 @@ a {
   color: var(--danger);
   font-size: 12px;
 }
+/* Click-to-edit: a preview click flashes the matching field; hovering a preview
+   section outlines it. The flash decays via animation; reduced-motion gets a
+   static ring instead. */
+.field.is-flash,
+.block-card.is-flash {
+  animation: field-flash 0.9s ease-out;
+  border-radius: 8px;
+}
+.field.is-hover-target,
+.block-card.is-hover-target {
+  box-shadow: 0 0 0 2px var(--primary);
+  border-radius: 8px;
+}
+@keyframes field-flash {
+  from {
+    box-shadow: 0 0 0 3px var(--primary);
+  }
+  to {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .field.is-flash,
+  .block-card.is-flash {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--primary);
+  }
+}
 .input {
   width: 100%;
   padding: 9px 11px;
@@ -1771,6 +1799,24 @@ a {
   padding: 40px;
   text-align: center;
 }
+/* Click-to-edit affordance: each section is clickable to focus its editor field.
+   A subtle inset outline on hover keeps full-bleed layouts intact. */
+[data-kernel-path] {
+  cursor: pointer;
+}
+[data-kernel-path]:hover {
+  outline: 2px solid rgba(221, 198, 139, 0.7);
+  outline-offset: -2px;
+}
+.kernel-pv-selected {
+  outline: 2px solid var(--gold);
+  outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-kernel-path]:hover {
+    outline-color: rgba(221, 198, 139, 0.9);
+  }
+}
 
 .s-pad {
   padding: clamp(48px, 7vw, 104px) clamp(20px, 6vw, 72px);
@@ -2217,21 +2263,25 @@ a {
   background: var(--border);
 }
 .rte-surface {
-  min-height: 160px;
-  padding: 12px 14px;
   border: 0;
   border-radius: 0;
-  line-height: 1.6;
-  outline: none;
   overflow-wrap: anywhere;
 }
-.rte-surface:focus-visible {
+/* ProseMirror mounts a contentEditable child; that node is the editable surface. */
+.rte-surface .ProseMirror {
+  min-height: 160px;
+  padding: 12px 14px;
+  line-height: 1.6;
+  outline: none;
+  white-space: pre-wrap;
+}
+.rte-surface .ProseMirror:focus-visible {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 35%, transparent);
 }
-.rte-surface > :first-child {
+.rte-surface .ProseMirror > :first-child {
   margin-top: 0;
 }
-.rte-surface > :last-child {
+.rte-surface .ProseMirror > :last-child {
   margin-bottom: 0;
 }
 .rte-surface p {
