@@ -933,6 +933,11 @@ export function createOperations(ctx: OperationCtx) {
       row._status = statusFromData(opts.data as Row, 'draft')
       // Born-published: a new doc whose status is 'published' is a publish transition.
       if (!override && row._status === 'published') await assertCanPublish(collection, req, undefined, opts.data as Row)
+      // Agent draft-only brake, scheduled-publish variant: a non-null `_scheduled_at` on
+      // create schedules a publish processScheduledPublishes() runs under override — a
+      // publish by proxy. An agent can never schedule one (mirrors the update() guard).
+      const sched = (opts.data as Row)._scheduled_at
+      if (!override && sched != null && req.user?.principalType === 'agent') throw new ForbiddenError()
     }
 
     const created = await db.create({ collection: collection.slug, data: row })
@@ -1074,6 +1079,11 @@ export function createOperations(ctx: OperationCtx) {
       // Scheduled-publish time is a system column; let publish()/processScheduled set it.
       if (Object.prototype.hasOwnProperty.call(opts.data, '_scheduled_at')) {
         const at = (opts.data as Row)._scheduled_at
+        // Agent draft-only brake, scheduled-publish variant: a non-null `_scheduled_at`
+        // schedules a publish that processScheduledPublishes() later runs under override
+        // — a publish by proxy. Treat it like `_status:'published'`: an agent can never
+        // schedule one. Clearing it to null is harmless and stays allowed.
+        if (!override && at != null && req.user?.principalType === 'agent') throw new ForbiddenError()
         row._scheduled_at = at == null ? null : new Date(String(at)).toISOString()
       }
     }

@@ -19,9 +19,19 @@ function config() {
         fields: [{ name: 'title', type: 'text' }],
       },
       // Auth collection: introspecting user/credential schema is a footgun — excluded.
-      { slug: 'users', auth: true, fields: [{ name: 'name', type: 'text' }] },
+      // Sensitive field NAMES here must never reach the agent-facing descriptor.
+      {
+        slug: 'users',
+        auth: true,
+        fields: [
+          { name: 'name', type: 'text' },
+          { name: 'api_key', type: 'text' },
+          { name: 'reset_token', type: 'text' },
+          { name: 'totp_secret', type: 'text' },
+        ],
+      },
       // Hidden collection: excluded from the resource surface too.
-      { slug: 'secrets', admin: { hidden: true }, fields: [{ name: 'value', type: 'text' }] },
+      { slug: 'secrets', admin: { hidden: true }, fields: [{ name: 'hash', type: 'text' }] },
     ],
   })
 }
@@ -71,9 +81,17 @@ describe('MCP resources expose the content model', () => {
 
     const block = result.contents[0]
     expect(block?.mimeType).toBe('application/json')
-    const schema = JSON.parse(contentText(block)) as { collections: Array<{ slug: string }> }
+    const raw = contentText(block)
+    const schema = JSON.parse(raw) as { collections: Array<{ slug: string }> }
     const slugs = schema.collections.map((c) => c.slug)
     expect(slugs).toContain('posts')
+    // Auth + hidden collection slugs must NOT appear in the full-schema payload.
+    expect(slugs).not.toContain('users')
+    expect(slugs).not.toContain('secrets')
+    // Nor may any sensitive field NAME from those collections leak into the JSON.
+    for (const secret of ['api_key', 'hash', 'reset_token', 'totp_secret', 'password']) {
+      expect(raw).not.toContain(secret)
+    }
     await server.close()
   })
 

@@ -153,8 +153,9 @@ function jsonResource(uri: string, payload: AdminSchema | AdminCollection): Read
  * or any other transport the SDK provides.
  */
 export function createMcpServer(kernel: Kernel, options: McpServerOptions): Server {
-  // describeConfig already strips secrets/hidden columns and auth-collection
-  // internals, so the descriptor is safe to expose verbatim as a resource.
+  // describeConfig strips secret/hidden FIELD columns, but still lists hidden + auth
+  // COLLECTIONS (slug + field names). The agent surface must not see those, so we
+  // filter at this resource layer (not in describe.ts, which the admin/OpenAPI share).
   const schema = describeConfig(kernel.config)
   const tools = generateTools(schema, kernel.config.endpoints ?? [])
   const byName = new Map<string, ToolDef>(tools.map((t) => [t.name, t]))
@@ -163,6 +164,12 @@ export function createMcpServer(kernel: Kernel, options: McpServerOptions): Serv
   // per-collection descriptors exclude hidden + auth collections, matching the
   // tool surface (no user/credential schema is ever introspectable).
   const visibleCollections = schema.collections.filter((c) => !c.hidden && !c.auth)
+
+  // The full-schema resource must mirror that exclusion: serve only the visible
+  // collections, never the raw descriptor (which leaks auth/hidden slugs + field
+  // names like email/api_key/reset_token). Globals carry no auth/hidden concept
+  // (AdminGlobal has no such flags), so they pass through unfiltered.
+  const visibleSchema: AdminSchema = { ...schema, collections: visibleCollections }
 
   // Build the request context once per call. principalType is hard-pinned to
   // 'agent'; overrideAccess is deliberately omitted (falsy) so access is enforced.
@@ -202,7 +209,7 @@ export function createMcpServer(kernel: Kernel, options: McpServerOptions): Serv
 
   server.setRequestHandler(ReadResourceRequestSchema, (request): ReadResourceResult => {
     const { uri } = request.params
-    if (uri === SCHEMA_URI) return jsonResource(uri, schema)
+    if (uri === SCHEMA_URI) return jsonResource(uri, visibleSchema)
     const slug = collectionSlugFromUri(uri)
     if (slug !== null) {
       const coll = visibleCollections.find((c) => c.slug === slug)

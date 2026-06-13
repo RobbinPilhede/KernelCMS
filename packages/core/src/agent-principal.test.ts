@@ -166,6 +166,100 @@ describe('agent draft-only brake (can never publish)', () => {
     const unpublished = await kernel.unpublish({ collection: 'posts', id: draftId, req: bodyAgent })
     expect(unpublished?._status).toBe('draft')
   })
+
+  // Scheduled-publish bypass: setting `_scheduled_at` schedules a publish that the cron
+  // (processScheduledPublishes, override) would later execute — a publish by proxy. The
+  // agent brake must treat it exactly like a direct publish.
+  it('forbids scheduling a publish via update { _scheduled_at } (past time)', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString()
+    await expect(
+      kernel.update({ collection: 'posts', id: draftId, data: { _scheduled_at: past }, req: bodyAgent }),
+    ).rejects.toThrow()
+  })
+
+  it('forbids scheduling a publish via update { _scheduled_at } (future time)', async () => {
+    const future = new Date(Date.now() + 3_600_000).toISOString()
+    await expect(
+      kernel.update({ collection: 'posts', id: draftId, data: { _scheduled_at: future }, req: bodyAgent }),
+    ).rejects.toThrow()
+  })
+
+  it('forbids scheduling a publish on create { _scheduled_at }', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString()
+    await expect(
+      kernel.create({ collection: 'posts', data: { body: 'sneaky', _scheduled_at: past }, req: bodyAgent }),
+    ).rejects.toThrow()
+  })
+
+  it('does not persist a schedule after a forbidden agent attempt', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString()
+    await expect(
+      kernel.update({ collection: 'posts', id: draftId, data: { _scheduled_at: past }, req: bodyAgent }),
+    ).rejects.toThrow()
+    // Storage proof: with no pending schedule, the cron (run now, with the past time
+    // long elapsed) publishes nothing for this draft — the bypass is closed.
+    const result = await kernel.processScheduledPublishes({ now: new Date() })
+    expect(result.published).not.toContain(draftId)
+    const after = await kernel.findByID({ collection: 'posts', id: draftId, draft: true, overrideAccess: true })
+    expect(after?._status).toBe('draft')
+  })
+
+  it('an agent may clear _scheduled_at to null (harmless, never schedules a publish)', async () => {
+    const cleared = await kernel.update({
+      collection: 'posts',
+      id: draftId,
+      data: { _scheduled_at: null },
+      req: bodyAgent,
+    })
+    expect(cleared?._status).toBe('draft')
+  })
+})
+
+describe('scheduled publishing: human + cron paths unaffected by the agent brake', () => {
+  let kernel: Kernel
+  let draftId: string
+
+  beforeEach(async () => {
+    kernel = await initKernel(postsConfig(), { logLevel: 'error' })
+    await kernel.migrate()
+    const draft = await kernel.create({
+      collection: 'posts',
+      data: { title: 'Seed', body: 'seed', _status: 'draft' },
+      req: human,
+    })
+    draftId = draft.id
+  })
+  afterEach(async () => {
+    await kernel.destroy()
+  })
+
+  it('a human can schedule a publish (stays a draft; cron has not fired yet)', async () => {
+    const future = new Date(Date.now() + 3_600_000).toISOString()
+    const scheduled = await kernel.update({
+      collection: 'posts',
+      id: draftId,
+      data: { _scheduled_at: future },
+      req: human,
+    })
+    // Stays a draft until the cron fires; a cron run NOW finds nothing due.
+    expect(scheduled?._status).toBe('draft')
+    const result = await kernel.processScheduledPublishes({ now: new Date() })
+    expect(result.published).not.toContain(draftId)
+    const still = await kernel.findByID({ collection: 'posts', id: draftId, draft: true, overrideAccess: true })
+    expect(still?._status).toBe('draft')
+  })
+
+  it('processScheduledPublishes publishes a human-scheduled draft once due', async () => {
+    // Human schedules in the past so it is immediately due.
+    const past = new Date(Date.now() - 60_000).toISOString()
+    await kernel.update({ collection: 'posts', id: draftId, data: { _scheduled_at: past }, req: human })
+
+    const result = await kernel.processScheduledPublishes({ now: new Date() })
+    expect(result.published).toContain(draftId)
+
+    const published = await kernel.findByID({ collection: 'posts', id: draftId })
+    expect(published?._status).toBe('published')
+  })
 })
 
 describe('human principal is unchanged by the agent machinery', () => {

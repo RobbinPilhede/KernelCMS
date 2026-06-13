@@ -214,6 +214,10 @@ function sanitizeName(raw: string): string {
  * and the endpoint's `access` rule is the gate (enforced via `invokeEndpoint` with
  * the agent req). Endpoints without the flag are never exposed (least surprise).
  *
+ * SECURITY: an endpoint handler that calls `local.*` with `overrideAccess` runs
+ * OUTSIDE the agent field-scope/draft brakes — do not set `mcp: true` on such an
+ * endpoint, or a scoped agent gains full, unbrakable read/write through it.
+ *
  * Input schema: required string props for each `:param`, plus a free-form `body`
  * object. The endpoint's input parsers are opaque (`Parser<T>`), so — exactly as
  * OpenAPI marks them — the body is described as an unconstrained object.
