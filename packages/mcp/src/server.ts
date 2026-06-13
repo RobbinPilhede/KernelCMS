@@ -12,9 +12,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { FieldScope, Kernel, RequestContext, Where } from '@kernel/core'
-import { describeConfig, isKernelError } from '@kernel/core'
-import { generateTools, type ToolDef, type ToolOp } from './generate'
+import type { EndpointConfig, FieldScope, Kernel, RequestContext, Where } from '@kernel/core'
+import { describeConfig, invokeEndpoint, isKernelError } from '@kernel/core'
+import { generateTools, type ToolDef } from './generate'
 
 /** The agent identity the server acts as. `principalType` is forced to `'agent'`
  *  internally — callers cannot pass `'user'` to escape the agent brakes. */
@@ -82,7 +82,7 @@ function errorResult(err: unknown): CallToolResult {
  * or any other transport the SDK provides.
  */
 export function createMcpServer(kernel: Kernel, options: McpServerOptions): Server {
-  const tools = generateTools(describeConfig(kernel.config))
+  const tools = generateTools(describeConfig(kernel.config), kernel.config.endpoints ?? [])
   const byName = new Map<string, ToolDef>(tools.map((t) => [t.name, t]))
 
   // Build the request context once per call. principalType is hard-pinned to
@@ -102,7 +102,12 @@ export function createMcpServer(kernel: Kernel, options: McpServerOptions): Serv
   )
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+    tools: tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+      annotations: t.annotations,
+    })),
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
@@ -113,7 +118,7 @@ export function createMcpServer(kernel: Kernel, options: McpServerOptions): Serv
     const req = reqFor()
 
     try {
-      const result = await dispatch(kernel, tool.op, tool.target, args, req)
+      const result = await dispatch(kernel, tool, args, req)
       return textResult(result)
     } catch (err) {
       // KernelError (Forbidden/Unauthorized/Validation/…) and unexpected errors
@@ -131,15 +136,35 @@ export function createMcpServer(kernel: Kernel, options: McpServerOptions): Serv
   return server
 }
 
-/** Route a generated tool to its Local API op. `req` carries the agent principal;
- *  `overrideAccess` is never passed, so the op enforces access for this principal. */
+/** Narrow a tool arg to the `'user' | 'agent'` principal kind, or undefined. */
+function optPrincipalType(value: unknown): 'user' | 'agent' | undefined {
+  return value === 'user' || value === 'agent' ? value : undefined
+}
+
+/** Build raw endpoint input from flat tool args: declared `:param`s become string
+ *  path params, the rest of the body rides under `body`. `invokeEndpoint` re-runs
+ *  the endpoint's own parsers, so anything malformed becomes a ValidationError. */
+function endpointInput(
+  paramNames: readonly string[],
+  args: ToolArgs,
+): { params: Record<string, string>; body?: unknown } {
+  const params: Record<string, string> = {}
+  for (const name of paramNames) {
+    const value = args[name]
+    if (typeof value === 'string') params[name] = value
+  }
+  return { params, body: args.body }
+}
+
+/** Route a generated tool to its Local API op (or custom endpoint). `req` carries
+ *  the agent principal; `overrideAccess` is never passed, so access is enforced. */
 async function dispatch(
   kernel: Kernel,
-  op: ToolOp,
-  target: string,
+  tool: ToolDef,
   args: ToolArgs,
   req: Partial<RequestContext>,
 ): Promise<unknown> {
+  const { op, target } = tool
   switch (op) {
     case 'find':
       return kernel.find({
@@ -175,6 +200,32 @@ async function dispatch(
       return kernel.findGlobal({ slug: target, depth: optNumber(args.depth), ...localeReq(req, args) })
     case 'updateGlobal':
       return kernel.updateGlobal({ slug: target, data: dataFrom(args), ...localeReq(req, args) })
+    case 'count':
+      return kernel.count({
+        collection: target,
+        where: args.where && typeof args.where === 'object' ? (args.where as Where) : undefined,
+        ...localeReq(req, args),
+      })
+    case 'findVersions':
+      return kernel.findVersions({
+        collection: target,
+        id: requireId(args),
+        limit: optNumber(args.limit),
+        page: optNumber(args.page),
+        createdByType: optPrincipalType(args.createdByType),
+        ...localeReq(req, args),
+      })
+    case 'invokeEndpoint': {
+      // OPT-IN custom endpoint. The endpoint's `access` rule is the gate: we pass the
+      // agent `req` and never set overrideAccess, so invokeEndpoint authorizes the
+      // agent exactly as the HTTP path would, then runs the author's handler.
+      const endpoint = tool.endpoint as EndpointConfig
+      const { req: scoped } = localeReq(req, args)
+      return invokeEndpoint(kernel, endpoint, {
+        input: endpointInput(tool.paramNames ?? [], args),
+        req: scoped as RequestContext,
+      })
+    }
     default: {
       // Exhaustiveness: a new ToolOp must be handled above.
       const never: never = op

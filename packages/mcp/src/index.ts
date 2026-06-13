@@ -3,7 +3,7 @@
 // every call is routed through the in-process Local API as an agent principal.
 
 export { generateTools } from './generate'
-export type { ToolDef, ToolOp } from './generate'
+export type { ToolDef, ToolOp, ToolAnnotations } from './generate'
 export { createMcpServer } from './server'
 export type { AgentPrincipal, McpServerOptions } from './server'
 export { serveStdio } from './stdio'

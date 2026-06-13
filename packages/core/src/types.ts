@@ -921,6 +921,11 @@ export interface EndpointConfig<P = unknown, Q = unknown, B = unknown, R = unkno
   /** Optional summary + tags surfaced in generated OpenAPI docs. */
   summary?: string
   tags?: string[]
+  /** Opt this endpoint into the `@kernel/mcp` agent surface. When `true`, an MCP
+   *  tool is generated that runs this handler via the in-process Local API with the
+   *  agent principal — your `access` rule is the gate (no `overrideAccess`). Default
+   *  (omitted/false) keeps the endpoint OFF the agent surface (least surprise). */
+  mcp?: boolean
 }
 
 export interface EnqueueOptions {
