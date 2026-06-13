@@ -4,10 +4,12 @@ import type {
   AnyField,
   CollectionConfig,
   ConfigField,
+  EvalRule,
   GlobalConfig,
   KernelConfig,
   SanitizedConfig,
   SanitizedLocalization,
+  SanitizedSigningConfig,
 } from './types'
 import { effectiveFields, joinFields } from './fields'
 import { consoleEmail, type EmailAdapter } from './email'
@@ -219,6 +221,9 @@ const IDENT_RE = /^[a-z][a-z0-9_]*$/
 /** Minimum length for a production token-signing secret (a short one is brute-forceable). */
 const MIN_PRODUCTION_SECRET_LENGTH = 16
 
+/** Minimum length for an HMAC content-credential secret (a short MAC key is weak). */
+const MIN_SIGNING_SECRET_LENGTH = 16
+
 /** Identity helper that gives `kernel.config.ts` full type-checking and inference. */
 export function defineConfig(config: KernelConfig): KernelConfig {
   return config
@@ -335,6 +340,45 @@ function sanitizeAudit(audit: KernelConfig['audit']): { enabled: boolean } {
   if (audit === true) return { enabled: true }
   if (audit && typeof audit === 'object') return { enabled: audit.enabled === true }
   return { enabled: false }
+}
+
+/**
+ * Resolve the content-credential signing setting. OFF by default. A `secret` selects
+ * HMAC-SHA256; a `{ privateKey, publicKey }` pair selects the asymmetric algorithm
+ * (ed25519). Validated for SHAPE only — the key material is carried through verbatim
+ * and is server-only (it is never logged or returned anywhere). Disabled when unset.
+ */
+function sanitizeSigning(signing: KernelConfig['signing']): SanitizedSigningConfig {
+  if (!signing) return { enabled: false, algorithm: 'hmac-sha256' }
+  if ('secret' in signing) {
+    assert(
+      typeof signing.secret === 'string' && signing.secret.length >= MIN_SIGNING_SECRET_LENGTH,
+      `signing.secret must be at least ${MIN_SIGNING_SECRET_LENGTH} characters`,
+    )
+    return { enabled: true, algorithm: 'hmac-sha256', secret: signing.secret }
+  }
+  assert(
+    typeof signing.privateKey === 'string' && signing.privateKey.length > 0,
+    'signing requires a `privateKey` (or a `secret`)',
+  )
+  assert(typeof signing.publicKey === 'string' && signing.publicKey.length > 0, 'signing requires a `publicKey`')
+  const algorithm = signing.algorithm ?? 'ed25519'
+  assert(algorithm === 'ed25519', `unsupported signing algorithm "${algorithm}" (only 'ed25519' is supported)`)
+  return { enabled: true, algorithm: 'ed25519', privateKey: signing.privateKey, publicKey: signing.publicKey }
+}
+
+/** Validate the pre-publish eval rules: each needs a non-empty unique name and a
+ *  `run` function. The rules themselves run later at the publish chokepoint. */
+function sanitizeEvals(evals: KernelConfig['evals']): EvalRule[] {
+  if (!evals || evals.length === 0) return []
+  const names = new Set<string>()
+  for (const rule of evals) {
+    assert(typeof rule.name === 'string' && rule.name.length > 0, 'every eval rule needs a non-empty `name`')
+    assert(!names.has(rule.name), `duplicate eval rule name "${rule.name}"`)
+    names.add(rule.name)
+    assert(typeof rule.run === 'function', `eval rule "${rule.name}" needs a \`run\` function`)
+  }
+  return evals
 }
 
 /**
@@ -527,6 +571,8 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     rbac: { enabled: rbacEnabled },
     rbacStore,
     review: sanitizeReview(config.review, agents.length > 0),
+    signing: sanitizeSigning(config.signing),
+    evals: sanitizeEvals(config.evals),
     ...(config.search ? { search: config.search } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),

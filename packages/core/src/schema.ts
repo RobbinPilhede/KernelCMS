@@ -50,6 +50,12 @@ export const LOCKS_TABLE = '_locks'
  *  Active set is derived by a `lastSeen` TTL filter. Always provisioned. */
 export const PRESENCE_TABLE = '_presence'
 
+/** Storage table holding content credentials — one signed, tamper-evident manifest row
+ *  per publish (current + history). The signature covers the manifest; the manifest
+ *  embeds the published doc's content hash so a later edit is detectable. Always
+ *  provisioned (a system table); writes happen only when `config.signing` is enabled. */
+export const CREDENTIALS_TABLE = '_credentials'
+
 /** Compile the sanitized config into the storage-facing schema for the adapter. */
 export function compileSchema(config: SanitizedConfig): KernelSchema {
   const tables: TableSchema[] = []
@@ -91,6 +97,10 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
           // Principal kind that authored the snapshot ('user' | 'agent') so agent
           // changes are queryable for review. Nullable; defaults to 'user'.
           { name: 'createdByType', type: 'text', required: false, unique: false, indexed: true, localized: false },
+          // The approver of a review-approved publish (provenance chain). Nullable —
+          // only a publish-via-approval (or a non-review publish) sets it.
+          { name: 'approvedBy', type: 'text', required: false, unique: false, indexed: false, localized: false },
+          { name: 'approvedByType', type: 'text', required: false, unique: false, indexed: false, localized: false },
         ],
         timestamps: true,
         singleton: false,
@@ -212,6 +222,26 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
       { name: 'principalType', type: 'text', required: false, unique: false, indexed: false, localized: false },
       { name: 'kind', type: 'text', required: false, unique: false, indexed: false, localized: false },
       { name: 'lastSeen', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
+    ],
+    timestamps: true,
+    singleton: false,
+  })
+
+  // Content credentials. Always provisioned (a system table). A row per publish, holding
+  // the signed manifest (JSON) + signature + algorithm. `(collection, documentId)` is the
+  // lookup for the latest credential; `signedAt` orders the history newest-first. No key
+  // material is ever stored here — only the manifest claims, the signature, and the alg.
+  tables.push({
+    table: CREDENTIALS_TABLE,
+    slug: CREDENTIALS_TABLE,
+    columns: [
+      { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+      { name: 'documentId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+      { name: 'versionId', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      { name: 'manifest', type: 'json', required: false, unique: false, indexed: false, localized: false },
+      { name: 'signature', type: 'text', required: true, unique: false, indexed: false, localized: false },
+      { name: 'algorithm', type: 'text', required: true, unique: false, indexed: false, localized: false },
+      { name: 'signedAt', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
     ],
     timestamps: true,
     singleton: false,

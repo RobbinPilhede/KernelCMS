@@ -217,6 +217,9 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     listLocks: ops.listLocks,
     heartbeat: ops.heartbeat,
     getPresence: ops.getPresence,
+    provenance: ops.provenance,
+    getContentCredential: ops.getContentCredential,
+    verifyContentCredential: ops.verifyContentCredential,
     async migrate(opts?: MigrateRunOptions): Promise<MigrationReport> {
       const dryRun = opts?.dryRun === true
       const report = await sanitized.db.migrate(schema, { dryRun })

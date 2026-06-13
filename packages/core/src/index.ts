@@ -15,7 +15,20 @@ export {
   MIGRATIONS_TABLE,
   LOCKS_TABLE,
   PRESENCE_TABLE,
+  CREDENTIALS_TABLE,
 } from './schema'
+export { a11yEval, seoEval, policyEval, brandEval, runEvals } from './evals'
+export type { EvalResult, SeoEvalOptions, PolicyEvalOptions, BrandEvalOptions } from './evals'
+export {
+  canonicalJSON,
+  hashContent,
+  contentForHash,
+  createSigner,
+  signManifest,
+  verifyManifest,
+  CanonicalDepthError,
+} from './signing'
+export type { Signer, SigningAlgorithm, SanitizedSigning } from './signing'
 export { generateTypes } from './codegen'
 export type { CodegenInput } from './codegen'
 export { parseSort, mergeWhere, matchesWhere } from './query'

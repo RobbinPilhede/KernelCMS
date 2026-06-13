@@ -51,6 +51,7 @@ import type {
   DeleteManyOptions,
   EnqueueOptions,
   ProcessScheduledOptions,
+  ProcessScheduledResult,
   RunJobsOptions,
   RunJobsResult,
   SanitizedConfig,
@@ -63,6 +64,14 @@ import type {
   UploadConfig,
   UploadDocOptions,
   VersionDoc,
+  ProvenanceOptions,
+  Provenance,
+  ProvenanceEntry,
+  PrincipalRef,
+  GetCredentialOptions,
+  CredentialDoc,
+  VerifyCredentialOptions,
+  VerifyCredentialResult,
 } from './types'
 import {
   BadRequestError,
@@ -102,6 +111,7 @@ import { ROLES_TABLE, cloneRoleDef, assertValidRoleDef } from './rbac'
 import { matchesWhere, mergeWhere, parseSort } from './query'
 import {
   AUDIT_TABLE,
+  CREDENTIALS_TABLE,
   GLOBAL_ROW_ID,
   LOCKS_TABLE,
   PRESENCE_TABLE,
@@ -110,6 +120,8 @@ import {
   tableForGlobal,
   tableForVersions,
 } from './schema'
+import { createSigner, hashContent, signManifest, verifyManifest, type Signer, type ContentManifest } from './signing'
+import { runEvals } from './evals'
 
 export interface OperationCtx {
   config: SanitizedConfig
@@ -200,6 +212,11 @@ const WHERE_OPERATORS = new Set([
 
 export function createOperations(ctx: OperationCtx) {
   const { config, db, logger } = ctx
+
+  // Content-credential signer, built once from sanitized signing material. Null when
+  // signing is disabled. The key material lives only inside this closure — it is never
+  // read back out, logged, or serialized into a manifest/credential/error.
+  const signer: Signer | null = createSigner(config.signing)
 
   // identifier -> { failures, windowStart }. Scoped to this kernel instance.
   const loginFailures = new Map<string, { count: number; windowStart: number }>()
@@ -835,21 +852,25 @@ export function createOperations(ctx: OperationCtx) {
     if (!isAllowed(decision)) throw new ForbiddenError()
   }
 
-  /** Append a snapshot of `doc` to the collection's version table, trimming to maxPerDoc. */
+  /** Append a snapshot of `doc` to the collection's version table, trimming to maxPerDoc.
+   *  On a publish transition, `approver` records who approved/published it (the publishing
+   *  principal — which, for a review-approval, is the reviewer threaded through). */
   async function snapshotVersion(
     collection: CollectionConfig,
     doc: Doc,
     status: 'draft' | 'published',
     req: RequestContext,
     autosave = false,
-  ): Promise<void> {
+    approver?: { id: string | null; type: string } | null,
+  ): Promise<string | null> {
     const v = versionsOf(collection)
-    if (!v.enabled) return
+    if (!v.enabled) return null
     const table = tableForVersions(collection.slug)
+    const versionId = randomUUID()
     await db.create({
       collection: table,
       data: {
-        id: randomUUID(),
+        id: versionId,
         parent: String(doc.id),
         version: doc,
         status,
@@ -858,6 +879,9 @@ export function createOperations(ctx: OperationCtx) {
         // Attribute the snapshot to the principal kind so "review agent changes" is
         // queryable; humans (and system/override writes) record 'user'.
         createdByType: req.user?.principalType ?? 'user',
+        // Provenance: who approved this publish (null for a non-publish snapshot).
+        approvedBy: approver ? approver.id : null,
+        approvedByType: approver ? approver.type : null,
       },
     })
     if (v.maxPerDoc > 0) {
@@ -873,6 +897,99 @@ export function createOperations(ctx: OperationCtx) {
         for (const row of oldest.docs) await db.delete({ collection: table, id: String(row.id) })
       }
     }
+    return versionId
+  }
+
+  // -------------------------------------------------------------------------
+  // Pre-publish evals ("content CI") + content credentials (signing)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Run the configured pre-publish evals against the to-be-published document. A
+   * BLOCKING rule that returns an `ok:false` `error` finding REJECTS the publish with a
+   * ValidationError carrying every blocking finding. Non-blocking / warn / info findings
+   * are returned (so the caller can record them in the audit meta) but never block.
+   * No-op (returns no findings) when no evals are configured.
+   */
+  async function runPrePublishEvals(
+    collection: CollectionConfig,
+    doc: Row,
+    req: RequestContext,
+  ): Promise<{ findings: import('./types').EvalFinding[] }> {
+    if (config.evals.length === 0) return { findings: [] }
+    // Pass the collection's schema fields so schema-aware built-ins (a11y/policy/brand)
+    // can locate richText/upload fields on the to-be-published doc.
+    const { results, blocking } = await runEvals(config.evals, {
+      doc,
+      collection: collection.slug,
+      req,
+      fields: collection.fields,
+    })
+    if (blocking.length > 0) {
+      throw new ValidationError(
+        blocking.map((b) => ({ path: b.field ?? '_status', message: `[${b.rule}] ${b.message}` })),
+      )
+    }
+    // Strip the internal rule/blocking bookkeeping from what we hand back as findings.
+    return { findings: results.map(({ ok, severity, message, field }) => ({ ok, severity, message, field })) }
+  }
+
+  /**
+   * Sign a content credential for a freshly-published document and store it in the
+   * `_credentials` table. No-op when signing is disabled. The manifest embeds the
+   * content hash (so tampering is detectable) + who/what/when; the signature covers the
+   * canonical manifest. Best-effort: a credential-write failure is warned, never thrown,
+   * so it can't roll back the publish it records. NO key material is ever written.
+   */
+  async function signContentCredential(
+    collection: CollectionConfig,
+    row: Row,
+    req: RequestContext,
+    approver: PrincipalRef | null,
+    versionId: string | null,
+  ): Promise<void> {
+    if (!signer) return
+    try {
+      const manifest: ContentManifest = {
+        collection: collection.slug,
+        documentId: String(row.id),
+        // Hash the RAW stored row (locale-independent, deterministic) so verify can
+        // recompute the identical surface from the persisted row regardless of locale.
+        contentHash: hashContent(row as Record<string, unknown>),
+        author: { id: req.user?.id ?? null, type: req.user?.principalType ?? 'user' },
+        approver,
+        publishedAt: new Date().toISOString(),
+        versionId,
+      }
+      const signature = signManifest(signer, manifest)
+      await db.create({
+        collection: CREDENTIALS_TABLE,
+        data: {
+          id: randomUUID(),
+          collection: collection.slug,
+          documentId: String(row.id),
+          versionId,
+          manifest,
+          signature,
+          algorithm: signer.algorithm,
+          signedAt: manifest.publishedAt,
+        },
+      })
+    } catch (err) {
+      logger?.warn('Failed to write content credential', err)
+    }
+  }
+
+  /** The latest credential row for a (collection, documentId), or null. */
+  async function latestCredentialRow(collection: string, documentId: string): Promise<CredentialDoc | null> {
+    const res = await db.find({
+      collection: CREDENTIALS_TABLE,
+      where: { and: [{ collection: { equals: collection } }, { documentId: { equals: documentId } }] },
+      sort: [{ field: 'signedAt', direction: 'desc' }],
+      limit: 1,
+      page: 1,
+    })
+    return (res.docs[0] as CredentialDoc | undefined) ?? null
   }
 
   // -------------------------------------------------------------------------
@@ -886,6 +1003,19 @@ export function createOperations(ctx: OperationCtx) {
    */
   function principalKindFor(req: RequestContext, overrideAccess: boolean): AuditDoc['principalType'] {
     return req.user?.principalType ?? (overrideAccess ? 'system' : 'user')
+  }
+
+  /** Coerce a stored principal-type column into the closed union (defaults to 'user'). */
+  function normalizePrincipalType(value: unknown): PrincipalRef['type'] {
+    return value === 'agent' || value === 'system' ? value : 'user'
+  }
+
+  /** The principal acting on `req`, as a provenance ref. A request with a user resolves
+   *  to its id + kind (defaulting to 'user'); a user-less (system/override) call is the
+   *  'system' principal. */
+  function principalRefOf(req: RequestContext): PrincipalRef {
+    if (req.user) return { id: req.user.id ?? null, type: req.user.principalType ?? 'user' }
+    return { id: null, type: 'system' }
   }
 
   /**
@@ -1342,9 +1472,10 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   /** Publish all drafts whose scheduled time has arrived. Drive from a cron/job. */
-  async function processScheduledPublishes(opts: ProcessScheduledOptions = {}): Promise<{ published: string[] }> {
+  async function processScheduledPublishes(opts: ProcessScheduledOptions = {}): Promise<ProcessScheduledResult> {
     const nowIso = (opts.now ? new Date(opts.now) : new Date()).toISOString()
     const published: string[] = []
+    const skipped: ProcessScheduledResult['skipped'] = []
     for (const collection of config.collections) {
       if (!draftsOn(collection)) continue
       const due = await db.find({
@@ -1357,19 +1488,33 @@ export function createOperations(ctx: OperationCtx) {
       })
       for (const row of due.docs) {
         if (row._status === 'published') continue
-        await update(
-          {
-            collection: collection.slug,
-            id: String(row.id),
-            data: { _status: 'published', _scheduled_at: null } as Row,
-            overrideAccess: true,
-          },
-          'publish',
-        )
-        published.push(String(row.id))
+        try {
+          await update(
+            {
+              collection: collection.slug,
+              id: String(row.id),
+              data: { _status: 'published', _scheduled_at: null } as Row,
+              overrideAccess: true,
+            },
+            'publish',
+          )
+          published.push(String(row.id))
+        } catch (err) {
+          // A blocking pre-publish eval rejects with a ValidationError BEFORE the write +
+          // signing (see update()), so the doc is untouched: still a draft, still carrying
+          // its `_scheduled_at`, with NO content credential. That's an expected skip — log
+          // it, record it, and keep draining the queue. Any OTHER error is unexpected and
+          // must surface, not be silently swallowed.
+          if (err instanceof ValidationError) {
+            logger?.warn(`Scheduled publish skipped (blocking eval): ${collection.slug}/${String(row.id)}`, err.message)
+            skipped.push({ id: String(row.id), collection: collection.slug, reason: err.message })
+            continue
+          }
+          throw err
+        }
       }
     }
-    return { published }
+    return skipped.length > 0 ? { published, skipped } : { published }
   }
 
   async function unpublish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null> {
@@ -1420,13 +1565,24 @@ export function createOperations(ctx: OperationCtx) {
     // Strict: a newly-written locale must satisfy required localized fields for itself.
     assertLocaleRequired(collection, row, [localeWritten])
     row.id = randomUUID()
+    let bornPublished = false
+    let evalFindings: import('./types').EvalFinding[] = []
     if (draftsOn(collection)) {
       row._status = statusFromData(opts.data as Row, 'draft')
       // Born-published: a new doc whose status is 'published' is a publish transition.
-      if (!override && row._status === 'published') {
-        await assertCanPublish(collection, req, undefined, opts.data as Row)
-        // Strict publish gate also applies to a born-published create.
-        assertDefaultLocaleComplete(collection, row)
+      if (row._status === 'published') {
+        bornPublished = true
+        if (!override) {
+          await assertCanPublish(collection, req, undefined, opts.data as Row)
+          // Strict publish gate also applies to a born-published create.
+          assertDefaultLocaleComplete(collection, row)
+        }
+        // Content CI gates a born-published create exactly like an update→publish, and
+        // runs REGARDLESS of `override`: evals are server-defined config (not user input),
+        // so a scheduled / system / overrideAccess publish must not bypass a blocking
+        // eval. A blocking finding throws ValidationError here, BEFORE the DB write +
+        // signing — so a doc that fails content CI never goes live and never gets signed.
+        evalFindings = (await runPrePublishEvals(collection, data, req)).findings
       }
       // Agent draft-only brake, scheduled-publish variant: a non-null `_scheduled_at` on
       // create schedules a publish processScheduledPublishes() runs under override — a
@@ -1436,6 +1592,7 @@ export function createOperations(ctx: OperationCtx) {
     }
 
     const created = await db.create({ collection: collection.slug, data: row })
+    const nonOkFindings = evalFindings.filter((f) => !f.ok)
     await recordAudit({
       action: 'create',
       collection: collection.slug,
@@ -1443,11 +1600,25 @@ export function createOperations(ctx: OperationCtx) {
       req,
       overrideAccess: override,
       fields: auditedFields(opts.data as Row),
+      ...(nonOkFindings.length > 0 ? { meta: { evalFindings: nonOkFindings } } : {}),
     })
     let doc = rowToDoc(collection, created, req)
+    const approver: PrincipalRef | null = bornPublished ? principalRefOf(req) : null
+    let publishedVersionId: string | null = null
     if (versionsOf(collection).enabled) {
       const status = draftsOn(collection) ? statusFromData(created as Row, 'draft') : 'published'
-      await snapshotVersion(collection, rowToDoc(collection, created, req), status, req)
+      publishedVersionId = await snapshotVersion(
+        collection,
+        rowToDoc(collection, created, req),
+        status,
+        req,
+        false,
+        approver,
+      )
+    }
+    // Content credential for a born-published create.
+    if (bornPublished) {
+      await signContentCredential(collection, created, req, approver, publishedVersionId)
     }
     doc = (await runHooks(collection.hooks?.afterChange, { req, operation: 'create', doc }, 'doc')) as Doc
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
@@ -1613,15 +1784,32 @@ export function createOperations(ctx: OperationCtx) {
     // Strict: only the locale being written must satisfy its required localized fields;
     // locales already stored are never retroactively failed.
     assertLocaleRequired(collection, row, [localeWritten])
+    // True when this write transitions the doc into the published state — the single
+    // gate where evals run and a content credential is signed. Blocking evals run on
+    // EVERY publish transition (system/override included); only the access gates
+    // (assertCanPublish / default-locale completeness) are skipped under override.
+    let isPublishTransition = false
+    let evalFindings: import('./types').EvalFinding[] = []
     if (draftsOn(collection)) {
       row._status = statusFromData(opts.data as Row, (existing._status as string) ?? 'draft')
       // Publish transition: becoming published when not already. Covers publish()→update(),
       // a raw PATCH `{ _status: 'published' }`, and restoreVersion of a published snapshot.
-      if (!override && row._status === 'published' && existing._status !== 'published') {
-        await assertCanPublish(collection, req, opts.id, opts.data as Row)
-        // Strict publish gate: the DEFAULT locale must be complete (no required localized
-        // field missing) — you can't publish a doc whose primary language is unfinished.
-        assertDefaultLocaleComplete(collection, row)
+      if (row._status === 'published' && existing._status !== 'published') {
+        isPublishTransition = true
+        if (!override) {
+          await assertCanPublish(collection, req, opts.id, opts.data as Row)
+          // Strict publish gate: the DEFAULT locale must be complete (no required localized
+          // field missing) — you can't publish a doc whose primary language is unfinished.
+          assertDefaultLocaleComplete(collection, row)
+        }
+        // Content CI: run pre-publish evals on the to-be-published doc. A blocking
+        // `error` finding throws ValidationError here, BEFORE the write — so a doc that
+        // fails content CI stays a draft. Runs REGARDLESS of `override`: evals are
+        // server-defined config (not user input), so a scheduled publish (via
+        // processScheduledPublishes → overrideAccess:true) or any direct overrideAccess
+        // publish must NOT bypass a blocking eval. The throw lands before the DB write +
+        // signing, so an eval-failing doc never goes live and never gets a credential.
+        evalFindings = (await runPrePublishEvals(collection, merged, req)).findings
       }
       // Scheduled-publish time is a system column; let publish()/processScheduled set it.
       if (Object.prototype.hasOwnProperty.call(opts.data, '_scheduled_at')) {
@@ -1639,6 +1827,9 @@ export function createOperations(ctx: OperationCtx) {
 
     // Record AFTER the write succeeds. publish()/unpublish() route through here and
     // pass their own action so the log reads 'publish'/'unpublish', not 'update'.
+    // Non-blocking eval findings (warn/info, or errors from non-blocking rules) ride
+    // along in the audit meta so the content-CI result is observable.
+    const nonOkFindings = evalFindings.filter((f) => !f.ok)
     await recordAudit({
       action: auditAs ?? 'update',
       collection: collection.slug,
@@ -1646,12 +1837,31 @@ export function createOperations(ctx: OperationCtx) {
       req,
       overrideAccess: override,
       fields: auditAs ? null : auditedFields(opts.data as Row),
+      ...(nonOkFindings.length > 0 ? { meta: { evalFindings: nonOkFindings } } : {}),
     })
 
     let doc = rowToDoc(collection, updated, req)
+    // The approver of a publish is the publishing principal (for a review-approval, the
+    // reviewer is threaded in as that principal). Recorded on the published snapshot and
+    // in the credential manifest. Null for non-publish snapshots.
+    const approver: PrincipalRef | null = isPublishTransition ? principalRefOf(req) : null
+    let publishedVersionId: string | null = null
     if (versionsOf(collection).enabled) {
       const status = draftsOn(collection) ? statusFromData(updated as Row, 'draft') : 'published'
-      await snapshotVersion(collection, rowToDoc(collection, updated, req), status, req, opts.autosave === true)
+      publishedVersionId = await snapshotVersion(
+        collection,
+        rowToDoc(collection, updated, req),
+        status,
+        req,
+        opts.autosave === true,
+        approver,
+      )
+    }
+    // Content credential: sign a tamper-evident manifest of the published doc. Only on a
+    // real publish transition, and only when signing is enabled (else a no-op). Hashes the
+    // raw stored row so verify can recompute the same surface.
+    if (isPublishTransition) {
+      await signContentCredential(collection, updated, req, approver, publishedVersionId)
     }
     doc = (await runHooks(collection.hooks?.afterChange, { req, operation: 'update', doc }, 'doc')) as Doc
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
@@ -3174,6 +3384,123 @@ export function createOperations(ctx: OperationCtx) {
     return active
   }
 
+  // -------------------------------------------------------------------------
+  // Provenance + content credentials (read/verify surface)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Access-check a READ on a document before exposing provenance/credential data about
+   * it. Returns the collection when the caller may read the doc; throws Forbidden when
+   * not, and NotFound when the document doesn't exist. Drafts are visible to this gate
+   * (a draft still has provenance), but the row-scope + field access of the read path
+   * still apply — so provenance never leaks for a doc the caller couldn't read.
+   */
+  async function assertCanReadDoc(
+    collection: CollectionConfig,
+    id: string,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<void> {
+    if (override) {
+      const row = await db.findByID({ collection: collection.slug, id })
+      if (!row) throw new NotFoundError()
+      return
+    }
+    const row = await db.findByID({ collection: collection.slug, id })
+    if (!row) throw new NotFoundError()
+    const access = await evalAccess(collection.access?.read, { req, id })
+    if (!isAllowed(access)) throw new ForbiddenError()
+    const scope = asWhere(access)
+    if (scope && !matchesWhere(row, scope)) throw new ForbiddenError()
+  }
+
+  async function provenance(opts: ProvenanceOptions): Promise<Provenance> {
+    const collection = collectionOrThrow(opts.collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    // Never leak provenance for a doc the caller can't read.
+    await assertCanReadDoc(collection, opts.id, req, override)
+
+    const chain: ProvenanceEntry[] = []
+    let createdBy: PrincipalRef | null = null
+    let lastEditedBy: PrincipalRef | null = null
+    const contributors: PrincipalRef[] = []
+    const seen = new Set<string>()
+
+    if (versionsOf(collection).enabled) {
+      // Oldest-first: version 1 is the create, the last is the latest edit.
+      const res = await db.find({
+        collection: tableForVersions(collection.slug),
+        where: { parent: { equals: opts.id } },
+        sort: [{ field: 'createdAt', direction: 'asc' }],
+        limit: MAX_LIMIT,
+        page: 1,
+      })
+      let n = 0
+      for (const v of res.docs) {
+        n += 1
+        const author: PrincipalRef = {
+          id: v.createdBy != null ? String(v.createdBy) : null,
+          type: normalizePrincipalType(v.createdByType),
+        }
+        const entry: ProvenanceEntry = {
+          version: n,
+          status: typeof v.status === 'string' ? v.status : 'draft',
+          at: v.createdAt != null ? String(v.createdAt) : '',
+          author,
+          autosave: v.autosave === true,
+        }
+        if (v.approvedBy != null || v.approvedByType != null) {
+          entry.approver = {
+            id: v.approvedBy != null ? String(v.approvedBy) : null,
+            type: normalizePrincipalType(v.approvedByType),
+          }
+        }
+        chain.push(entry)
+        if (n === 1) createdBy = author
+        lastEditedBy = author
+        const key = `${author.type}:${author.id ?? ''}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          contributors.push(author)
+        }
+      }
+    }
+
+    return { documentId: opts.id, collection: collection.slug, chain, createdBy, lastEditedBy, contributors }
+  }
+
+  async function getContentCredential(opts: GetCredentialOptions): Promise<CredentialDoc | null> {
+    const collection = collectionOrThrow(opts.collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    await assertCanReadDoc(collection, opts.id, req, override)
+    return latestCredentialRow(collection.slug, opts.id)
+  }
+
+  async function verifyContentCredential(opts: VerifyCredentialOptions): Promise<VerifyCredentialResult> {
+    const collection = collectionOrThrow(opts.collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    await assertCanReadDoc(collection, opts.id, req, override)
+
+    const cred = await latestCredentialRow(collection.slug, opts.id)
+    if (!cred) return { valid: false, reason: 'no content credential for this document', manifest: null }
+    const manifest = cred.manifest as ContentManifest
+    if (!signer) {
+      // A credential exists but signing is now disabled — we can't re-verify it.
+      return { valid: false, reason: 'signing is not enabled; cannot verify', manifest }
+    }
+    // Verify against the CURRENT stored row so a post-sign edit is detected. We hash the
+    // RAW stored row (the same surface signed at publish), so this is locale-independent
+    // and any direct mutation of the persisted content changes the hash. The doc's
+    // READABILITY was already gated above.
+    const row = await db.findByID({ collection: collection.slug, id: opts.id })
+    if (!row) return { valid: false, reason: 'document no longer exists', manifest }
+    const result = verifyManifest(signer, manifest, cred.signature, row as Record<string, unknown>)
+    return { ...result, manifest }
+  }
+
   return {
     create,
     upload,
@@ -3223,6 +3550,9 @@ export function createOperations(ctx: OperationCtx) {
     listLocks,
     heartbeat,
     getPresence,
+    provenance,
+    getContentCredential,
+    verifyContentCredential,
   }
 }
 

@@ -646,6 +646,15 @@ export interface KernelConfig {
    *  on, `false` to force it off. When disabled, the review ops return empty / throw
    *  cleanly (like `findRoles` with RBAC off) — fully backward-compatible. */
   review?: boolean
+  /** Content credentials (C2PA-style). When set, every publish signs a tamper-evident
+   *  manifest of the document into the `_credentials` table; verify re-checks the
+   *  signature + content hash. A shared HMAC `secret`, or an asymmetric key pair.
+   *  Default OFF. Key material is server-only — never logged or returned. */
+  signing?: SigningConfig
+  /** Pre-publish evals ("content CI"). Each rule runs on the to-be-published document;
+   *  a `blocking` rule that returns an `error` finding rejects the publish. Built-in
+   *  factories (`a11yEval`, `seoEval`, `policyEval`, `brandEval`) can be dropped in. */
+  evals?: EvalRule[]
 }
 
 export interface SanitizedLocalization {
@@ -714,6 +723,12 @@ export interface SanitizedConfig {
    *  `_roles` table at boot, and captured by reference by the injected access rules.
    *  Empty (`{ roles: {} }`) and unused when RBAC is disabled. */
   rbacStore: RbacStore
+  /** Resolved content-credential signing material. `enabled:false` disables signing
+   *  (no `_credentials` writes; verify reports no credential). Key material is
+   *  server-only and never serialized into output. */
+  signing: SanitizedSigningConfig
+  /** Pre-publish eval rules, run at the publish chokepoint. Empty when unset. */
+  evals: EvalRule[]
 }
 
 // ---------------------------------------------------------------------------
@@ -753,6 +768,15 @@ export interface ProcessScheduledOptions {
   /** "Now" reference for which scheduled publishes are due. Defaults to current time. */
   now?: string | Date | number
   limit?: number
+}
+
+export interface ProcessScheduledResult {
+  /** IDs of documents that successfully transitioned to published. */
+  published: string[]
+  /** Documents that were due but NOT published because a blocking pre-publish eval
+   *  rejected them. They remain drafts; the loop continued past them. Present only
+   *  when at least one due doc was skipped. */
+  skipped?: Array<{ id: string; collection: string; reason: string }>
 }
 
 export interface FindOptions extends OperationBase {
@@ -1049,6 +1073,151 @@ export interface VersionDoc extends Row {
 }
 
 // ---------------------------------------------------------------------------
+// AI-era trust: provenance, content credentials, pre-publish evals
+//
+// Three capabilities layered on the existing version snapshots (which already
+// attribute every version to a principal id + kind). Provenance is DERIVED from
+// those snapshots; content credentials sign a manifest of the published doc on
+// publish and detect tampering on verify; evals are a pre-publish quality gate
+// ("content CI"). All are opt-in (signing/evals via config; provenance is read-only).
+// ---------------------------------------------------------------------------
+
+/** A principal reference on a provenance chain / manifest — who, and what kind. */
+export interface PrincipalRef {
+  id: string | null
+  type: 'user' | 'agent' | 'system'
+}
+
+/** One link in a document's provenance chain — a version snapshot's who/what/how. */
+export interface ProvenanceEntry {
+  /** 1-based ordinal (oldest version is 1). */
+  version: number
+  status: string
+  /** ISO timestamp the version was recorded. */
+  at: string
+  /** The principal that authored this version. */
+  author: PrincipalRef
+  /** The approver, when this version is a review-approved publish. */
+  approver?: PrincipalRef
+  /** Whether the version came from an autosave (not an explicit save). */
+  autosave: boolean
+}
+
+/** The full provenance of a document: its version chain plus convenience rollups. */
+export interface Provenance {
+  documentId: string
+  collection: string
+  /** Oldest-first chain of version snapshots. */
+  chain: ProvenanceEntry[]
+  /** The principal that created the document (first version's author). */
+  createdBy: PrincipalRef | null
+  /** The principal that authored the most recent version. */
+  lastEditedBy: PrincipalRef | null
+  /** Every distinct principal that authored at least one version (human + agent). */
+  contributors: PrincipalRef[]
+}
+
+export interface ProvenanceOptions {
+  collection: string
+  id: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+/** The signing configuration: a shared HMAC secret, OR an asymmetric key pair. Default
+ *  OFF (omit to disable content credentials). Key material is server-only and never
+ *  appears in any manifest, credential, error, or log. */
+export type SigningConfig = { secret: string } | { privateKey: string; publicKey: string; algorithm?: 'ed25519' }
+
+/** Resolved signing material — the enabled flag plus the key material + algorithm. */
+export interface SanitizedSigningConfig {
+  enabled: boolean
+  algorithm: 'hmac-sha256' | 'ed25519'
+  secret?: string
+  privateKey?: string
+  publicKey?: string
+}
+
+/** The signed claim set embedded in a content credential. Never holds key material. */
+export interface ContentManifest {
+  collection: string
+  documentId: string
+  /** `sha256(canonicalJSON(published doc, system/volatile keys excluded))`, hex. */
+  contentHash: string
+  author: PrincipalRef
+  approver: PrincipalRef | null
+  publishedAt: string
+  versionId: string | null
+}
+
+/** A persisted content-credential row (the `_credentials` table). */
+export interface CredentialDoc extends Row {
+  id: string
+  collection: string
+  documentId: string
+  versionId: string | null
+  manifest: ContentManifest
+  signature: string
+  algorithm: 'hmac-sha256' | 'ed25519'
+  /** ISO timestamp the credential was signed. */
+  signedAt: string
+}
+
+export interface GetCredentialOptions {
+  collection: string
+  id: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface VerifyCredentialOptions {
+  collection: string
+  id: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+/** The result of re-verifying a content credential against the live document. */
+export interface VerifyCredentialResult {
+  valid: boolean
+  /** Present when `valid` is false: why (bad signature / tampered content / no credential). */
+  reason?: string
+  /** The signed manifest (when a credential exists). */
+  manifest: ContentManifest | null
+}
+
+/** A single finding from a pre-publish eval. */
+export interface EvalFinding {
+  ok: boolean
+  severity: 'error' | 'warn' | 'info'
+  message: string
+  /** Optional field the finding pertains to. */
+  field?: string
+}
+
+/** Arguments an eval rule's `run` receives. `fields` is the collection's schema field
+ *  list (wired automatically) so a rule can locate richText/upload fields. */
+export interface EvalArgs<TUser extends AuthUser = AuthUser> {
+  doc: Record<string, unknown>
+  collection: string
+  req: RequestContext<TUser>
+  /** The collection's configured fields (for schema-aware rules). */
+  fields?: ConfigField[]
+}
+
+/** A pre-publish eval rule. Runs on the to-be-published document at the publish
+ *  chokepoint. A `blocking` rule (the default) that returns an `ok:false` `error`
+ *  finding REJECTS the publish; warn/info findings are recorded but never block. */
+export interface EvalRule {
+  name: string
+  /** Whether an `error` finding blocks the publish. Defaults to `true`. */
+  blocking?: boolean
+  /** Collection slugs this rule applies to. Omit to apply to every collection. */
+  appliesTo?: string[]
+  run(args: EvalArgs): EvalFinding[] | Promise<EvalFinding[]>
+}
+
+// ---------------------------------------------------------------------------
 // Collaboration: advisory soft locks + lightweight presence
 //
 // Two LIGHTWEIGHT, DB-backed primitives that answer "two editors (or an agent and a
@@ -1286,7 +1455,7 @@ export interface Kernel {
   restoreVersion<T extends Doc = Doc>(opts: RestoreVersionOptions): Promise<T | null>
   publish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null>
   unpublish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null>
-  processScheduledPublishes(opts?: ProcessScheduledOptions): Promise<{ published: string[] }>
+  processScheduledPublishes(opts?: ProcessScheduledOptions): Promise<ProcessScheduledResult>
   /** Query the append-only audit log (newest-first by default). Returns
    *  `{ docs: [], count: 0 }` when auditing is disabled. */
   findAuditLog(opts?: FindAuditLogOptions): Promise<{ docs: AuditDoc[]; count: number }>
@@ -1331,6 +1500,17 @@ export interface Kernel {
   /** The active participants on a document — those whose last heartbeat is within `ttlMs`
    *  of now. Stale rows are filtered out (and lazily pruned). */
   getPresence(opts: GetPresenceOptions): Promise<PresenceEntry[]>
+  /** The provenance chain of a document — who created/edited/approved each version,
+   *  with human-vs-agent authorship surfaced. Derived from the version snapshots; the
+   *  caller must be able to READ the document (never leaks provenance for a hidden doc). */
+  provenance(opts: ProvenanceOptions): Promise<Provenance>
+  /** The latest content credential for a document (access-checked). Null when signing
+   *  is off or the document has never been published under signing. */
+  getContentCredential(opts: GetCredentialOptions): Promise<CredentialDoc | null>
+  /** Re-verify a document's content credential: confirm the signature is authentic AND
+   *  the live content still matches the signed hash. Returns `valid:false` with a reason
+   *  when the document was modified after signing (tamper) or the signature doesn't verify. */
+  verifyContentCredential(opts: VerifyCredentialOptions): Promise<VerifyCredentialResult>
   /** Apply the schema to the database (create tables / add columns / build indexes),
    *  recording a `_migrations` journal row when anything is applied. Pass
    *  `{ dryRun: true }` to compute the exact SQL it WOULD run and return the report
