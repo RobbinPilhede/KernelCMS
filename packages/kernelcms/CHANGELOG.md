@@ -1,5 +1,15 @@
 # kernelcms
 
+## 0.7.0
+
+### Minor Changes
+
+- **True inline visual editing — edit content directly on the rendered page.** KernelCMS's live preview was one-way: you edited in the admin and watched the page update. Now it's bidirectional. Double-click any text the frontend marks editable (`kernelEditable(path)` → `data-kernel-path` + `data-kernel-editable`) and type directly on the page — headings, labels, CTAs, any plain-text field — and the change patches straight back into the document and the side-panel field. Save works exactly as before.
+
+  This closes the most common complaint about preview in other config-as-code CMSes ("preview is one-way; you can't edit on the page"). It's built on a small, framework-agnostic postMessage protocol (`@kernel/visual-editing`): the preview posts `edit-start` / `patch` / `edit-end` up to the editor, the editor pauses its data echo for the path being edited (no caret clobber), then re-syncs on commit.
+
+  Hardened against the untrusted preview→editor channel: the editor applies a patch only when the dot-path already resolves to a primitive leaf in the document (no key creation, no prototype pollution, no collapsing an object subtree), values are primitive-only, the message origin and source are both checked, and stale markup whose path has drifted from the schema can't enter edit mode. Red-teamed to Risk: LOW; verified end-to-end.
+
 ## 0.6.0
 
 ### Minor Changes
