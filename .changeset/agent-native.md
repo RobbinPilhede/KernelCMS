@@ -10,11 +10,23 @@ guarantee, not a config option), authenticate with their own constant-time-check
 token, and never run with elevated access. Every agent write is attributed in
 version history.
 
-A new `@kernel/mcp` package exposes a kernel as a Model Context Protocol (MCP)
-server whose tools are auto-generated from the same descriptor that generates the
-OpenAPI spec. Every tool call is routed through the in-process Local API with the
-agent principal, so access control, field scoping, and the draft-only brake are
-enforced by the core engine — the MCP layer enforces nothing on its own.
+A new `@kernel/mcp` package (also at `kernelcms/mcp`) exposes a kernel as a Model
+Context Protocol (MCP) server whose tools are auto-generated from the same
+descriptor that generates the OpenAPI spec. Every tool call is routed through the
+in-process Local API with the agent principal, so access control, field scoping,
+and the draft-only brake are enforced by the core engine — the MCP layer enforces
+nothing on its own. It includes:
+
+- CRUD + `count` + version-history tools per collection, global tools, and MCP
+  safety annotations (read-only / destructive hints).
+- **Opt-in custom-endpoint tools** (`mcp: true` on a `defineEndpoint`) so an agent
+  can call your business logic, gated by that endpoint's own access rule.
+- **Schema resources** (`kernel://schema`, `kernel://collections/<slug>`) so an
+  agent can introspect the content model (visible collections only).
+- A **multi-agent HTTP transport** with per-request, constant-time-authenticated,
+  scoped principals — plus a `kernel mcp` CLI command to serve over stdio (Claude
+  Desktop / Cursor) or HTTP. The MCP SDK is an optional peer dependency, so the
+  base install stays lean.
 
 Also in this release:
 
