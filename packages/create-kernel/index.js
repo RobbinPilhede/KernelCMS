@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
 import { stdin, stdout } from 'node:process'
+import { MODELS, DEFAULT_MODEL, chooseModel, modelNames, renderConfigModule } from './models.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const selfPkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'))
@@ -61,6 +62,10 @@ function parseArgs(argv) {
     else if (a.startsWith('--template=')) flags.template = a.slice('--template='.length)
     else if (a === '--pm') flags.pm = argv[++i]
     else if (a.startsWith('--pm=')) flags.pm = a.slice('--pm='.length)
+    else if (a === '--model' || a === '-m') flags.model = argv[++i]
+    else if (a.startsWith('--model=')) flags.model = a.slice('--model='.length)
+    else if (a === '--from-brief') flags.brief = argv[++i]
+    else if (a.startsWith('--from-brief=')) flags.brief = a.slice('--from-brief='.length)
     else if (!a.startsWith('-')) positionals.push(a)
   }
   return { flags, positionals }
@@ -94,6 +99,8 @@ ${paint('Usage:', C.bold)}
 
 ${paint('Options:', C.bold)}
   -t, --template <id>   Template to use (default: start)
+  -m, --model <name>    Starter content model (default: ${DEFAULT_MODEL})
+      --from-brief <s>  Pick the closest starter model from a free-text brief (offline)
       --pm <pm>         Package manager: npm | pnpm | yarn | bun
       --no-install      Skip installing dependencies
   -f, --force           Overwrite a non-empty target directory
@@ -102,7 +109,27 @@ ${paint('Options:', C.bold)}
 
 ${paint('Templates:', C.bold)}
   start   ${TEMPLATES.start}
+
+${paint('Starter models:', C.bold)}
+${modelNames()
+  .map((n) => `  ${n.padEnd(10)}${MODELS[n].description}`)
+  .join('\n')}
 `)
+}
+
+/** Resolve the chosen starter model from flags. `--model` wins; otherwise
+ *  `--from-brief` keyword-matches the closest model OFFLINE (no network, no LLM);
+ *  otherwise the default. Returns the model name (validated). */
+function resolveModelName(flags) {
+  if (flags.model) {
+    if (!MODELS[flags.model]) {
+      console.error(paint(`Unknown model "${flags.model}". Available: ${modelNames().join(', ')}`, C.red))
+      process.exit(1)
+    }
+    return flags.model
+  }
+  if (flags.brief) return chooseModel(flags.brief)
+  return DEFAULT_MODEL
 }
 
 async function main() {
@@ -125,6 +152,8 @@ async function main() {
     console.error(paint(`Unknown template "${template}". Available: ${Object.keys(TEMPLATES).join(', ')}`, C.red))
     process.exit(1)
   }
+  const modelName = resolveModelName(flags)
+  const model = MODELS[modelName]
   const templateDir = join(__dirname, 'template', template)
   if (!existsSync(templateDir)) {
     console.error(paint(`Template files are missing at ${templateDir}.`, C.red))
@@ -153,7 +182,7 @@ async function main() {
   console.log(
     paint('Creating a KernelCMS app in ', C.dim) +
       paint(`./${name}`, C.bold) +
-      paint(`  (template: ${template})\n`, C.dim),
+      paint(`  (template: ${template}, model: ${modelName})\n`, C.dim),
   )
 
   cpSync(templateDir, target, {
@@ -165,6 +194,10 @@ async function main() {
       return true
     },
   })
+
+  // Drop the chosen starter content model in place of the template's default.
+  const configPath = join(target, 'src', 'server', 'config.ts')
+  writeFileSync(configPath, renderConfigModule(model, modelName))
 
   const pkgPath = join(target, 'package.json')
   if (existsSync(pkgPath)) {

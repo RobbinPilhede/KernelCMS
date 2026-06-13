@@ -1,6 +1,8 @@
 # KernelCMS app
 
-A **TanStack Start** app powered by **KernelCMS**. It server-renders a small blog whose content comes from the KernelCMS **Local API** (an in-process call — no HTTP round-trip), stored in SQLite via `node:sqlite`.
+A **TanStack Start** app powered by **KernelCMS**. It server-renders a small site whose content comes from the KernelCMS **Local API** (an in-process call — no HTTP round-trip), stored in SQLite via `node:sqlite`.
+
+Scaffolded from one of the starter content models (`blog`, `shop`, `docs`, `portfolio`). The generic home + detail routes render whatever model you chose via the `view` descriptor in `src/server/config.ts`.
 
 ## Run it
 

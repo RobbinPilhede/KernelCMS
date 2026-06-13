@@ -1,4 +1,4 @@
-import type { AnyField, ConfigField, CollectionConfig, GlobalConfig } from './types'
+import type { AnyField, BlockDef, ConfigField, CollectionConfig, GlobalConfig } from './types'
 import { effectiveFields, optionValue } from './fields'
 
 function pascal(slug: string): string {
@@ -9,7 +9,39 @@ function pascal(slug: string): string {
     .join('')
 }
 
-function tsType(field: AnyField, indent: string): string {
+/** Context threaded through type rendering: which collection slugs exist (so a
+ *  relationship target resolves to its generated interface name) and whether any
+ *  field reached for `Relationship<T>` (so we only emit the helper when used). */
+interface RenderCtx {
+  /** Slugs that have a generated interface, mapped to its PascalCase name. */
+  knownTypes: Map<string, string>
+  /** Set true the first time a relationship/upload field renders. */
+  usedRelationship: boolean
+}
+
+/** The TypeScript type a single relationship target resolves to: the related
+ *  collection's generated interface when we know it, else a permissive object. */
+function relatedType(slug: string, ctx: RenderCtx): string {
+  return ctx.knownTypes.get(slug) ?? 'Record<string, unknown>'
+}
+
+/** Render the populated half of a relationship's `Relationship<T>` payload — the
+ *  `T` in `string | T`. Polymorphic targets become a union of every related type. */
+function relationshipPayload(field: AnyField & { type: 'relationship' | 'upload' }, ctx: RenderCtx): string {
+  if (Array.isArray(field.relationTo)) {
+    const union = field.relationTo.map((slug) => relatedType(slug, ctx)).join(' | ')
+    return union || 'Record<string, unknown>'
+  }
+  return relatedType(field.relationTo, ctx)
+}
+
+/** Render one block variant as `{ blockType: 'slug' } & { …fields… }`. */
+function renderBlock(block: BlockDef, indent: string, ctx: RenderCtx): string {
+  const discriminant = `{ blockType: ${JSON.stringify(block.slug)} }`
+  return `(${discriminant} & ${renderObject(block.fields, indent, ctx)})`
+}
+
+function tsType(field: AnyField, indent: string, ctx: RenderCtx): string {
   switch (field.type) {
     case 'text':
     case 'textarea':
@@ -36,28 +68,40 @@ function tsType(field: AnyField, indent: string): string {
       return field.hasMany ? `Array<${union}>` : union
     }
     case 'relationship':
-    case 'upload':
-      return field.hasMany ? 'string[]' : 'string'
+    case 'upload': {
+      // A read at depth 0 yields the id (string); a populated read (depth>0)
+      // yields the related document — `Relationship<T>` expresses both, so either
+      // type-checks. Polymorphic targets union every related interface.
+      ctx.usedRelationship = true
+      const payload = relationshipPayload(field, ctx)
+      return field.hasMany ? `Relationship<${payload}>[]` : `Relationship<${payload}>`
+    }
     case 'array':
-      return `Array<${renderObject(field.fields, indent)}>`
+      return `Array<${renderObject(field.fields, indent, ctx)}>`
     case 'group':
-      return renderObject(field.fields, indent)
+      return renderObject(field.fields, indent, ctx)
+    case 'blocks': {
+      // The page builder: a discriminated union keyed on `blockType`. Narrowing on
+      // `block.blockType === 'hero'` selects that block's exact field shape.
+      const variants = field.blocks.map((b) => renderBlock(b, indent, ctx)).join(' | ')
+      return `Array<${variants || 'Record<string, unknown>'}>`
+    }
     default:
       return 'unknown'
   }
 }
 
-function renderObject(fieldsIn: ConfigField[], indent: string): string {
+function renderObject(fieldsIn: ConfigField[], indent: string, ctx: RenderCtx): string {
   const inner = `${indent}  `
   const lines = effectiveFields(fieldsIn).map(
-    (f) => `${inner}${f.name}${f.required ? '' : '?'}: ${tsType(f, inner)}${f.required ? '' : ' | null'}`,
+    (f) => `${inner}${f.name}${f.required ? '' : '?'}: ${tsType(f, inner, ctx)}${f.required ? '' : ' | null'}`,
   )
   return `{\n${lines.join('\n')}\n${indent}}`
 }
 
-function renderInterface(name: string, fieldsIn: ConfigField[], timestamps: boolean): string {
+function renderInterface(name: string, fieldsIn: ConfigField[], timestamps: boolean, ctx: RenderCtx): string {
   const lines = effectiveFields(fieldsIn).map(
-    (f) => `  ${f.name}${f.required ? '' : '?'}: ${tsType(f, '  ')}${f.required ? '' : ' | null'}`,
+    (f) => `  ${f.name}${f.required ? '' : '?'}: ${tsType(f, '  ', ctx)}${f.required ? '' : ' | null'}`,
   )
   const ts = timestamps ? '  createdAt?: string\n  updatedAt?: string\n' : ''
   return `export interface ${name} {\n  id: string\n${lines.join('\n')}\n${ts}}`
@@ -78,14 +122,28 @@ export function generateTypes(input: CodegenInput): string {
  * Run \`kernel generate:types\` to refresh it.
  */\n`
 
+  // Both collections and globals can be the populated target of a relationship.
+  const knownTypes = new Map<string, string>()
+  for (const c of input.collections) knownTypes.set(c.slug, pascal(c.slug))
+  for (const g of input.globals) knownTypes.set(g.slug, pascal(g.slug))
+  const ctx: RenderCtx = { knownTypes, usedRelationship: false }
+
   const collectionTypes = input.collections
-    .map((c) => renderInterface(pascal(c.slug), c.fields, c.timestamps ?? true))
+    .map((c) => renderInterface(pascal(c.slug), c.fields, c.timestamps ?? true, ctx))
     .join('\n\n')
 
-  const globalTypes = input.globals.map((g) => renderInterface(pascal(g.slug), g.fields, true)).join('\n\n')
+  const globalTypes = input.globals.map((g) => renderInterface(pascal(g.slug), g.fields, true, ctx)).join('\n\n')
 
   const collectionMap = input.collections.map((c) => `    ${c.slug}: ${pascal(c.slug)}`).join('\n')
   const globalMap = input.globals.map((g) => `    ${g.slug}: ${pascal(g.slug)}`).join('\n')
+
+  // A relationship reads back as either an id (depth 0) or the populated document
+  // (depth>0). `Relationship<T>` admits both, so the SAME generated type checks
+  // against an un-populated read AND a `depth`-populated one — no second "populated"
+  // type to keep in sync. Emitted only when a relationship/upload field uses it.
+  const relationshipHelper = ctx.usedRelationship
+    ? '/** A relationship value: an id (depth 0) or the populated related document (depth>0). */\nexport type Relationship<T> = string | T'
+    : ''
 
   const registry = `export interface KernelTypes {
   collections: {
@@ -96,5 +154,5 @@ ${globalMap || '    [slug: string]: Record<string, unknown>'}
   }
 }`
 
-  return [header, collectionTypes, globalTypes, registry].filter(Boolean).join('\n\n') + '\n'
+  return [header, relationshipHelper, collectionTypes, globalTypes, registry].filter(Boolean).join('\n\n') + '\n'
 }

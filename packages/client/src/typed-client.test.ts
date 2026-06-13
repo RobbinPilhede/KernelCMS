@@ -69,3 +69,112 @@ describe('createTypedClient (slug-inferred types, no cast)', () => {
     expect(client).toBeTruthy()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Type-level proof that the GENERATED shapes (codegen.ts) flow through the typed
+// client unbroken. These interfaces mirror exactly what `generateTypes` emits —
+// `Relationship<T>` for relationships and a `blockType`-discriminated union for a
+// blocks field — so a passing typecheck here proves the page-builder + populated
+// relationships are fully inferred on the frontend (the headline DX promise).
+// ---------------------------------------------------------------------------
+
+type Relationship<T> = string | T
+
+interface Authors {
+  id: string
+  name: string
+}
+interface Media {
+  id: string
+  url: string
+}
+
+// A blocks field renders to `Array<({ blockType:'hero' } & {…}) | ({ blockType:'cta' } & {…})>`.
+type HeroBlock = { blockType: 'hero' } & { heading: string; sub?: string | null }
+type CtaBlock = { blockType: 'cta' } & { label: string; href: string }
+type Layout = Array<HeroBlock | CtaBlock>
+
+interface Pages {
+  id: string
+  title: string
+  // Single relationship → id OR populated Authors.
+  author?: Relationship<Authors> | null
+  // hasMany relationship → array of id-or-populated.
+  tags?: Relationship<Authors>[] | null
+  // Polymorphic relationship → id OR a union of every target.
+  owner?: Relationship<Authors | Media> | null
+  // Upload relationship → id OR populated Media.
+  cover?: Relationship<Media> | null
+  // The page builder.
+  layout?: Layout | null
+}
+
+interface GenKernelTypes {
+  collections: { pages: Pages; authors: Authors; media: Media }
+  globals: Record<string, never>
+}
+
+describe('generated shapes flow through the typed client', () => {
+  it('infers Relationship<T> for a single relationship (id OR populated both check)', async () => {
+    const client = createTypedClient<GenKernelTypes>({
+      baseURL: 'http://x',
+      fetch: jsonFetch({ id: 'p1', title: 'Home', author: { id: 'a1', name: 'Ada' } }),
+    })
+    const page = await client.findByID('pages', 'p1')
+    expectTypeOf(page.author).toEqualTypeOf<Relationship<Authors> | null | undefined>()
+
+    // Depth 0: an id string type-checks.
+    const idOnly: Pages = { id: 'p1', title: 'Home', author: 'a1' }
+    expect(idOnly.author).toBe('a1')
+
+    // Depth>0: the populated document type-checks too — and narrows after a guard.
+    const a = page.author
+    if (a && typeof a === 'object') {
+      expectTypeOf(a).toEqualTypeOf<Authors>()
+      expect(a).toBeTruthy()
+    }
+  })
+
+  it('infers hasMany + polymorphic + upload relationship shapes', () => {
+    const page: Pages = {
+      id: 'p1',
+      title: 'Home',
+      tags: ['a1', { id: 'a2', name: 'Grace' }],
+      owner: { id: 'm1', url: '/x.png' },
+      cover: 'm1',
+    }
+    expectTypeOf(page.tags).toEqualTypeOf<Relationship<Authors>[] | null | undefined>()
+    expectTypeOf(page.owner).toEqualTypeOf<Relationship<Authors | Media> | null | undefined>()
+    expectTypeOf(page.cover).toEqualTypeOf<Relationship<Media> | null | undefined>()
+    expect(page.cover).toBe('m1')
+  })
+
+  it('infers the blocks field as a discriminated union (narrowing on blockType works)', async () => {
+    const client = createTypedClient<GenKernelTypes>({
+      baseURL: 'http://x',
+      fetch: jsonFetch({
+        id: 'p1',
+        title: 'Home',
+        layout: [
+          { blockType: 'hero', heading: 'Hi' },
+          { blockType: 'cta', label: 'Go', href: '/x' },
+        ],
+      }),
+    })
+    const page = await client.findByID('pages', 'p1')
+    const blocks = page.layout ?? []
+    for (const block of blocks) {
+      // Discriminant present on every member.
+      expectTypeOf(block.blockType).toEqualTypeOf<'hero' | 'cta'>()
+      if (block.blockType === 'hero') {
+        // Narrowed: only hero fields are reachable; `heading` is a string.
+        expectTypeOf(block.heading).toEqualTypeOf<string>()
+        expect(typeof block.heading).toBe('string')
+      } else {
+        // Narrowed to cta: `href` is required here, absent on hero.
+        expectTypeOf(block.href).toEqualTypeOf<string>()
+        expect(typeof block.label).toBe('string')
+      }
+    }
+  })
+})
