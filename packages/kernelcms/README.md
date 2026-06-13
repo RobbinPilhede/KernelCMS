@@ -13,6 +13,12 @@
 
 <p align="center"><strong>The lightweight, standalone, type-safe headless CMS that does not hijack your framework.</strong></p>
 
+<p align="center">
+  <a href="https://kernelcms.com">Website</a> ·
+  <a href="https://kernelcms.com/docs/introduction">Documentation</a> ·
+  <a href="https://github.com/RobbinPilhede/KernelCMS">GitHub</a>
+</p>
+
 KernelCMS is a config-as-code, end-to-end TypeScript headless CMS. You model your
 content in a single `kernel.config.ts`, and you get a typed content engine, a REST and
 GraphQL API, a typed in-process Local API, a polished React admin panel, and a CLI.
@@ -147,6 +153,9 @@ See [What is in the box](#what-is-in-the-box) for the full list.
 ---
 
 ## Guides
+
+The full documentation lives at **[kernelcms.com/docs](https://kernelcms.com/docs/introduction)**.
+A couple of the guides are also kept alongside the source:
 
 - **[Embedding in Next.js](docs/embedding-nextjs.md)** — mount the full CMS (REST,
   GraphQL, admin) inside a Next.js app: the kernel singleton, the Node.js runtime,

@@ -9,7 +9,7 @@
     "url": "git+https://github.com/RobbinPilhede/KernelCMS.git",
     "directory": "packages/kernelcms"
   },
-  "homepage": "https://github.com/RobbinPilhede/KernelCMS#readme",
+  "homepage": "https://kernelcms.com",
   "bugs": "https://github.com/RobbinPilhede/KernelCMS/issues",
   "engines": {
     "node": ">=22"
