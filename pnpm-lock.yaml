@@ -20,6 +20,9 @@ importers:
       '@kernel/storage':
         specifier: workspace:*
         version: link:packages/storage
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
       '@playwright/test':
         specifier: ^1.60.0
         version: 1.60.0
