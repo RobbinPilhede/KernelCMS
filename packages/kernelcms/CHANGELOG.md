@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.13.0
+
+### Minor Changes
+
+- **AI-era content trust: provenance, content credentials, and pre-publish evals ("content CI").** When humans and AI agents co-author content, "who made this, and can I trust it?" becomes a first-class question. This answers it.
+  - **Provenance.** `kernel.provenance({ collection, id })` returns the full authorship chain for a document — every version with its author (human vs `agent` vs `system`), the approver who published it, and rolled-up `createdBy` / `lastEditedBy` / `contributors`. Human-vs-agent authorship is explicit, derived from the version history (and the review approver), access-checked so it never leaks for a doc you can't read.
+  - **Content credentials / signing (C2PA-style, tamper-evident).** Configure `signing: { secret }` (HMAC-SHA256) or an ed25519 `{ privateKey, publicKey }`, and every publish is cryptographically signed: a canonical manifest of claims (content hash, author, approver, publishedAt) plus a signature, stored as a content credential. `kernel.verifyContentCredential({ collection, id })` recomputes the hash and re-verifies the signature — so **any modification to published content after signing is detected** (`valid: false` with a tamper reason). Signatures made under a different key are rejected; key material never appears in any output, manifest, credential, or error; comparisons are constant-time.
+  - **Automated pre-publish evals ("content CI").** Define `evals: [...]` — rules that run on the to-be-published document at the single publish chokepoint. A **blocking** rule that fails stops the publish (the document stays a draft and no credential is signed), exactly like a failing CI check; warnings are recorded but don't block. Crucially, evals run on **every** publish path — interactive, review-approval, born-published, scheduled, and override — so nothing reaches production unchecked, not even a timer-driven scheduled publish. Ships with composable built-ins: `a11yEval`, `seoEval`, `policyEval`, `brandEval`. An AI agent's page must pass content CI before a human can approve it live.
+
+  The cryptography was red-teamed hard (forgery, canonicalization collisions, alg-confusion, key-leak — all blocked); an initial pass found scheduled/override publishes skipping the eval gate and a deep-recursion DoS — **both fixed and re-attacked to PASS (no CRITICAL/HIGH)**. Default-off and fully backward-compatible. Verified end-to-end against a live kernel.
+
 ## 0.12.0
 
 ### Minor Changes
