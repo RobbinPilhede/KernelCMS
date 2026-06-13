@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.22.0
+
+### Minor Changes
+
+- **Personalization + A/B experiments: content that adapts to who's asking.** Tomorrow's content isn't one-size-fits-all — it's micro-experiences assembled per audience. KernelCMS builds that in, no separate personalization platform: it works exactly like localization, but keyed by audience instead of locale.
+  - **Audience-targeted fields.** Define `audiences: { segments: ['default', 'vip', 'beta'], default: 'default' }`, then mark any field `personalized: true`. It stores a variant per segment; a request resolves the field to its audience's value (via `req.audience` or `?audience=vip`) and falls back to the default segment. Writing a variant (`?audience=vip`) merges into the field without clobbering the other segments — just like per-locale writes.
+  - **Built-in A/B testing.** `experiments: [{ slug: 'hero', variants: ['default', 'vip'], weights? }]` + `kernel.assignVariant({ experiment, key })` deterministically and stickily buckets a visitor (the same key always gets the same variant; distribution matches your weights). The assigned variant _is_ a segment — set it as the request audience and the visitor sees that variant's content. Public REST: `GET /api/_experiments/:slug/assign?key=`. Only a hash of the visitor key is ever recorded — no raw key, no PII at rest.
+  - **Safe by construction.** A personalized field still goes through field-level read access (a read-denied variant is stripped for every audience); an untrusted `audience` is honored only if it's a configured segment; segment keys are guarded against prototype pollution; per-segment writes never lose other segments. Red-teamed exhaustively — **Risk: LOW** — verified by a live harness and a Playwright end-to-end test driving `?audience=` and the assign endpoint over HTTP.
+
+  Opt-in via `audiences`/`experiments`; fully backward-compatible. (A field can be `localized` or `personalized`, not both.)
+
 ## 0.21.0
 
 ### Minor Changes
