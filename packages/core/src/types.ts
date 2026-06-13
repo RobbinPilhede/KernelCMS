@@ -319,6 +319,13 @@ export interface CollectionAccess {
   create?: AccessFn
   update?: AccessFn
   delete?: AccessFn
+  /** Gate the draft → published transition as a distinct, access-controlled step
+   *  (drafts-enabled collections). Evaluated whenever a write would set `_status`
+   *  to 'published' that wasn't already — via `publish()`, a raw `_status` write,
+   *  or a born-published `create()`. When omitted, falls back to `update` so any
+   *  principal who can update can still publish; set it to restrict publishing to
+   *  a subset (e.g. forbid agents from publishing). Bypassed by `overrideAccess`. */
+  publish?: AccessFn
 }
 
 export interface AuthOptions {

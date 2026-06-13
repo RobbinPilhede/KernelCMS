@@ -532,6 +532,26 @@ export function createOperations(ctx: OperationCtx) {
     return fallback === 'published' ? 'published' : 'draft'
   }
 
+  /**
+   * Gate the draft → published transition. `_status` is a system column that
+   * bypasses field-level access, so without this anyone with `update` could publish
+   * a draft via a raw `{ _status: 'published' }`. Call at the single write chokepoint
+   * (create/update) only when the resulting status BECOMES published and wasn't
+   * already. Falls back to the collection's `update` rule when no explicit `publish`
+   * rule is set, so existing configs keep working — only an explicit `publish` rule
+   * narrows it. Skipped under `overrideAccess` (system/scheduled publishes).
+   */
+  async function assertCanPublish(
+    collection: CollectionConfig,
+    req: RequestContext,
+    id: string | undefined,
+    data: Row | undefined,
+  ): Promise<void> {
+    const rule = collection.access?.publish ?? collection.access?.update
+    const decision = await evalAccess(rule, { req, id, data })
+    if (!isAllowed(decision)) throw new ForbiddenError()
+  }
+
   /** Append a snapshot of `doc` to the collection's version table, trimming to maxPerDoc. */
   async function snapshotVersion(
     collection: CollectionConfig,
@@ -732,7 +752,11 @@ export function createOperations(ctx: OperationCtx) {
 
     const row = serializeDoc(collection.fields, data, { locale: req.locale })
     row.id = randomUUID()
-    if (draftsOn(collection)) row._status = statusFromData(opts.data as Row, 'draft')
+    if (draftsOn(collection)) {
+      row._status = statusFromData(opts.data as Row, 'draft')
+      // Born-published: a new doc whose status is 'published' is a publish transition.
+      if (!override && row._status === 'published') await assertCanPublish(collection, req, undefined, opts.data as Row)
+    }
 
     const created = await db.create({ collection: collection.slug, data: row })
     let doc = rowToDoc(collection, created, req)
@@ -868,6 +892,11 @@ export function createOperations(ctx: OperationCtx) {
     const row = serializeDoc(collection.fields, merged, { locale: req.locale, existingRow: existing })
     if (draftsOn(collection)) {
       row._status = statusFromData(opts.data as Row, (existing._status as string) ?? 'draft')
+      // Publish transition: becoming published when not already. Covers publish()→update(),
+      // a raw PATCH `{ _status: 'published' }`, and restoreVersion of a published snapshot.
+      if (!override && row._status === 'published' && existing._status !== 'published') {
+        await assertCanPublish(collection, req, opts.id, opts.data as Row)
+      }
       // Scheduled-publish time is a system column; let publish()/processScheduled set it.
       if (Object.prototype.hasOwnProperty.call(opts.data, '_scheduled_at')) {
         const at = (opts.data as Row)._scheduled_at

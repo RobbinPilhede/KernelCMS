@@ -188,6 +188,9 @@ function LivePreview({
   const formRef = useRef(form)
   formRef.current = form
   const readyRef = useRef(false)
+  // Coalesce rapid edits into one post per frame; dedupe identical payloads.
+  const rafRef = useRef<number | null>(null)
+  const lastSentRef = useRef<string | null>(null)
   // Same stale-closure guard for the click/hover callbacks the parent passes in.
   const selectRef = useRef(onSelectPath)
   selectRef.current = onSelectPath
@@ -200,11 +203,23 @@ function LivePreview({
   const src = url ?? `${window.location.origin}${base}?kernel_preview=1&collection=${encodeURIComponent(slug)}`
   const targetOrigin = url ? new URL(url, window.location.origin).origin : window.location.origin
 
+  // Serialize the latest doc and post it — but skip if it matches the last send.
   const post = () => {
-    iframeRef.current?.contentWindow?.postMessage(
-      { type: 'kernel-preview', data: stripRowKeys(formRef.current) },
-      targetOrigin,
-    )
+    const data = stripRowKeys(formRef.current)
+    const payload = JSON.stringify(data)
+    if (payload === lastSentRef.current) return
+    lastSentRef.current = payload
+    iframeRef.current?.contentWindow?.postMessage({ type: 'kernel-preview', data }, targetOrigin)
+  }
+
+  // Coalesce bursts of edits to at most one post per animation frame. The trailing
+  // frame still fires, so the final keystroke always lands.
+  const schedulePost = () => {
+    if (rafRef.current !== null) return
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
+      if (readyRef.current) post()
+    })
   }
 
   // The preview announces readiness once its listener is attached → reply with
@@ -228,10 +243,18 @@ function LivePreview({
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
-  // Push updates on every edit once the preview is live.
+  // Push updates on every edit once the preview is live, coalesced per frame.
   useEffect(() => {
-    if (readyRef.current) post()
+    if (readyRef.current) schedulePost()
   }, [form])
+
+  // Drop any pending frame when the pane unmounts.
+  useEffect(
+    () => () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    },
+    [],
+  )
 
   const width = DEVICES.find((d) => d.id === device)?.width ?? '100%'
 

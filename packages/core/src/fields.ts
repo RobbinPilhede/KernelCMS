@@ -133,12 +133,16 @@ export function storageTypeForField(field: AnyField): StorageType {
 }
 
 export function columnForField(field: AnyField): ColumnSchema {
+  // FK/relationship columns are auto-indexed: relationship lookups are the hot
+  // path, and an unindexed FK forces a full scan. Explicit `index: false` opts
+  // out; explicit `index`/`unique` still win.
+  const isRelation = field.type === 'relationship' || field.type === 'upload'
   const column: ColumnSchema = {
     name: field.name,
     type: storageTypeForField(field),
     required: Boolean(field.required),
     unique: Boolean(field.unique),
-    indexed: Boolean(field.index ?? field.unique),
+    indexed: field.index ?? (Boolean(field.unique) || isRelation),
     localized: Boolean(field.localized),
   }
   // Single-target relationships carry an FK hint; polymorphic (`string[]`) don't.
