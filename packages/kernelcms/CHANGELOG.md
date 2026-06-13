@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.16.0
+
+### Minor Changes
+
+- **RAG-native: built-in semantic + hybrid search. Your CMS _is_ your RAG knowledge base.** Instead of stitching together a CMS + a serverless function + a separate vector database (Pinecone/etc.), KernelCMS indexes your content for AI retrieval natively — on the same typed, access-controlled engine.
+  - **Bring any embedder.** Set `embeddings: { embed }` with a function that maps text → vectors (OpenAI, Cohere, a local model — your choice; KernelCMS has zero hard embedding dependency). Mark a collection `search: { fields, semantic: true }` and those fields are embedded on **every write** — real-time indexing, which is a governance requirement for AI agents, not a nightly batch.
+  - **Semantic + hybrid out of the box.** `kernel.semanticSearch({ collection, query })` does vector top-K; `kernel.hybridSearch({ collection, query })` fuses keyword + vector with Reciprocal Rank Fusion (RRF, k=60) — the 2026-standard retrieval that beats pure-semantic. Both over REST too: `GET /api/:collection/semantic?q=` and `/hybrid?q=`. Graceful degradation in both directions.
+  - **Access-checked by construction.** Every vector hit is loaded through the same access-control pipeline as a normal read — a semantic match for a document the caller can't read is dropped, never leaked. `limit` is clamped, `filter` is validated to real columns (no injection / prototype pollution), and an embedder that throws is logged (never with your text or API key) without breaking the content write.
+
+  Ships with an in-process `memoryVector()` store (great for a single node); a pgvector-backed adapter is the documented production follow-up — the `VectorAdapter` interface is ready. Red-teamed to **Risk: LOW** (the access-leak surface was attacked exhaustively and held), verified by a live harness AND a Playwright end-to-end test that drives the real `/semantic` + `/hybrid` endpoints over HTTP. Fully opt-in and backward-compatible.
+
 ## 0.15.0
 
 ### Minor Changes
