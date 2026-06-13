@@ -129,6 +129,13 @@ export interface RoleDoc {
   def: RoleDef
 }
 
+/** Options for runtime role mutations. `req` attributes the change to the acting
+ *  admin in the audit log; it never relaxes access (the HTTP layer enforces the
+ *  admin gate before these run). */
+export interface RoleMutationOptions {
+  req?: Partial<RequestContext>
+}
+
 // ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
@@ -815,7 +822,17 @@ export interface RestoreVersionOptions extends OperationBase {
 }
 
 /** A recorded mutating/auth event in the append-only audit log. */
-export type AuditAction = 'create' | 'update' | 'delete' | 'publish' | 'unpublish' | 'login' | 'login_failed'
+export type AuditAction =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'publish'
+  | 'unpublish'
+  | 'login'
+  | 'login_failed'
+  | 'role.create'
+  | 'role.update'
+  | 'role.delete'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -903,7 +920,14 @@ export interface Kernel {
   setupTwoFactor(opts: { collection: string; id: string }): Promise<{ secret: string; otpauthURL: string }>
   enableTwoFactor(opts: { collection: string; id: string; code: string }): Promise<{ enabled: true }>
   disableTwoFactor(opts: { collection: string; id: string }): Promise<{ enabled: false }>
-  loginWithOAuth(opts: { collection: string; provider: string; code: string; redirectUri: string }): Promise<AuthResult>
+  loginWithOAuth(opts: {
+    collection: string
+    provider: string
+    code: string
+    redirectUri: string
+    nonce?: string
+    codeVerifier?: string
+  }): Promise<AuthResult>
   findGlobal<T extends Row = Row>(opts: FindGlobalOptions): Promise<T>
   updateGlobal<T extends Row = Row>(opts: UpdateGlobalOptions): Promise<T>
   findVersions(opts: FindVersionsOptions): Promise<PaginatedResult<VersionDoc>>
@@ -920,12 +944,12 @@ export interface Kernel {
   findRoles(): Promise<RoleDoc[]>
   /** Create a role: persist it to `_roles` and add it to the live store. Throws if RBAC
    *  is disabled, the name already exists, or the definition is invalid. */
-  createRole(name: string, def: RoleDef): Promise<RoleDoc>
+  createRole(name: string, def: RoleDef, opts?: RoleMutationOptions): Promise<RoleDoc>
   /** Replace a role's definition: persist to `_roles` and update the live store. The
    *  change is enforced on the next access check. Throws if RBAC is disabled / invalid. */
-  updateRole(name: string, def: RoleDef): Promise<RoleDoc>
+  updateRole(name: string, def: RoleDef, opts?: RoleMutationOptions): Promise<RoleDoc>
   /** Remove a role from `_roles` and the live store. Throws if RBAC is disabled. */
-  deleteRole(name: string): Promise<{ name: string }>
+  deleteRole(name: string, opts?: RoleMutationOptions): Promise<{ name: string }>
   migrate(): Promise<void>
   destroy(): Promise<void>
 }

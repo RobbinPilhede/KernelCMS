@@ -67,6 +67,18 @@ export { consoleEmail, memoryEmail, httpEmail } from './email'
 export type { EmailAdapter, EmailMessage, MemoryEmailAdapter } from './email'
 export { oauthProvider, googleOAuth, githubOAuth } from './oauth'
 export type { OAuthProvider, OAuthProfile } from './oauth'
+export {
+  oidcProvider,
+  oktaSSO,
+  auth0SSO,
+  entraSSO,
+  googleWorkspaceSSO,
+  oneLoginSSO,
+  pkceVerifier,
+  pkceChallenge,
+  OidcError,
+} from './oidc'
+export type { OidcProviderOptions } from './oidc'
 export { describeConfig } from './describe'
 export type { AdminSchema, AdminCollection, AdminGlobal, AdminField, AdminBlock, AdminFieldOption } from './describe'
 export { fieldSchema, propertiesOf, docSchema } from './json-schema'

@@ -25,6 +25,7 @@ import type {
   RequestContext,
   RestoreVersionOptions,
   RoleDef,
+  RoleMutationOptions,
   BulkResult,
   CreateAPIKeyOptions,
   DeleteManyOptions,
@@ -1511,7 +1512,11 @@ export function createOperations(ctx: OperationCtx) {
         collection: collection.slug,
         principalId: null,
         principalType: 'user',
-        meta: { email: opts.email },
+        // A failed attempt carries an *attacker-supplied* address, possibly for an
+        // account that doesn't exist. Store a non-reversible digest so investigators
+        // can still correlate repeated attempts on the same address without the audit
+        // log accumulating raw PII for arbitrary email guesses.
+        meta: { emailHash: createHash('sha256').update(String(opts.email).toLowerCase()).digest('hex') },
       })
       throw new UnauthorizedError('Invalid email or password.')
     }
@@ -1683,13 +1688,22 @@ export function createOperations(ctx: OperationCtx) {
     provider: string
     code: string
     redirectUri: string
+    /** OIDC replay nonce; verified against the id_token by the provider. */
+    nonce?: string
+    /** PKCE verifier matching the challenge sent at authorization time. */
+    codeVerifier?: string
   }): Promise<AuthResult> {
     const collection = collectionOrThrow(opts.collection)
     if (!collection.auth) throw new BadRequestError(`Collection "${opts.collection}" is not an auth collection.`)
     const provider = (config.oauth ?? []).find((p) => p.name === opts.provider)
     if (!provider) throw new BadRequestError(`No OAuth provider "${opts.provider}" is configured.`)
 
-    const profile = await provider.exchangeCode({ code: opts.code, redirectUri: opts.redirectUri })
+    const profile = await provider.exchangeCode({
+      code: opts.code,
+      redirectUri: opts.redirectUri,
+      nonce: opts.nonce,
+      codeVerifier: opts.codeVerifier,
+    })
     if (!profile.email) throw new BadRequestError('The OAuth provider did not return an email address.')
 
     const hasField = (name: string) => collection.fields.some((f) => 'name' in f && f.name === name)
@@ -2274,7 +2288,21 @@ export function createOperations(ctx: OperationCtx) {
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 
-  async function createRole(name: string, def: RoleDef): Promise<import('./types').RoleDoc> {
+  // The grant keys recorded in a role-mutation audit row — enough to reconstruct
+  // who-changed-what (incl. the sensitive `admin` flag) without dumping full defs.
+  function roleGrantFields(def: RoleDef): string[] {
+    const keys: string[] = []
+    if (def.admin) keys.push('admin')
+    if (def.collections) keys.push(...Object.keys(def.collections).map((c) => `collections.${c}`))
+    if (def.globals) keys.push(...Object.keys(def.globals).map((g) => `globals.${g}`))
+    return keys
+  }
+
+  async function createRole(
+    name: string,
+    def: RoleDef,
+    opts: RoleMutationOptions = {},
+  ): Promise<import('./types').RoleDoc> {
     assertRbacEnabled()
     validateRole(name, def)
     if (config.rbacStore.roles[name]) throw new ConflictError(`Role "${name}" already exists.`)
@@ -2283,24 +2311,41 @@ export function createOperations(ctx: OperationCtx) {
     // Update the live store only AFTER the persist succeeds (fail-closed: a failed
     // write must not leave a phantom grant in memory).
     config.rbacStore.roles[name] = stored
+    await recordAudit({
+      action: 'role.create',
+      documentId: name,
+      req: opts.req as RequestContext | undefined,
+      fields: roleGrantFields(stored),
+    })
     return { name, def: cloneRoleDef(stored) }
   }
 
-  async function updateRole(name: string, def: RoleDef): Promise<import('./types').RoleDoc> {
+  async function updateRole(
+    name: string,
+    def: RoleDef,
+    opts: RoleMutationOptions = {},
+  ): Promise<import('./types').RoleDoc> {
     assertRbacEnabled()
     validateRole(name, def)
     if (!config.rbacStore.roles[name]) throw new NotFoundError(`Role "${name}" not found.`)
     const stored = cloneRoleDef(def)
     await db.update({ collection: ROLES_TABLE, id: name, data: { name, def: stored } })
     config.rbacStore.roles[name] = stored
+    await recordAudit({
+      action: 'role.update',
+      documentId: name,
+      req: opts.req as RequestContext | undefined,
+      fields: roleGrantFields(stored),
+    })
     return { name, def: cloneRoleDef(stored) }
   }
 
-  async function deleteRole(name: string): Promise<{ name: string }> {
+  async function deleteRole(name: string, opts: RoleMutationOptions = {}): Promise<{ name: string }> {
     assertRbacEnabled()
     if (!config.rbacStore.roles[name]) throw new NotFoundError(`Role "${name}" not found.`)
     await db.delete({ collection: ROLES_TABLE, id: name })
     delete config.rbacStore.roles[name]
+    await recordAudit({ action: 'role.delete', documentId: name, req: opts.req as RequestContext | undefined })
     return { name }
   }
 

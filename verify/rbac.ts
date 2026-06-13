@@ -32,6 +32,7 @@ async function main() {
   const config = defineConfig({
     secret: 'verify-secret-32-characters-long!!',
     db: sqliteAdapter({ url: `file:${dbFile}` }),
+    audit: true,
     rbac: {
       roles: {
         admin: { admin: true },
@@ -73,12 +74,26 @@ async function main() {
   await denied('reader cannot create (before grant)', () =>
     kernel.create({ collection: 'notes', data: { title: 'y' }, ...as(['reader']) }),
   )
-  await (kernel as any).updateRole('reader', { collections: { notes: ['read', 'create'] } })
+  await (kernel as any).updateRole(
+    'reader',
+    { collections: { notes: ['read', 'create'] } },
+    { req: { user: { id: 'admin-1', roles: ['admin'] } } },
+  )
   const afterGrant = await kernel.create({ collection: 'notes', data: { title: 'now allowed' }, ...as(['reader']) })
   check(
     'runtime updateRole takes effect immediately (reader CAN now create)',
     Boolean(afterGrant.id),
     `id=${afterGrant.id}`,
+  )
+
+  console.log('\n\x1b[1mRBAC — role mutations are audited (governance trail)\x1b[0m')
+  const audit = await (kernel as any).findAuditLog({ where: { action: { equals: 'role.update' } } })
+  const roleEntry = (audit?.docs ?? []).find((d: any) => d.documentId === 'reader')
+  check('role.update recorded in audit log', Boolean(roleEntry), `entries=${audit?.docs?.length ?? 0}`)
+  check(
+    'audit attributes the acting admin',
+    roleEntry?.principalId === 'admin-1',
+    `principalId=${roleEntry?.principalId}`,
   )
 
   console.log(`\n\x1b[1mRBAC Result: ${pass} passed, ${fails.length} failed\x1b[0m`)

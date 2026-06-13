@@ -18,8 +18,26 @@ export interface OAuthProfile {
 export interface OAuthProvider {
   /** Stable name used in routes and `loginWithOAuth({ provider })`. */
   name: string
-  authorizationUrl(opts: { redirectUri: string; state: string }): string
-  exchangeCode(opts: { code: string; redirectUri: string }): Promise<OAuthProfile>
+  /** True when this provider requires `nonce`/`codeVerifier` to be threaded
+   *  through sign-in (OIDC with replay + PKCE protection). The server binds
+   *  those one-time values to the same HttpOnly cookie as `state`. */
+  needsNonce?: boolean
+  authorizationUrl(opts: {
+    redirectUri: string
+    state: string
+    /** OIDC replay nonce. Echoed in the id_token and verified on exchange. */
+    nonce?: string
+    /** PKCE S256 challenge (base64url SHA-256 of the verifier). */
+    codeChallenge?: string
+  }): string
+  exchangeCode(opts: {
+    code: string
+    redirectUri: string
+    /** The nonce sent in `authorizationUrl`; verified against the id_token. */
+    nonce?: string
+    /** The PKCE verifier matching the challenge sent in `authorizationUrl`. */
+    codeVerifier?: string
+  }): Promise<OAuthProfile>
 }
 
 /** Build a standard authorization-code provider from its endpoints. */

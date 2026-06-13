@@ -23,6 +23,8 @@ import {
   invokeEndpoint,
   renderErrorMessage,
   setupRuntime,
+  pkceVerifier,
+  pkceChallenge,
   KERNEL_VERSION,
 } from '@kernel/core'
 import type { AgentConfig, AuditDoc, EndpointConfig, RequestContext, RoleDef } from '@kernel/core'
@@ -617,7 +619,7 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
           const body = await readBody(request)
           const name = typeof body.name === 'string' ? body.name : ''
           const def = (body.def ?? {}) as RoleDef
-          return json({ role: await kernel.createRole(name, def) }, 201)
+          return json({ role: await kernel.createRole(name, def, { req: { user } }) }, 201)
         }
         return methodNotAllowed()
       }
@@ -628,9 +630,9 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
         if (method === 'PATCH') {
           const body = await readBody(request)
           const def = (body.def ?? {}) as RoleDef
-          return json({ role: await kernel.updateRole(name, def) })
+          return json({ role: await kernel.updateRole(name, def, { req: { user } }) })
         }
-        if (method === 'DELETE') return json(await kernel.deleteRole(name))
+        if (method === 'DELETE') return json(await kernel.deleteRole(name, { req: { user } }))
         return methodNotAllowed()
       }
     }
@@ -789,21 +791,41 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     if (segments.length === 3) {
       // CSRF defence: bind a random `state` to an httpOnly, SameSite=Lax cookie.
       // The callback must echo the same value, so a forged callback (login CSRF /
-      // session fixation) without the cookie is rejected.
+      // session fixation) without the cookie is rejected. For OIDC providers we
+      // also bind a one-time `nonce` (replay defence) and a PKCE `code_verifier`
+      // (auth-code interception defence) into the SAME cookie — never the URL —
+      // so they're inaccessible to JS and to the front channel.
       const state = globalThis.crypto.randomUUID()
-      const location = def.authorizationUrl({ redirectUri, state })
-      const cookie = `${OAUTH_STATE_COOKIE}=${state}; HttpOnly; Secure; SameSite=Lax; Path=${apiBase}/${collection}/oauth/${provider}; Max-Age=600`
+      let cookieValue = state
+      let location: string
+      if (def.needsNonce) {
+        const nonce = globalThis.crypto.randomUUID()
+        const codeVerifier = pkceVerifier()
+        // state.nonce.verifier — none of these tokens contain a '.'.
+        cookieValue = `${state}.${nonce}.${codeVerifier}`
+        location = def.authorizationUrl({ redirectUri, state, nonce, codeChallenge: pkceChallenge(codeVerifier) })
+      } else {
+        location = def.authorizationUrl({ redirectUri, state })
+      }
+      const cookie = `${OAUTH_STATE_COOKIE}=${cookieValue}; HttpOnly; Secure; SameSite=Lax; Path=${apiBase}/${collection}/oauth/${provider}; Max-Age=600`
       return new Response(null, { status: 302, headers: { location, 'set-cookie': cookie } })
     }
     if (segments.length === 4 && segments[3] === 'callback') {
       const code = url.searchParams.get('code')
       if (!code) throw new BadRequestError('Missing OAuth `code`.')
       const returned = url.searchParams.get('state') ?? ''
-      const expected = readCookie(request, OAUTH_STATE_COOKIE)
-      if (!expected || !timingEqual(returned, expected)) {
+      const stored = readCookie(request, OAUTH_STATE_COOKIE)
+      if (!stored) throw new BadRequestError('Invalid OAuth `state`.')
+      const [expectedState, nonce, codeVerifier] = stored.split('.') as [string, string?, string?]
+      if (!timingEqual(returned, expectedState)) {
         throw new BadRequestError('Invalid OAuth `state`.')
       }
-      const res = json(await kernel.loginWithOAuth({ collection, provider, code, redirectUri }))
+      // An OIDC provider MUST have nonce + verifier bound; refuse if the cookie
+      // was tampered to drop them (which would skip replay/PKCE checks).
+      if (def.needsNonce && (!nonce || !codeVerifier)) {
+        throw new BadRequestError('Invalid OAuth `state`.')
+      }
+      const res = json(await kernel.loginWithOAuth({ collection, provider, code, redirectUri, nonce, codeVerifier }))
       // Burn the one-time state cookie.
       res.headers.set(
         'set-cookie',
@@ -1256,6 +1278,10 @@ function csvCell(value: unknown): string {
   if (value === null || value === undefined) s = ''
   else if (typeof value === 'object') s = JSON.stringify(value)
   else s = String(value)
+  // CSV injection guard: a cell beginning with = + - @ (or a tab/CR) is treated as a
+  // formula by Excel/Sheets. Audit cells carry user-controlled strings (field names,
+  // ids), so prefix a single quote to neutralize execution on export.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
   return s
 }
