@@ -18,6 +18,8 @@ import { createCachedDb } from './cache'
 import { CACHE_SLUG, JOBS_SLUG } from './config'
 import { BadRequestError, isKernelError } from './errors'
 import { attachWebhooks } from './webhooks'
+import { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
+import { WORKFLOW_JOB_TASK } from './config'
 import { attachSearch } from './search'
 import { attachSemantic, reciprocalRankFusion } from './vector'
 import { applyPlugins } from './plugins'
@@ -213,6 +215,24 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
 
   const ops = createOperations({ config: sanitized, db: opDb, logger })
 
+  // Agentic workflows: build the engine (needs ops), bind its drain handler onto the
+  // reserved job placeholder so `runDueJobs` executes enqueued runs, and attach the
+  // create/update trigger hooks (they enqueue durable runs via the jobs queue). The
+  // engine writes its run log against the RAW db (a system table), while every content
+  // op inside a run flows through `ops` AS the scoped agent principal.
+  const workflowEngine = createWorkflowEngine({ config: sanitized, db: sanitized.db, ops, logger })
+  if (sanitized.workflows.length > 0) {
+    const drainJob = sanitized.jobs?.find((j) => j.slug === WORKFLOW_JOB_TASK)
+    if (drainJob) drainJob.handler = workflowEngine.drainJobHandler
+    attachWorkflowTriggers(
+      sanitized.collections,
+      sanitized.workflows,
+      ops.enqueue,
+      new Set([JOBS_SLUG, CACHE_SLUG]),
+      logger,
+    )
+  }
+
   // AI-discoverability / GEO generators. They read PUBLISHED, publicly-readable content
   // through the access-checked ops as an anonymous principal (never overrideAccess), so
   // drafts/private docs can never leak. Built unconditionally; the ops throw cleanly when
@@ -383,6 +403,8 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     findAuditLog: ops.findAuditLog,
     enqueue: ops.enqueue,
     runDueJobs: ops.runDueJobs,
+    runWorkflow: workflowEngine.runWorkflow,
+    workflowRuns: workflowEngine.workflowRuns,
     findRoles: ops.findRoles,
     createRole: ops.createRole,
     updateRole: ops.updateRole,

@@ -613,6 +613,13 @@ export interface KernelConfig {
    *  collection; enqueue work with `kernel.enqueue` and drain it with
    *  `kernel.runDueJobs` (call from a cron — `kernel jobs:run`). */
   jobs?: JobDefinition[]
+  /** Autonomous content workflows: declarative pipelines a SCOPED agent runs from
+   *  trigger → draft → quality gate → human review. Steps operate through a Local-API
+   *  bound to the workflow's agent principal (field-scoped, draft-only, access-checked,
+   *  never `overrideAccess`); content advances only via `ctx.evalGate` / `ctx.requestReview`,
+   *  so a workflow can NEVER auto-publish. Provisions a `_workflow_runs` log + a reserved
+   *  drain job; create/update triggers enqueue runs durably via the jobs system. */
+  workflows?: WorkflowDefinition[]
   /** Custom HTTP endpoints that extend the auto-generated REST surface. Each runs
    *  through the same access + validation + error pipeline. Define with
    *  `defineEndpoint(...)`; bundle several (plus collections/jobs) with
@@ -808,6 +815,8 @@ export interface SanitizedConfig {
   email?: EmailAdapter
   /** Registered background-job handlers. */
   jobs?: JobDefinition[]
+  /** Validated autonomous workflows (see `workflows`). Empty when none configured. */
+  workflows: WorkflowDefinition[]
   /** Registered custom HTTP endpoints. */
   endpoints?: EndpointConfig[]
   /** Registered OAuth providers. */
@@ -1090,6 +1099,9 @@ export type AuditAction =
   | 'role.delete'
   | 'review.approve'
   | 'review.request_changes'
+  | 'workflow.completed'
+  | 'workflow.failed'
+  | 'workflow.awaiting_review'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -1618,6 +1630,15 @@ export interface Kernel {
   findAuditLog(opts?: FindAuditLogOptions): Promise<{ docs: AuditDoc[]; count: number }>
   enqueue(opts: EnqueueOptions): Promise<Doc>
   runDueJobs(opts?: RunJobsOptions): Promise<RunJobsResult>
+  /** Execute a workflow's steps in order, each AS the workflow's scoped agent principal
+   *  (field-scoped + draft-only + access-checked). Records per-step status into the
+   *  `_workflow_runs` log. A blocking `evalGate` failure or a thrown step fails the run
+   *  (recorded + audited); `requestReview` pauses the run as `awaiting_review`; all steps
+   *  finishing completes it. Throws when workflows are not configured or the slug is unknown. */
+  runWorkflow(opts: RunWorkflowOptions): Promise<WorkflowRun>
+  /** Query the durable workflow run log (newest-first). Filter by `slug`/`status`.
+   *  Returns `{ docs: [], count: 0 }` when workflows are not configured. */
+  workflowRuns(opts?: WorkflowRunsOptions): Promise<{ docs: WorkflowRun[]; count: number }>
   /** List all RBAC roles (from the live store). Empty when RBAC is disabled. */
   findRoles(): Promise<RoleDoc[]>
   /** Create a role: persist it to `_roles` and add it to the live store. Throws if RBAC
@@ -1741,6 +1762,132 @@ export interface JobDefinition {
   handler: (ctx: JobRunContext) => Promise<unknown> | unknown
   /** Max attempts before the job is marked failed. Default 3. */
   maxAttempts?: number
+}
+
+// ---------------------------------------------------------------------------
+// Agentic workflows
+//
+// A declarative orchestration layer that lets a SCOPED agent take a job from
+// trigger → draft → quality gate → human review, with hard guardrails so nothing
+// autonomous can go live unchecked. A workflow's `steps` are user functions that
+// operate through a Local-API subset BOUND to the configured agent principal —
+// every write they make flows through the agent's `fieldScope` + the draft-only
+// brake + normal access control (NO overrideAccess). Content advances ONLY via the
+// eval gate or the human review gate; a workflow can NEVER auto-publish.
+// ---------------------------------------------------------------------------
+
+/** A reference to a single document a gate operates on. */
+export interface WorkflowRef {
+  collection: string
+  id: string
+}
+
+/** The Local-API surface a workflow step gets — content reads/writes only, all run
+ *  AS the workflow's scoped agent principal (field-scoped, draft-only, access-checked). */
+export type WorkflowLocalApi = Pick<
+  Kernel,
+  'find' | 'findByID' | 'create' | 'update' | 'delete' | 'count' | 'composePage' | 'findVersions'
+>
+
+/** The lifecycle state of a workflow run, persisted in `_workflow_runs`. */
+export type WorkflowRunStatus = 'pending' | 'running' | 'awaiting_review' | 'completed' | 'failed'
+
+/** Per-step execution record kept in the run log. */
+export interface WorkflowStepRecord {
+  name: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  startedAt?: string
+  finishedAt?: string
+  /** Free-form lines the step appended via `ctx.log(...)`. */
+  log?: string[]
+  /** The error message when the step failed (never carries secrets — message only). */
+  error?: string
+}
+
+/** What fired a run: a create/update trigger (with the document) or a manual call. */
+export interface WorkflowTriggerRecord {
+  on: 'create' | 'update' | 'manual'
+  collection?: string
+  documentId?: string
+}
+
+/** A durable workflow run, as persisted in `_workflow_runs` and returned by the API. */
+export interface WorkflowRun {
+  id: string
+  slug: string
+  status: WorkflowRunStatus
+  trigger: WorkflowTriggerRecord
+  steps: WorkflowStepRecord[]
+  attempts: number
+  lastError: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** Context handed to each workflow step. Every content op on `kernel` runs as the
+ *  workflow's scoped agent principal. The gate helpers are the ONLY way a step can
+ *  advance content past a draft. */
+export interface WorkflowContext {
+  /** Local-API subset bound to the scoped agent principal (field-scoped, draft-only). */
+  kernel: WorkflowLocalApi
+  /** The trigger document (create/update) or the manual `input` payload. Treat as
+   *  untrusted — never spread it into a write without naming the fields you want. */
+  input: unknown
+  /** Append a line to this step's run log (persisted; keep it free of secrets). */
+  log: (msg: string) => void
+  /** Metadata for the step currently executing. */
+  step: { name: string; index: number }
+  /** Run the configured content-CI evals against a document. THROWS (halting the
+   *  workflow and recording a failed run) if a blocking eval rejects. */
+  evalGate: (ref: WorkflowRef) => Promise<void>
+  /** Submit a document to the human review inbox (#3) and mark the run
+   *  `awaiting_review`. The run then PAUSES — a human approves via the inbox to
+   *  publish; the workflow never block-waits on a human. */
+  requestReview: (ref: WorkflowRef, note?: string) => Promise<void>
+}
+
+/** A single ordered step in a workflow. */
+export interface WorkflowStep {
+  name: string
+  run: (ctx: WorkflowContext) => Promise<void>
+}
+
+/** What causes a workflow to enqueue a run automatically. `create`/`update` attach an
+ *  `afterChange` hook to `collection`; `manual` runs only via `kernel.runWorkflow`. */
+export interface WorkflowTrigger {
+  on: 'create' | 'update' | 'manual'
+  /** The collection whose writes fire the trigger (required for create/update). */
+  collection?: string
+}
+
+export interface WorkflowDefinition {
+  slug: string
+  /** Id of a configured `agents` entry. Every step runs AS this scoped principal —
+   *  its `fieldScope` and the hard draft-only brake apply to all its writes. When
+   *  omitted, steps run as a draft-only system-agent with no fieldScope (still NEVER
+   *  publishes). An agent with the `admin` role is rejected at config time. */
+  agent?: string
+  /** What enqueues a run. Defaults to `manual` when omitted. */
+  trigger?: WorkflowTrigger
+  steps: WorkflowStep[]
+  /** Max attempts before a failed run is given up on (mirrors job retries). Default 3. */
+  maxAttempts?: number
+}
+
+export interface RunWorkflowOptions {
+  slug: string
+  /** Manual input payload (ignored for trigger-driven runs, which carry the doc). */
+  input?: unknown
+  /** Caller request context — used only to AUDIT who started a manual run; it NEVER
+   *  becomes the principal that executes steps (that is always the scoped agent). */
+  req?: Partial<RequestContext>
+}
+
+export interface WorkflowRunsOptions {
+  slug?: string
+  status?: WorkflowRunStatus
+  limit?: number
+  page?: number
 }
 
 // ---------------------------------------------------------------------------

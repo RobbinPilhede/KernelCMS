@@ -30,6 +30,26 @@ export default defineConfig({
   db: sqliteAdapter({ url: ':memory:' }),
   storage: localStorage({ rootDir: './.e2e-uploads', servePath: '/files' }),
   localization: { locales: ['en', 'es'], defaultLocale: 'en' },
+  // Agentic workflow demo: a scoped, draft-only agent runs an autonomous step.
+  agents: [{ id: 'demo-bot', token: 'demo-bot-token', roles: ['editor'], fieldScope: { allow: ['title', 'summary'] } }],
+  workflows: [
+    {
+      slug: 'draft_welcome',
+      agent: 'demo-bot',
+      trigger: { on: 'manual' },
+      steps: [
+        {
+          name: 'draft-article',
+          async run(ctx) {
+            await ctx.kernel.create({
+              collection: 'articles',
+              data: { title: 'Workflow draft', summary: 'made by an agent step' },
+            })
+          },
+        },
+      ],
+    },
+  ],
   // RAG-native: full-text adapter + a pluggable embedder power /semantic + /hybrid.
   search: memorySearch(),
   embeddings: { embed: demoEmbed, dimensions: DIM },
@@ -105,7 +125,7 @@ export default defineConfig({
       slug: 'articles',
       labels: { singular: 'Article', plural: 'Articles' },
       admin: { useAsTitle: 'title', defaultColumns: ['title'] },
-      access: { read: () => true },
+      access: { read: () => true, create: ({ req }) => Boolean(req.user), update: ({ req }) => Boolean(req.user) },
       versions: { drafts: true },
       // Semantic + hybrid search index the title + summary on every write.
       search: { fields: ['title', 'summary'], semantic: true },

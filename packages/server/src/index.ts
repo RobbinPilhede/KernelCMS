@@ -708,6 +708,44 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       return methodNotAllowed()
     }
 
+    // /_admin/workflow-runs -> the agentic-workflow run log. REVIEWER-gated (admin OR
+    // editor; never an agent) — operators monitor autonomous runs here. GET lists runs
+    // (optional ?slug= / ?status= / pagination). Read-only. Returns empty when workflows
+    // are not configured.
+    if (segments[1] === 'workflow-runs' && segments.length === 2 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Workflow run access requires an admin or editor role.')
+      const q = url.searchParams
+      const slug = q.get('slug')
+      const status = q.get('status')
+      return json(
+        await kernel.workflowRuns({
+          ...(slug ? { slug } : {}),
+          ...(status ? { status: status as never } : {}),
+          limit: toNum(q.get('limit')) ?? undefined,
+          page: toNum(q.get('page')) ?? undefined,
+        }),
+      )
+    }
+
+    // POST /_admin/workflows/:slug/run -> manually start a workflow run. REVIEWER-gated
+    // (admin OR editor; never an agent). The run still executes AS the workflow's scoped
+    // agent principal — this route only authorizes WHO may start it; it never becomes the
+    // principal that runs the steps. The body's `input` is an untrusted manual payload.
+    if (segments[1] === 'workflows' && segments.length === 4 && segments[3] === 'run' && method === 'POST') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Starting a workflow requires an admin or editor role.')
+      const slug = decodeURIComponent(segments[2]!)
+      const body = await readBody(request)
+      return json(
+        await kernel.runWorkflow({
+          slug,
+          ...(body.input !== undefined ? { input: body.input } : {}),
+          req: { user },
+        }),
+      )
+    }
+
     // /_admin/locks -> advisory soft locks, for the collaboration UI. REVIEWER-gated
     // (admin OR editor; never an agent) — the same coarse door as the review inbox. Locks
     // are ADVISORY: listing/acquiring/releasing here never changes write authorization.

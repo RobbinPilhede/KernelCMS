@@ -12,6 +12,7 @@ import type {
   SanitizedDiscoverability,
   SanitizedLocalization,
   SanitizedSigningConfig,
+  WorkflowDefinition,
 } from './types'
 import { effectiveFields, joinFields } from './fields'
 import { consoleEmail, type EmailAdapter } from './email'
@@ -171,6 +172,11 @@ function withUploadFields(collection: CollectionConfig): CollectionConfig {
 
 /** Reserved slug for the injected background-jobs queue collection. */
 export const JOBS_SLUG = 'kernel_jobs'
+
+/** Reserved background-job task the workflow engine enqueues when a trigger fires.
+ *  Draining it (via `runDueJobs` / `kernel jobs:run`) executes the workflow run durably,
+ *  so a slow agent step never blocks the content write that triggered it. */
+export const WORKFLOW_JOB_TASK = 'kernel_run_workflow'
 
 /** The hidden collection that stores queued/processed background jobs. */
 function jobsCollection(): CollectionConfig {
@@ -397,6 +403,58 @@ function sanitizeReview(review: KernelConfig['review'], hasAgents: boolean): { e
   return { enabled: hasAgents }
 }
 
+/**
+ * Validate autonomous workflows. Each needs a unique snake_case slug and at least one
+ * named step with a `run` function. A workflow's `agent` (when set) must name a real
+ * configured agent — and that agent must NOT hold the 'admin' role (consistency with
+ * the agent rules: an admin agent would widen role-gated access, defeating the brake).
+ * A create/update trigger must name a real, non-system collection. The steps themselves
+ * run later through the engine; here we only fail-fast on a misconfiguration.
+ */
+function sanitizeWorkflows(
+  workflows: WorkflowDefinition[] | undefined,
+  agents: AgentConfig[],
+  collectionSlugs: ReadonlySet<string>,
+  systemSlugs: ReadonlySet<string>,
+): WorkflowDefinition[] {
+  if (!workflows || workflows.length === 0) return []
+  const agentsById = new Map(agents.map((a) => [a.id, a]))
+  const slugs = new Set<string>()
+  for (const wf of workflows) {
+    assert(typeof wf.slug === 'string' && IDENT_RE.test(wf.slug), `workflow slug "${wf.slug}" must be ${NAMING_RULE}`)
+    assert(!slugs.has(wf.slug), `duplicate workflow slug "${wf.slug}"`)
+    slugs.add(wf.slug)
+    assert(Array.isArray(wf.steps) && wf.steps.length > 0, `workflow "${wf.slug}" needs at least one step`)
+    const stepNames = new Set<string>()
+    for (const step of wf.steps) {
+      assert(typeof step.name === 'string' && step.name.length > 0, `workflow "${wf.slug}" has a step with no \`name\``)
+      assert(!stepNames.has(step.name), `workflow "${wf.slug}" has duplicate step "${step.name}"`)
+      stepNames.add(step.name)
+      assert(typeof step.run === 'function', `workflow "${wf.slug}" step "${step.name}" needs a \`run\` function`)
+    }
+    if (wf.agent !== undefined) {
+      const agent = agentsById.get(wf.agent)
+      assert(agent !== undefined, `workflow "${wf.slug}" references unknown agent "${wf.agent}"`)
+      assert(
+        !(agent!.roles ?? []).includes('admin'),
+        `workflow "${wf.slug}" agent "${wf.agent}" must not have the 'admin' role`,
+      )
+    }
+    const trigger = wf.trigger
+    if (trigger && (trigger.on === 'create' || trigger.on === 'update')) {
+      assert(
+        typeof trigger.collection === 'string' && trigger.collection.length > 0,
+        `workflow "${wf.slug}" ${trigger.on} trigger needs a \`collection\``,
+      )
+      assert(
+        collectionSlugs.has(trigger.collection!) && !systemSlugs.has(trigger.collection!),
+        `workflow "${wf.slug}" trigger collection "${trigger.collection}" does not exist`,
+      )
+    }
+  }
+  return workflows
+}
+
 /** Default per-collection document cap for discoverability output (DoS guard). */
 const DEFAULT_DISCO_DOCS_PER_COLLECTION = 1000
 /** Default whole-corpus document cap for discoverability output (DoS guard). */
@@ -481,7 +539,10 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
 
   const baseCollections = [...config.collections]
   // Background jobs: inject the reserved queue collection (guard against collision).
-  if (config.jobs && config.jobs.length > 0) {
+  // Workflows ride the same durable queue (triggers enqueue runs), so its presence also
+  // provisions the jobs collection — even when the project defines no `jobs` of its own.
+  const hasWorkflows = Boolean(config.workflows && config.workflows.length > 0)
+  if ((config.jobs && config.jobs.length > 0) || hasWorkflows) {
     assert(
       !baseCollections.some((c) => c.slug === JOBS_SLUG),
       `collection slug "${JOBS_SLUG}" is reserved for the background-jobs queue`,
@@ -652,6 +713,30 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   }
 
   const agents = sanitizeAgents(config.agents)
+  const collectionSlugSet = new Set(collections.map((c) => c.slug))
+  const workflows = sanitizeWorkflows(config.workflows, agents, collectionSlugSet, new Set([JOBS_SLUG, CACHE_SLUG]))
+
+  // Resolve the registered job handlers. When workflows are configured they ride the
+  // durable queue, so append a placeholder for the reserved drain task — its handler is
+  // bound by `initKernel` once the engine (which needs the ops) exists. The placeholder
+  // throws if somehow invoked before binding, so a misordered boot fails loudly.
+  let jobs = config.jobs && config.jobs.length > 0 ? [...config.jobs] : []
+  if (workflows.length > 0) {
+    assert(
+      !jobs.some((j) => j.slug === WORKFLOW_JOB_TASK),
+      `job task "${WORKFLOW_JOB_TASK}" is reserved for the workflow engine`,
+    )
+    jobs = [
+      ...jobs,
+      {
+        slug: WORKFLOW_JOB_TASK,
+        maxAttempts: 1,
+        handler: () => {
+          throw new Error('The workflow drain job is not bound yet (initKernel wires it).')
+        },
+      },
+    ]
+  }
 
   return {
     serverURL: config.serverURL ?? 'http://localhost:3000',
@@ -677,6 +762,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     review: sanitizeReview(config.review, agents.length > 0),
     signing: sanitizeSigning(config.signing),
     evals: sanitizeEvals(config.evals),
+    workflows,
     discoverability: sanitizeDiscoverability(config, collections, collectionsBySlug),
     ...(config.search ? { search: config.search } : {}),
     ...(config.embeddings ? { embeddings: config.embeddings } : {}),
@@ -686,7 +772,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     ...(email ? { email } : {}),
     ...(config.cache ? { cache: config.cache } : {}),
     ...(config.webhooks && config.webhooks.length > 0 ? { webhooks: config.webhooks } : {}),
-    ...(config.jobs && config.jobs.length > 0 ? { jobs: config.jobs } : {}),
+    ...(jobs.length > 0 ? { jobs } : {}),
     ...(endpoints.length > 0 ? { endpoints } : {}),
     ...(config.oauth && config.oauth.length > 0 ? { oauth: config.oauth } : {}),
   }

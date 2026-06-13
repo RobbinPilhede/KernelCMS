@@ -56,6 +56,12 @@ export const PRESENCE_TABLE = '_presence'
  *  provisioned (a system table); writes happen only when `config.signing` is enabled. */
 export const CREDENTIALS_TABLE = '_credentials'
 
+/** Storage table holding the durable workflow run log — one row per workflow run,
+ *  recording its status, trigger, and per-step status/log. Provisioned only when
+ *  `config.workflows` is set. The engine reads/writes it via the trusted (overrideAccess)
+ *  path; content writes inside a run still go through the scoped agent principal. */
+export const WORKFLOW_RUNS_TABLE = '_workflow_runs'
+
 /** Compile the sanitized config into the storage-facing schema for the adapter. */
 export function compileSchema(config: SanitizedConfig): KernelSchema {
   const tables: TableSchema[] = []
@@ -246,6 +252,26 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
     timestamps: true,
     singleton: false,
   })
+
+  // Durable workflow run log, provisioned only when workflows are configured. A flat
+  // row of indexed lookup columns (`slug`, `status`) plus JSON payloads for the trigger
+  // and per-step records. `attempts`/`lastError` mirror the jobs retry bookkeeping.
+  if (config.workflows.length > 0) {
+    tables.push({
+      table: WORKFLOW_RUNS_TABLE,
+      slug: WORKFLOW_RUNS_TABLE,
+      columns: [
+        { name: 'slug', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'status', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'trigger', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'steps', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'attempts', type: 'integer', required: false, unique: false, indexed: false, localized: false },
+        { name: 'lastError', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
 
   for (const global of config.globals) {
     tables.push({

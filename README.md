@@ -68,6 +68,14 @@ Perplexity, Google AI) can ingest and cite your content. Every byte is generated
 anonymous principal over the same access-checked read path: only published, publicly
 readable content ever ships.
 
+It is also the **agentic CMS**. Define `workflows` and an agent can run an autonomous
+content pipeline — ideation → draft → quality gate → human review — entirely inside the
+engine, with hard guardrails. Every step runs as a scoped agent principal: it physically
+cannot publish (draft-only brake), cannot write outside its `fieldScope`, and never gets
+`overrideAccess`. Content only advances through `evalGate` (your content-CI quality
+checks) and `requestReview` (a human approval in the inbox). Hand a job to an agent;
+nothing it produces goes live unchecked.
+
 ---
 
 ## Quickstart
@@ -161,6 +169,7 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change; the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
 - **Payments & orders:** add the `commerce({ payment: stripePayment({ ... }) })` plugin and you get `products` + `orders` collections, a `POST /commerce/checkout` (totals recomputed server-side from real prices), and a signature-verified `POST /commerce/webhook` that transitions orders to paid/refunded. Stripe and a deterministic `testPayment()` adapter included.
 - **AI agents (MCP):** register `agents: [{ id, token, roles, fieldScope }]` and serve your kernel over the Model Context Protocol — `npx kernel mcp` (stdio, for Claude Desktop / Cursor) or `kernel mcp --http` (multi-agent, per-request scoped tokens). Tools are auto-generated from the same model that builds the OpenAPI spec (CRUD, count, version history, your opt-in `defineEndpoint` business logic, plus `kernel://schema` resources to introspect), and every call runs through the in-process Local API as a scoped principal — so an agent goes through the **same access pipeline as a human**: it only touches the fields you allow, **cannot publish** (drafts only, enforced by the engine), and is attributed in version history. The MCP layer enforces nothing on its own. Import from `kernelcms/mcp`; the MCP SDK is an optional peer dependency.
+- **Agentic workflows:** define `workflows: [{ slug, agent, trigger, steps }]` and an agent runs an autonomous content pipeline (draft → quality gate → human review) under the same guardrails as MCP. Triggers (`on: 'create' | 'update'`) enqueue a **durable** run via the jobs queue, so a slow agent step never blocks the content write; `runWorkflow(...)` / `POST /api/_admin/workflows/:slug/run` run a `manual` one. Content advances only through `ctx.evalGate(...)` (your content-CI evals) and `ctx.requestReview(...)` (human approval in the inbox) — the agent itself physically cannot publish. See [agentic workflows](docs/agentic-workflows.md).
 - **Referential integrity:** give a relationship `onDelete: 'setNull' | 'cascade' | 'restrict'` to clean up references when a document is deleted.
 - **Hooks, access rules, localization, background jobs, plugins:** all configured the same way.
 
@@ -381,6 +390,75 @@ and read-denied fields never appear. Output is size-bounded by `maxDocsPerCollec
 (default 1000) and `maxDocsTotal` (default 5000). See the
 [AI discoverability guide](docs/ai-discoverability.md). (`toMarkdown(richTextDoc)` is
 also exported from `kernelcms/richtext`.)
+
+### Agentic workflows (autonomous, governed AI pipelines)
+
+Hand a job to an agent and let it run a multi-step content pipeline — ideation, draft,
+quality gate, human review — without it ever being able to push something live. A
+`workflow` names a scoped `agent`, an optional `trigger`, and ordered `steps`. Every step
+runs through `ctx.kernel`, a Local-API subset (`find` / `findByID` / `create` / `update` /
+`delete` / `count` / `composePage` / `findVersions`) pinned to that agent principal — a
+step can't pass `overrideAccess` or a different principal — plus two gates:
+
+```ts
+export default defineConfig({
+  agents: [{ id: 'writer', token: process.env.WRITER_TOKEN, roles: ['editor'],
+             fieldScope: { allow: ['title', 'body', 'excerpt'] } }],
+  workflows: [
+    {
+      slug: 'draft_from_brief',
+      agent: 'writer',                       // every step runs as this scoped agent
+      trigger: { on: 'create', collection: 'briefs' },
+      maxAttempts: 3,
+      steps: [
+        {
+          name: 'draft',
+          async run(ctx) {
+            // ctx.input is the trigger doc; ctx.kernel is pinned to `writer`
+            const body = await generateWithYourLLM(ctx.input.brief) // your agent/LLM
+            const post = await ctx.kernel.create({
+              collection: 'posts',
+              data: { title: ctx.input.title, body }, // a DRAFT — agents cannot publish
+            })
+            ctx.log(`drafted post ${post.id}`)
+            // quality CI: runs the collection's `evals`; THROWS → the run fails
+            await ctx.evalGate({ collection: 'posts', id: post.id })
+            // pause as `awaiting_review`; a human approves (and publishes) in the inbox
+            await ctx.requestReview({ collection: 'posts', id: post.id }, 'ready for review')
+          },
+        },
+      ],
+    },
+  ],
+})
+```
+
+```ts
+// Local API — run a manual workflow, or read the durable run log:
+const run = await kernel.runWorkflow({ slug: 'draft_from_brief', input })
+const { docs } = await kernel.workflowRuns({ slug: 'draft_from_brief', status: 'awaiting_review' })
+```
+
+```bash
+# REST (admin/editor-gated):
+curl http://localhost:3000/api/_admin/workflow-runs?slug=draft_from_brief
+curl -X POST http://localhost:3000/api/_admin/workflows/draft_from_brief/run -d '{ … }'
+```
+
+Triggers (`on: 'create' | 'update'`) enqueue a **durable** run via the jobs queue (drained
+by `kernel jobs:run` / `runDueJobs`), so a slow agent step never blocks the content write;
+`on: 'manual'` runs only via `runWorkflow` / the route. Runs move through
+`pending → running → completed | failed | awaiting_review`, recorded per-step in
+`_workflow_runs` (error **messages** only, never stacks or secrets) and decisioned as
+`workflow.completed` / `workflow.failed` / `workflow.awaiting_review`.
+
+**The guardrails are the whole point.** Every step is the scoped agent: it physically
+cannot publish (draft-only brake), cannot write outside `fieldScope`, and never runs with
+`overrideAccess`. Content advances **only** through `evalGate` (quality CI) and
+`requestReview` → human approval — KernelCMS orchestrates and guards; the actual
+generation is your agent/LLM inside a step, and approval publishes through the inbox path.
+A self-triggering loop is guarded: an agent's own write into its trigger collection won't
+re-fire its workflow.
 
 ### Auth
 
