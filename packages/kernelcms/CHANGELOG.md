@@ -1,5 +1,15 @@
 # kernelcms
 
+## 0.15.0
+
+### Minor Changes
+
+- **Types that actually reach your frontend, and a content model in minutes.**
+  - **Bulletproof end-to-end types.** Generated types now cover the hard cases other CMSes get wrong (Strapi's are famously "off"): a **`blocks` page-builder field generates a discriminated union** — `Array<{ blockType: 'hero' } & {…} | { blockType: 'cta' } & {…}>` — so narrowing on `blockType` gives you each block's exact shape on the frontend. **Relationships generate `Relationship<T> = string | T`**, so the SAME field type-checks whether you read it shallow (an id) or populated (the related document), including `hasMany` and polymorphic targets. The typed client (`createTypedClient`) infers all of it with zero casts — proven by `expectTypeOf` type-level tests that fail the build if inference regresses.
+  - **Instant setup with real starter models.** `create-kernel` ships four ready content models — `blog`, `shop`, `docs`, `portfolio` — each a correct, wired, seed-able schema. `create-kernel my-app --model shop` (or `--from-brief "an online store"`, which maps your description to the closest model offline) scaffolds a running TanStack Start app with that model in one unattended command. Every starter model is verified to actually boot a real kernel, migrate, seed, and populate a relationship — not just copy files. Still zero-dependency (Node built-ins only).
+
+  (The "from a brief" mapping is deterministic and offline — curated models, not a live LLM; the agent/MCP layer remains the live-AI path.) Pure additions, fully backward-compatible.
+
 ## 0.14.0
 
 ### Minor Changes
