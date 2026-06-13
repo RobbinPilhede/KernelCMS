@@ -3,10 +3,14 @@ import { randomUUID } from 'node:crypto'
 import type {
   BackfillOptions,
   BackfillResult,
+  ChangeEvent,
+  ChangesOptions,
+  ChangesResult,
   Doc,
   Kernel,
   KernelConfig,
   MigrateRunOptions,
+  RequestContext,
   RollbackOptions,
   RollbackResult,
 } from './types'
@@ -18,6 +22,15 @@ import { createCachedDb } from './cache'
 import { CACHE_SLUG, JOBS_SLUG } from './config'
 import { BadRequestError, isKernelError } from './errors'
 import { attachWebhooks } from './webhooks'
+import {
+  attachChangeFeed,
+  createChangeBus,
+  createSeqCounter,
+  makeChangeFilter,
+  readChanges,
+  type ChangeFeedCtx,
+} from './realtime'
+import { CHANGES_TABLE } from './schema'
 import { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
 import { WORKFLOW_JOB_TASK } from './config'
 import { attachSearch } from './search'
@@ -175,6 +188,25 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   if (sanitized.webhooks && sanitized.webhooks.length > 0) {
     attachWebhooks(sanitized.collections, sanitized.webhooks, new Set([JOBS_SLUG, CACHE_SLUG]), logger)
   }
+  // Real-time content: a per-kernel in-process bus + a change-feed ctx whose seq counter
+  // is filled in after the adapter inits (it must read `_changes`). Attach the change-feed
+  // hooks now (before ops are created), excluding system collections + the outbox itself,
+  // so internal writes never emit. The ctx is captured by reference by the hooks.
+  const changeBus = createChangeBus(logger)
+  let changeFeedCtx: ChangeFeedCtx | null = null
+  if (sanitized.realtime.enabled) {
+    // A thin wrapper so the hooks can be attached before the seq counter exists; calls
+    // are a no-op until boot finishes wiring it (no content write happens before then).
+    const lazyCtx: ChangeFeedCtx = {
+      db: sanitized.db,
+      bus: changeBus,
+      seq: { next: () => 0 },
+      retain: sanitized.realtime.retain,
+      logger,
+    }
+    changeFeedCtx = lazyCtx
+    attachChangeFeed(sanitized.collections, lazyCtx, new Set([JOBS_SLUG, CACHE_SLUG, CHANGES_TABLE]))
+  }
   // Full-text search: attach index-sync hooks to searchable collections.
   if (sanitized.search && Object.keys(sanitized.searchableFields).length > 0) {
     attachSearch(sanitized.collections, sanitized.search, sanitized.searchableFields, logger)
@@ -197,6 +229,11 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   // this, find()/create() would throw "Unknown table" until a migration ran.
   sanitized.db.register?.(schema)
   if (options.autoMigrate) await sanitized.db.migrate(schema)
+
+  // Real-time: seed the monotonic seq counter from the highest `seq` already in `_changes`
+  // (so cursors stay ordered across restarts). Done after register/migrate so the table
+  // exists; a missing table degrades gracefully (counter starts at 0).
+  if (changeFeedCtx) changeFeedCtx.seq = await createSeqCounter(sanitized.db)
 
   // Optional read-through cache. The operation core runs against `opDb`; when a
   // cache adapter is configured and collections opt in, that is a cache-wrapping
@@ -272,9 +309,40 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     }
   }
 
+  // The access filter shared by the pull feed AND the SSE stream: a non-delete event is
+  // gated by re-loading the doc through the access-checked read path; a delete is gated by
+  // the collection's read access. A forbidden event is dropped ENTIRELY (never leaked).
+  const changeFilter = makeChangeFilter(sanitized, (collection, id, req) =>
+    ops.findByID({ collection, id, req, overrideAccess: false }),
+  )
+  // A minimal req builder for the pull feed: the read path (ops.findByID) re-builds its
+  // own request internally, so this only needs to carry the user/locale forward.
+  const buildChangeReq = (partial?: Partial<RequestContext>): RequestContext => {
+    const defaultLocale = sanitized.localization ? sanitized.localization.defaultLocale : 'en'
+    return {
+      user: partial?.user ?? null,
+      locale: partial?.locale ?? defaultLocale,
+      fallbackLocale: partial?.fallbackLocale ?? false,
+      context: partial?.context ?? {},
+    }
+  }
+
   return {
     config: sanitized,
     db: sanitized.db,
+    async changes(opts: ChangesOptions = {}): Promise<ChangesResult> {
+      return readChanges(sanitized, sanitized.db, changeFilter, buildChangeReq, opts)
+    },
+    subscribe(listener: (event: ChangeEvent) => void): () => void {
+      return changeBus.subscribe(listener)
+    },
+    async changeVisibleTo(
+      event: ChangeEvent,
+      opts: { req?: Partial<RequestContext>; overrideAccess?: boolean } = {},
+    ): Promise<boolean> {
+      if (!sanitized.realtime.enabled) return false
+      return changeFilter(event, buildChangeReq(opts.req), opts.overrideAccess ?? false)
+    },
     ...(sanitized.cache ? { cache: sanitized.cache } : {}),
     ...(sanitized.search ? { search: sanitized.search } : {}),
     schema,

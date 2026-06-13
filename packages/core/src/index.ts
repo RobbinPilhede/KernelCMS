@@ -17,6 +17,7 @@ export {
   PRESENCE_TABLE,
   CREDENTIALS_TABLE,
   WORKFLOW_RUNS_TABLE,
+  CHANGES_TABLE,
 } from './schema'
 export { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
 export type { WorkflowEngine, WorkflowEngineCtx } from './workflows'
@@ -63,6 +64,22 @@ export { dbCache, redisCache } from './cache-backends'
 export type { DbCacheOptions, RedisCacheOptions } from './cache-backends'
 export { deliverWebhook, attachWebhooks } from './webhooks'
 export type { WebhookPayload } from './webhooks'
+export {
+  attachChangeFeed,
+  createChangeBus,
+  createSeqCounter,
+  emitChange,
+  makeChangeFilter,
+  readChanges,
+  clampRetain,
+  clampChangesLimit,
+  MAX_CHANGE_LISTENERS,
+  DEFAULT_CHANGE_RETAIN,
+  MAX_CHANGE_RETAIN,
+  DEFAULT_CHANGES_LIMIT,
+  MAX_CHANGES_LIMIT,
+} from './realtime'
+export type { ChangeBus, SeqCounter, ChangeFeedCtx } from './realtime'
 export { memorySearch, attachSearch, extractSearchText } from './search'
 export {
   memoryVector,

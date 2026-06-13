@@ -11,9 +11,11 @@ import type {
   SanitizedConfig,
   SanitizedDiscoverability,
   SanitizedLocalization,
+  SanitizedRealtime,
   SanitizedSigningConfig,
   WorkflowDefinition,
 } from './types'
+import { clampRetain } from './realtime'
 import { effectiveFields, joinFields } from './fields'
 import { consoleEmail, type EmailAdapter } from './email'
 import { createRbacStore, injectRbac } from './rbac'
@@ -342,6 +344,13 @@ function sanitizeAgents(agents: AgentConfig[] | undefined): AgentConfig[] {
     )
   }
   return agents
+}
+
+/** Resolve the opt-in real-time setting. Disabled unless explicitly turned on. When on,
+ *  `retain` (the `_changes` outbox cap) is clamped to a sane bound. */
+function sanitizeRealtime(realtime: KernelConfig['realtime']): SanitizedRealtime {
+  if (!realtime || realtime.enabled !== true) return { enabled: false, retain: clampRetain(undefined) }
+  return { enabled: true, retain: clampRetain(realtime.retain) }
 }
 
 /** Normalize the opt-in audit setting. Disabled unless explicitly turned on. */
@@ -757,6 +766,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     semanticFields,
     agents,
     audit: sanitizeAudit(config.audit),
+    realtime: sanitizeRealtime(config.realtime),
     rbac: { enabled: rbacEnabled },
     rbacStore,
     review: sanitizeReview(config.review, agents.length > 0),

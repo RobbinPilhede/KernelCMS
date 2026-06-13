@@ -56,6 +56,14 @@ export const PRESENCE_TABLE = '_presence'
  *  provisioned (a system table); writes happen only when `config.signing` is enabled. */
 export const CREDENTIALS_TABLE = '_credentials'
 
+/** Storage table holding the durable change feed (CDC outbox) — one row per content
+ *  change on a non-system collection. Each row carries METADATA ONLY (no document body):
+ *  a monotonic `seq` cursor, the time, the collection + documentId, the event, and the
+ *  acting principal's id + kind. Provisioned only when `config.realtime` is enabled. The
+ *  pull feed + SSE stream read it; it is NEVER reachable via generic CRUD (like `_audit`).
+ *  `seq` is indexed (the cursor scan + trim both order by it). */
+export const CHANGES_TABLE = '_changes'
+
 /** Storage table holding the durable workflow run log — one row per workflow run,
  *  recording its status, trigger, and per-step status/log. Provisioned only when
  *  `config.workflows` is set. The engine reads/writes it via the trusted (overrideAccess)
@@ -267,6 +275,28 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'steps', type: 'json', required: false, unique: false, indexed: false, localized: false },
         { name: 'attempts', type: 'integer', required: false, unique: false, indexed: false, localized: false },
         { name: 'lastError', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Durable change feed (CDC outbox), provisioned only when realtime is enabled. A flat
+  // metadata row: `seq` (the monotonic cursor, indexed for range scans + trim ordering),
+  // `at`, the target collection/documentId, the event, and the acting principal id/kind.
+  // No document body is ever stored here — a change row can never leak field values.
+  if (config.realtime.enabled) {
+    tables.push({
+      table: CHANGES_TABLE,
+      slug: CHANGES_TABLE,
+      columns: [
+        { name: 'seq', type: 'integer', required: true, unique: true, indexed: true, localized: false },
+        { name: 'at', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
+        { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'documentId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'event', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'principalId', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'principalType', type: 'text', required: false, unique: false, indexed: false, localized: false },
       ],
       timestamps: true,
       singleton: false,

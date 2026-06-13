@@ -76,6 +76,14 @@ cannot publish (draft-only brake), cannot write outside its `fieldScope`, and ne
 checks) and `requestReview` (a human approval in the inbox). Hand a job to an agent;
 nothing it produces goes live unchecked.
 
+It is also **real-time**. Opt into `realtime` and every content write lands on a durable,
+access-filtered change feed: pull it with cursor-based polling (`kernel.changes` / `GET
+/api/changes`) for CDC pipelines, or subscribe to a live Server-Sent-Events stream (`GET
+/api/changes/stream`) for UIs that update as content moves. Events are **metadata only**
+and filtered per subscriber — a caller is never even told that a document they can't read
+changed. Reactive admin UIs, agents that react to content, and search re-indexers stay in
+sync over the *same* access-checked engine, not a side channel around it.
+
 And content has a **time-machine**. On any collection with `versions` enabled, you can
 read a document (or a whole list) as it existed at any past instant (`asOf`), walk its
 complete change timeline, diff any two points field-by-field, and revert in one call —
@@ -175,6 +183,7 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Search:** add `search: memorySearch()` and give a collection `search: { fields: ['title', 'body'] }`, then `kernel.searchDocs({ collection, query })`. Hits are loaded through the access-checked read path, so search never surfaces a document the caller cannot read.
 - **Semantic & hybrid search (RAG-native):** set a pluggable `embeddings: { embed }` (your OpenAI/Cohere/local model — no embedding dependency baked in) and mark a collection's search `semantic: true`. Fields are embedded on every write into a vector store, and `kernel.semanticSearch(...)` / `kernel.hybridSearch(...)` (Reciprocal Rank Fusion of full-text + vector) plus `GET /api/:collection/semantic` and `/hybrid` are served through the same access-checked read path. Your CMS becomes your RAG knowledge base — see the [semantic search guide](docs/semantic-search.md).
 - **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change; the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
+- **Real-time change feed:** `realtime: { enabled: true }` turns on an access-filtered change feed — a durable pull feed for CDC and a live SSE push stream. See [Real-time](#real-time-change-feed-cdc--sse) below.
 - **Payments & orders:** add the `commerce({ payment: stripePayment({ ... }) })` plugin and you get `products` + `orders` collections, a `POST /commerce/checkout` (totals recomputed server-side from real prices), and a signature-verified `POST /commerce/webhook` that transitions orders to paid/refunded. Stripe and a deterministic `testPayment()` adapter included.
 - **AI agents (MCP):** register `agents: [{ id, token, roles, fieldScope }]` and serve your kernel over the Model Context Protocol — `npx kernel mcp` (stdio, for Claude Desktop / Cursor) or `kernel mcp --http` (multi-agent, per-request scoped tokens). Tools are auto-generated from the same model that builds the OpenAPI spec (CRUD, count, version history, your opt-in `defineEndpoint` business logic, plus `kernel://schema` resources to introspect), and every call runs through the in-process Local API as a scoped principal — so an agent goes through the **same access pipeline as a human**: it only touches the fields you allow, **cannot publish** (drafts only, enforced by the engine), and is attributed in version history. The MCP layer enforces nothing on its own. Import from `kernelcms/mcp`; the MCP SDK is an optional peer dependency.
 - **Agentic workflows:** define `workflows: [{ slug, agent, trigger, steps }]` and an agent runs an autonomous content pipeline (draft → quality gate → human review) under the same guardrails as MCP. Triggers (`on: 'create' | 'update'`) enqueue a **durable** run via the jobs queue, so a slow agent step never blocks the content write; `runWorkflow(...)` / `POST /api/_admin/workflows/:slug/run` run a `manual` one. Content advances only through `ctx.evalGate(...)` (your content-CI evals) and `ctx.requestReview(...)` (human approval in the inbox) — the agent itself physically cannot publish. See [agentic workflows](docs/agentic-workflows.md).
@@ -386,6 +395,55 @@ const { docs } = await kernel.hybridSearch({ collection: 'posts', query: 'how do
 curl "http://localhost:3000/api/posts/semantic?q=how%20do%20I%20deploy&limit=10"
 curl "http://localhost:3000/api/posts/hybrid?q=how%20do%20I%20deploy"
 ```
+
+### Real-time change feed (CDC & SSE)
+
+Opt in with `realtime: { enabled: true }` and every content write emits a change event
+onto a durable, access-filtered feed. Two shapes are served from one source: a **pull
+feed** for CDC pipelines (cursor polling) and a **live SSE push stream** for reactive UIs.
+The feed is off by default; `retain` (default 10000, clamped) bounds the change outbox.
+
+```ts
+export default defineConfig({
+  realtime: { enabled: true, retain: 50000 }, // off by default; retain = max outbox rows
+  collections: [/* … */],
+})
+```
+
+- **Durable pull (CDC).** `kernel.changes({ since, collection?, limit?, req })` →
+  `{ changes, cursor }`; poll again with `since: cursor`. Each `ChangeEvent` is
+  `{ seq, at, collection, documentId, event, principalType }` —
+  `event` is `'create' | 'update' | 'delete' | 'publish' | 'unpublish'`. REST:
+  `GET /api/changes?since=&collection=&limit=` (auth required).
+- **Live push (SSE).** `GET /api/changes/stream?collection=` returns `text/event-stream`,
+  emitting `id: <seq>` + `data: <json>` frames as changes happen, with `: ping`
+  heartbeats; reconnect with `Last-Event-ID` to resume from the last `seq`. Auth required.
+- **In-process subscribe.** `const off = kernel.subscribe((e) => { … })` returns an
+  unsubscribe function — for server code, workflows, and live re-indexing.
+
+```ts
+// In-process: react to changes inside the server.
+const off = kernel.subscribe((e) => {
+  if (e.collection === 'posts') reindex(e.documentId)
+})
+// later: off()
+```
+
+```bash
+curl "http://localhost:3000/api/changes?since=0&collection=posts&limit=100"  # pull (CDC)
+curl -N "http://localhost:3000/api/changes/stream?collection=posts"          # live SSE
+```
+
+**The metadata-only, access-filtered guarantee:** an event carries **metadata only, never
+the document body**, and the feed is **filtered per subscriber** — a subscriber is never
+even told that a document they cannot read changed (the event is dropped entirely,
+fail-closed; for deletes and row-scoped reads the filter requires a fully-public read
+rule). The client re-fetches the actual document through the normal access-checked API.
+Both endpoints require auth, retention and connection counts are bounded, and a feed-write
+failure never breaks the content write. *(Honest notes: the hook-based feed emits
+create/update/delete, so a publish currently reads as `update`; `seq` is per-node — single-node
+ordering, multi-node needs a shared sequence.)* Pairs with [workflows](docs/agentic-workflows.md)
+(react to a change) and search (live re-index). See the [real-time guide](docs/realtime.md).
 
 ### AI discoverability (llms.txt & GEO)
 

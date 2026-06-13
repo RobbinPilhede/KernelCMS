@@ -50,6 +50,8 @@ export default defineConfig({
       ],
     },
   ],
+  // Real-time: a durable change feed (CDC) + live SSE stream for reactive UIs/agents.
+  realtime: { enabled: true },
   // RAG-native: full-text adapter + a pluggable embedder power /semantic + /hybrid.
   search: memorySearch(),
   embeddings: { embed: demoEmbed, dimensions: DIM },

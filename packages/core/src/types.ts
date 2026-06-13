@@ -579,6 +579,78 @@ export interface WebhookConfig {
   timeoutMs?: number
 }
 
+// ---------------------------------------------------------------------------
+// Real-time content: change feed (CDC, pull) + in-process bus + SSE (push)
+//
+// Every content change on a non-system collection emits a METADATA-ONLY event —
+// `{ seq, at, collection, documentId, event, principalType }`, never the document
+// body — so a change event can NEVER leak a field a subscriber can't read. The
+// subscriber re-fetches the doc through the normal access-checked API. The durable
+// pull feed, the in-process `subscribe` bus, and the SSE stream all share ONE
+// access-filter so a subscriber never even learns that a forbidden document changed.
+// ---------------------------------------------------------------------------
+
+/** The kind of content change a {@link ChangeEvent} records. `publish`/`unpublish`
+ *  are reserved for forward-compatibility (drafts transitions); the hook-based feed
+ *  emits create/update/delete (a publish reads as 'update'). */
+export type ChangeEventType = 'create' | 'update' | 'delete' | 'publish' | 'unpublish'
+
+/** One change-feed event. METADATA ONLY — it carries no document body or field values,
+ *  so it can never leak content a subscriber is not allowed to read. `seq` is a
+ *  monotonic integer cursor (ordered across the whole feed); poll the pull feed with
+ *  `since=seq`. `principalType` names the kind of actor only (never a token). */
+export interface ChangeEvent {
+  /** Monotonic integer cursor. Strictly increasing across the whole feed. */
+  seq: number
+  /** ISO timestamp the change was recorded. */
+  at: string
+  collection: string
+  documentId: string
+  event: ChangeEventType
+  /** The acting principal's kind. Never an auth token — just the actor classification. */
+  principalType: 'user' | 'agent' | 'system'
+}
+
+/** Real-time content config. OPT-IN: when omitted, nothing changes (no `_changes`
+ *  table, no change-feed hooks, no bus). When enabled, content changes are recorded
+ *  to the durable `_changes` outbox, fan out to in-process `subscribe` listeners, and
+ *  are served by the access-filtered pull feed + SSE stream. */
+export interface RealtimeConfig {
+  enabled?: boolean
+  /** Max rows kept in the `_changes` outbox (oldest trimmed first, like version
+   *  maxPerDoc). Default 10000; clamped to a sane bound. */
+  retain?: number
+}
+
+/** Resolved realtime settings (after sanitize). `enabled:false` when unconfigured. */
+export interface SanitizedRealtime {
+  enabled: boolean
+  /** Bounded `_changes` retention (max rows). */
+  retain: number
+}
+
+export interface ChangesOptions {
+  /** Return only changes with `seq` strictly greater than this cursor. Default 0 (all). */
+  since?: number
+  /** Narrow to one collection. */
+  collection?: string
+  /** Max events to return (after access filtering). Clamped. Default 100. */
+  limit?: number
+  /** The caller request context — its read access scopes which events are returned. */
+  req?: Partial<RequestContext>
+  /** Trusted server call: bypass the per-event access filter (sees every change). Never
+   *  set from an untrusted boundary — the REST route always passes the request principal. */
+  overrideAccess?: boolean
+}
+
+export interface ChangesResult {
+  /** The access-filtered, ordered change events (oldest → newest). */
+  changes: ChangeEvent[]
+  /** The highest `seq` returned — poll again with `since=cursor`. Equals the input
+   *  `since` when nothing new is visible. */
+  cursor: number
+}
+
 /** A pluggable embeddings provider: maps N input strings to N equal-dimension
  *  vectors. Provider-agnostic (OpenAI/Cohere/local/etc.) — the user supplies it. */
 export type EmbedFn = (texts: string[]) => Promise<number[][]>
@@ -638,6 +710,10 @@ export interface KernelConfig {
   cache?: CacheAdapter
   /** Outbound webhooks: fire a signed HTTP POST when documents change. */
   webhooks?: WebhookConfig[]
+  /** Real-time content: a durable change feed (CDC) + an in-process `subscribe` bus +
+   *  a live SSE stream, so UIs update live and agents react to changes. OPT-IN; events
+   *  are metadata-only and access-filtered per subscriber. See {@link RealtimeConfig}. */
+  realtime?: RealtimeConfig
   /** Search adapter (e.g. `memorySearch()`). Collections with `search` enabled
    *  are indexed on write and queried via `kernel.search`. */
   search?: SearchAdapter
@@ -833,6 +909,9 @@ export interface SanitizedConfig {
   cacheDefaultTtl: number
   /** Configured outbound webhooks. */
   webhooks?: WebhookConfig[]
+  /** Resolved real-time setting. `enabled` provisions the `_changes` outbox + change-feed
+   *  hooks + the in-process bus; disabled by default (opt-in). */
+  realtime: SanitizedRealtime
   /** Configured search adapter. */
   search?: SearchAdapter
   /** Per-collection searchable field names. */
@@ -1643,6 +1722,28 @@ export interface Kernel {
    *  top ids. Falls back gracefully to whichever signal is available (full-text only
    *  when no embeddings; semantic only when no full-text fields). */
   hybridSearch<T extends Doc = Doc>(opts: HybridSearchOptions): Promise<{ docs: T[] }>
+  /** The durable, access-filtered change feed (CDC pull). Returns metadata-only
+   *  {@link ChangeEvent}s with `seq > since` (optionally for one collection), dropping any
+   *  event the caller cannot read — for a non-delete event, the document is re-fetched
+   *  through the access-checked read path (null/throws → dropped); for a delete (doc gone)
+   *  the collection's read access is evaluated. `cursor` is the highest seq returned, so
+   *  the client polls again with `since=cursor`. No-op (`{ changes: [], cursor: since }`)
+   *  when realtime is disabled. */
+  changes(opts?: ChangesOptions): Promise<ChangesResult>
+  /** Subscribe to live, in-process change events (the push bus that also powers SSE).
+   *  The listener receives every recorded {@link ChangeEvent} (metadata only); the caller
+   *  is responsible for access-filtering (the SSE handler and pull feed share one filter).
+   *  Returns an unsubscribe function. Bounded: excess listeners are rejected. */
+  subscribe(listener: (event: ChangeEvent) => void): () => void
+  /** Whether a caller may LEARN that a change happened — the SAME access filter the pull
+   *  feed applies, exposed per-event so the SSE stream can gate each pushed event. For a
+   *  non-delete event the document is re-loaded through the access-checked read path; for
+   *  a delete the collection's read access is evaluated. Returns false (dropped) when
+   *  realtime is disabled or the caller can't read the target. */
+  changeVisibleTo(
+    event: ChangeEvent,
+    opts?: { req?: Partial<RequestContext>; overrideAccess?: boolean },
+  ): Promise<boolean>
   find<T extends Doc = Doc>(opts: FindOptions): Promise<PaginatedResult<T>>
   findByID<T extends Doc = Doc>(opts: FindByIDOptions): Promise<T | null>
   create<T extends Doc = Doc>(opts: CreateOptions): Promise<T>

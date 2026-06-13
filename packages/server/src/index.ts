@@ -879,6 +879,37 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return methodNotAllowed()
   }
 
+  // Real-time change feed. AUTH-REQUIRED on both surfaces; every event is metadata-only
+  // and access-filtered per the connection's principal (a subscriber NEVER learns that a
+  // document they can't read changed). 404 when realtime is disabled (rather than falling
+  // through to a `changes` collection lookup).
+  if (segments[0] === 'changes') {
+    if (!kernel.config.realtime.enabled) {
+      return json({ error: { code: 'NOT_FOUND', message: 'Real-time is not enabled.' } }, 404)
+    }
+    if (!user) throw new UnauthorizedError()
+
+    // GET /changes?since=&collection=&limit= -> the durable, access-filtered pull feed.
+    if (segments.length === 1 && method === 'GET') {
+      const since = toNum(url.searchParams.get('since'))
+      const collectionParam = url.searchParams.get('collection')
+      const result = await kernel.changes({
+        ...(since !== undefined ? { since } : {}),
+        ...(collectionParam ? { collection: collectionParam } : {}),
+        limit: toNum(url.searchParams.get('limit')) ?? undefined,
+        req: { user },
+      })
+      return json(result)
+    }
+
+    // GET /changes/stream?collection= -> a live SSE stream (text/event-stream). Each event
+    // is access-filtered with the SAME filter as the pull feed; resume via Last-Event-ID.
+    if (segments.length === 2 && segments[1] === 'stream' && method === 'GET') {
+      return changeStream(kernel, request, url, user)
+    }
+    return methodNotAllowed()
+  }
+
   // Custom endpoints (config.endpoints) — matched before the generic collection
   // CRUD so a module can extend or intentionally override the resource space.
   // Access, validation, and errors all flow through the same pipeline as core.
@@ -1321,6 +1352,140 @@ async function runEndpoint(
   })
   if (result instanceof Response) return result
   return json(result ?? null)
+}
+
+// Bound concurrent SSE streams per process (DoS guard): each holds an open connection +
+// a bus listener. A new stream past the cap is refused with 503 rather than unbounded.
+const MAX_SSE_STREAMS = 1000
+let openStreams = 0
+
+// SSE heartbeat interval: a comment frame keeps the connection (and any proxy) alive.
+const SSE_HEARTBEAT_MS = 25_000
+
+/**
+ * A live Server-Sent-Events stream over the change feed. On connect it subscribes to the
+ * in-process bus; for each event it applies the SAME access filter as the pull feed (per
+ * this connection's principal) and writes an SSE frame `id: <seq>\n data: <metadata>\n\n`.
+ * A `Last-Event-ID` header (or `?lastEventId=`) replays any changes missed since that seq
+ * via the access-filtered pull feed before live delivery begins, so a reconnect loses
+ * nothing. A periodic `: ping` comment is a heartbeat. On cancel/disconnect the listener
+ * is removed and the stream count decremented. Auth is enforced by the caller.
+ */
+function changeStream(kernel: Kernel, request: Request, url: URL, user: AuthUser): Response {
+  if (openStreams >= MAX_SSE_STREAMS) {
+    return json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Too many open streams.' } }, 503)
+  }
+  const collectionParam = url.searchParams.get('collection') ?? undefined
+  // Resume point: Last-Event-ID header (standard EventSource reconnect) or ?lastEventId=.
+  const lastEventIdRaw = request.headers.get('last-event-id') ?? url.searchParams.get('lastEventId')
+  const lastEventId = toNum(lastEventIdRaw)
+
+  const encoder = new TextEncoder()
+  let unsubscribe: (() => void) | null = null
+  let heartbeat: ReturnType<typeof setInterval> | null = null
+  let closed = false
+  // Shared between start() and cancel() without referencing `stream` (which is in its TDZ
+  // while the ReadableStream constructor runs start()).
+  const cleanupRef: { fn: () => void } = { fn: () => {} }
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      openStreams++
+      const send = (chunk: string): void => {
+        if (closed) return
+        try {
+          controller.enqueue(encoder.encode(chunk))
+        } catch {
+          // Controller already closed (client gone) — stop pushing.
+          cleanup()
+        }
+      }
+      const frame = (event: {
+        seq: number
+        collection: string
+        documentId: string
+        event: string
+        at: string
+        principalType: string
+      }): string => `id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`
+
+      const cleanup = (): void => {
+        if (closed) return
+        closed = true
+        if (unsubscribe) unsubscribe()
+        if (heartbeat) clearInterval(heartbeat)
+        openStreams = Math.max(0, openStreams - 1)
+      }
+      // Expose cleanup to cancel() below.
+      cleanupRef.fn = cleanup
+
+      // Open the stream with a comment so proxies flush headers immediately.
+      send(': connected\n\n')
+
+      // Replay anything missed since Last-Event-ID via the access-filtered pull feed, so a
+      // reconnect resumes exactly where it left off. Bounded by the pull feed's own limit.
+      let resumeCursor = lastEventId
+      if (lastEventId !== undefined) {
+        try {
+          const missed = await kernel.changes({
+            since: lastEventId,
+            ...(collectionParam ? { collection: collectionParam } : {}),
+            req: { user },
+          })
+          for (const ev of missed.changes) send(frame(ev))
+          resumeCursor = missed.cursor
+        } catch {
+          // Replay is best-effort; live delivery below still proceeds.
+        }
+      }
+
+      // Live delivery: subscribe to the bus, access-filter each event for THIS principal,
+      // and frame the visible ones. Events at/below the replayed cursor are skipped so a
+      // reconnect never double-delivers. A throwing/slow filter is isolated per event.
+      try {
+        unsubscribe = kernel.subscribe((event) => {
+          void (async () => {
+            if (closed) return
+            if (resumeCursor !== undefined && event.seq <= resumeCursor) return
+            if (collectionParam && event.collection !== collectionParam) return
+            let visible = false
+            try {
+              visible = await kernel.changeVisibleTo(event, { req: { user } })
+            } catch {
+              visible = false
+            }
+            if (visible) send(frame(event))
+          })()
+        })
+      } catch {
+        // Listener bound exceeded — close cleanly rather than hang.
+        cleanup()
+        try {
+          controller.close()
+        } catch {
+          /* already closed */
+        }
+        return
+      }
+
+      heartbeat = setInterval(() => send(': ping\n\n'), SSE_HEARTBEAT_MS)
+      // Unref so the heartbeat timer never keeps the process alive on its own.
+      ;(heartbeat as unknown as { unref?: () => void }).unref?.()
+    },
+    cancel() {
+      cleanupRef.fn()
+    },
+  })
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    },
+  })
 }
 
 async function resolveAuth(
