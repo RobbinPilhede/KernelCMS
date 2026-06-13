@@ -18,6 +18,7 @@ export function makeConfig(dbUrl: string) {
   return defineConfig({
     secret: 'verify-secret-32-characters-long!!',
     db: sqliteAdapter({ url: dbUrl }),
+    audit: true,
 
     // Two scoped agents with different field allow-lists (multi-agent proof).
     agents: [

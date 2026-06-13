@@ -29,6 +29,9 @@ export function resolveVersions(versions: boolean | { drafts?: boolean; maxPerDo
 /** The fixed primary-key id used for the single row backing a global. */
 export const GLOBAL_ROW_ID = 'singleton'
 
+/** Storage table holding the append-only governance audit log. */
+export const AUDIT_TABLE = '_audit'
+
 /** Compile the sanitized config into the storage-facing schema for the adapter. */
 export function compileSchema(config: SanitizedConfig): KernelSchema {
   const tables: TableSchema[] = []
@@ -75,6 +78,29 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         singleton: false,
       })
     }
+  }
+
+  // Single append-only audit table, provisioned only when auditing is enabled.
+  // Mirrors the version-table definition style: a flat row of indexed columns plus
+  // JSON payloads. `at` is the event time (indexed for range/sort); the principal
+  // and target columns are nullable + indexed so the log filters efficiently.
+  if (config.audit.enabled) {
+    tables.push({
+      table: AUDIT_TABLE,
+      slug: AUDIT_TABLE,
+      columns: [
+        { name: 'at', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
+        { name: 'action', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'collection', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'documentId', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'principalId', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'principalType', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'fields', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'meta', type: 'json', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
   }
 
   for (const global of config.globals) {

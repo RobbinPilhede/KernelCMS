@@ -303,6 +303,43 @@ async function main() {
   const settings = await kernel.findGlobal({ slug: 'settings', ...viewer })
   check('global update + read', settings?.site_name === 'Verify Co', `site_name=${settings?.site_name}`)
 
+  // ---- 9. Audit log (NEW — governance #1) ---------------------------------
+  section('9. Audit log — who / what / when (free in core)')
+  const auditTables = raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_audit'").all() as any[]
+  check('_audit table provisioned when enabled', auditTables.length === 1, '')
+  const audit = await (kernel as any).findAuditLog({ limit: 500 })
+  const entries = audit.docs ?? audit
+  check('audit captured operations', Array.isArray(entries) && entries.length > 0, `entries=${entries.length}`)
+  const actions = new Set(entries.map((e: any) => e.action))
+  check(
+    'records create/update/delete/publish actions',
+    ['create', 'update', 'delete', 'publish'].every((a) => actions.has(a)),
+    `actions=${[...actions].join(',')}`,
+  )
+  const agentEntry = entries.find((e: any) => e.principalType === 'agent')
+  check(
+    'attributes agent operations (who)',
+    Boolean(agentEntry),
+    `agent action=${agentEntry?.action} coll=${agentEntry?.collection}`,
+  )
+  const systemEntry = entries.find((e: any) => e.principalType === 'system')
+  check('attributes system (overrideAccess) operations', Boolean(systemEntry), `system action=${systemEntry?.action}`)
+  const withWhen = entries.every((e: any) => e.at != null)
+  check('every entry has a timestamp (when)', withWhen, `sample at=${entries[0]?.at}`)
+  const createEntry = entries.find((e: any) => e.action === 'create' && e.collection === 'posts')
+  check(
+    'create entry records changed field names (what)',
+    Array.isArray(createEntry?.fields) && createEntry.fields.length > 0,
+    `fields=${JSON.stringify(createEntry?.fields)?.slice(0, 50)}`,
+  )
+  const filtered = await (kernel as any).findAuditLog({ where: { action: { equals: 'publish' } } })
+  const fdocs = filtered.docs ?? filtered
+  check(
+    'audit log is queryable (filter by action)',
+    fdocs.length > 0 && fdocs.every((e: any) => e.action === 'publish'),
+    `publish entries=${fdocs.length}`,
+  )
+
   raw.close()
   console.log(`\n\x1b[1mResult: ${pass} passed, ${fails.length} failed\x1b[0m`)
   if (fails.length) {

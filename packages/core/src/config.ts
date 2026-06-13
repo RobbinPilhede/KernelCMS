@@ -328,6 +328,13 @@ function sanitizeAgents(agents: AgentConfig[] | undefined): AgentConfig[] {
   return agents
 }
 
+/** Normalize the opt-in audit setting. Disabled unless explicitly turned on. */
+function sanitizeAudit(audit: KernelConfig['audit']): { enabled: boolean } {
+  if (audit === true) return { enabled: true }
+  if (audit && typeof audit === 'object') return { enabled: audit.enabled === true }
+  return { enabled: false }
+}
+
 export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   assert(config.db, 'a database adapter is required (config.db)')
   assert(Array.isArray(config.collections), 'config.collections must be an array')
@@ -487,6 +494,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     cacheDefaultTtl,
     searchableFields,
     agents: sanitizeAgents(config.agents),
+    audit: sanitizeAudit(config.audit),
     ...(config.search ? { search: config.search } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),

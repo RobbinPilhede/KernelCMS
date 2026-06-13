@@ -25,7 +25,7 @@ import {
   setupRuntime,
   KERNEL_VERSION,
 } from '@kernel/core'
-import type { AgentConfig, EndpointConfig, RequestContext } from '@kernel/core'
+import type { AgentConfig, AuditDoc, EndpointConfig, RequestContext } from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
 import { buildOpenApiSpec, scalarHtml } from './openapi'
 import {
@@ -581,6 +581,25 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
         cache: kernel.cache ? { name: kernel.cache.name, health: cacheHealth, stats: kernel.cache.stats() } : null,
         search: kernel.search ? { name: kernel.search.name, health: searchHealth } : null,
       })
+    }
+
+    // GET /_admin/audit -> query/export the append-only governance audit log.
+    // ADMIN-ONLY: an authenticated principal whose roles include 'admin' (the same
+    // convention the core access layer trusts). Supports filtering by collection,
+    // principal id, action, and an ISO `from`/`to` range on `at`, with pagination.
+    // `?format=csv` streams a CSV export. Returns empty when auditing is disabled.
+    if (segments[1] === 'audit' && segments.length === 2 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      if (!isAdmin(user)) throw new ForbiddenError('Audit log access requires an admin role.')
+      const q = url.searchParams
+      const where = auditWhere(q)
+      const result = await kernel.findAuditLog({
+        ...(where ? { where } : {}),
+        limit: toNum(q.get('limit')) ?? 100,
+        page: toNum(q.get('page')) ?? 1,
+      })
+      if (q.get('format') === 'csv') return auditCsvResponse(result.docs)
+      return json(result)
     }
 
     // POST /_admin/env -> persist chosen connector settings to the project .env.
@@ -1161,6 +1180,66 @@ export function parseWhere(params: URLSearchParams): Where | undefined {
 // ---------------------------------------------------------------------------
 // Responses
 // ---------------------------------------------------------------------------
+
+/** The admin convention the core access layer trusts: a `roles` list with 'admin'. */
+function isAdmin(user: AuthUser): boolean {
+  return Array.isArray(user.roles) && user.roles.includes('admin')
+}
+
+/** Build a `Where` for the audit log from the supported query params. Returns
+ *  undefined when no filter is supplied (the whole, paginated log). */
+function auditWhere(q: URLSearchParams): Where | undefined {
+  const and: Where[] = []
+  const collection = q.get('collection')
+  if (collection) and.push({ collection: { equals: collection } })
+  const principal = q.get('principal')
+  if (principal) and.push({ principalId: { equals: principal } })
+  const action = q.get('action')
+  if (action) and.push({ action: { equals: action } })
+  const from = q.get('from')
+  if (from) and.push({ at: { greater_than_equal: from } })
+  const to = q.get('to')
+  if (to) and.push({ at: { less_than_equal: to } })
+  if (and.length === 0) return undefined
+  return and.length === 1 ? and[0] : { and }
+}
+
+const AUDIT_CSV_COLUMNS = [
+  'id',
+  'at',
+  'action',
+  'collection',
+  'documentId',
+  'principalId',
+  'principalType',
+  'fields',
+  'meta',
+] as const
+
+/** RFC 4180 field escaping: wrap in quotes and double any embedded quote when the
+ *  value contains a comma, quote, or newline. */
+function csvCell(value: unknown): string {
+  let s: string
+  if (value === null || value === undefined) s = ''
+  else if (typeof value === 'object') s = JSON.stringify(value)
+  else s = String(value)
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+function auditCsvResponse(docs: AuditDoc[]): Response {
+  const lines = [AUDIT_CSV_COLUMNS.join(',')]
+  for (const doc of docs) {
+    lines.push(AUDIT_CSV_COLUMNS.map((col) => csvCell((doc as Record<string, unknown>)[col])).join(','))
+  }
+  return new Response(lines.join('\r\n'), {
+    status: 200,
+    headers: {
+      'content-type': 'text/csv; charset=utf-8',
+      'content-disposition': 'attachment; filename="audit-log.csv"',
+    },
+  })
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

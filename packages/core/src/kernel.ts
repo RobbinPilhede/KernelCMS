@@ -72,7 +72,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   }
   if (sanitized.search) await sanitized.search.init({ logger, db: sanitized.db })
 
-  const ops = createOperations({ config: sanitized, db: opDb })
+  const ops = createOperations({ config: sanitized, db: opDb, logger })
 
   return {
     config: sanitized,
@@ -139,6 +139,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     publish: ops.publish,
     unpublish: ops.unpublish,
     processScheduledPublishes: ops.processScheduledPublishes,
+    findAuditLog: ops.findAuditLog,
     enqueue: ops.enqueue,
     runDueJobs: ops.runDueJobs,
     async migrate() {

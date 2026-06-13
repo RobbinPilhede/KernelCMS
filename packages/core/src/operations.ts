@@ -1,10 +1,13 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import type { DatabaseAdapter, PaginatedResult, Row, SortSpec, Where } from '@kernel/db'
+import type { DatabaseAdapter, Logger, PaginatedResult, Row, SortSpec, Where } from '@kernel/db'
 import { extForFormat, generateKey, isContentTypeConsistent, sniffMimeType, type StorageAdapter } from '@kernel/storage'
 import type {
+  AuditAction,
+  AuditDoc,
   AuthResult,
   AuthUser,
   CollectionConfig,
+  FindAuditLogOptions,
   ConfigField,
   CountOptions,
   CreateOptions,
@@ -70,11 +73,29 @@ import {
 import { evalAccess, isAllowed, asWhere } from './access'
 import { JOBS_SLUG } from './config'
 import { matchesWhere, mergeWhere, parseSort } from './query'
-import { GLOBAL_ROW_ID, resolveVersions, tableForGlobal, tableForVersions } from './schema'
+import { AUDIT_TABLE, GLOBAL_ROW_ID, resolveVersions, tableForGlobal, tableForVersions } from './schema'
 
 export interface OperationCtx {
   config: SanitizedConfig
   db: DatabaseAdapter
+  /** Optional logger; audit-write failures are warned through it (never thrown). */
+  logger?: Logger
+}
+
+/** Arguments for {@link Operations.recordAudit}. */
+export interface RecordAuditArgs {
+  action: AuditAction
+  collection?: string | null
+  documentId?: string | null
+  /** Request context — its `user` supplies the default principal id/kind. */
+  req?: RequestContext
+  overrideAccess?: boolean
+  /** Explicit principal id, overriding `req.user.id` (used by auth events). */
+  principalId?: string | null
+  /** Explicit principal kind, overriding the req-derived default. */
+  principalType?: AuditDoc['principalType']
+  fields?: string[] | null
+  meta?: Record<string, unknown> | null
 }
 
 const MAX_LIMIT = 1000
@@ -139,7 +160,7 @@ const WHERE_OPERATORS = new Set([
 ])
 
 export function createOperations(ctx: OperationCtx) {
-  const { config, db } = ctx
+  const { config, db, logger } = ctx
 
   // identifier -> { failures, windowStart }. Scoped to this kernel instance.
   const loginFailures = new Map<string, { count: number; windowStart: number }>()
@@ -762,6 +783,70 @@ export function createOperations(ctx: OperationCtx) {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Append-only audit log
+  // -------------------------------------------------------------------------
+
+  /**
+   * Resolve the principal kind for an audit row. A request carries the kind
+   * directly for users/agents; a trusted (overrideAccess) call with no user is a
+   * system principal. Mirrors the version-table attribution but adds 'system'.
+   */
+  function principalKindFor(req: RequestContext, overrideAccess: boolean): AuditDoc['principalType'] {
+    return req.user?.principalType ?? (overrideAccess ? 'system' : 'user')
+  }
+
+  /**
+   * Append one row to the `_audit` table. No-op unless auditing is enabled. The
+   * write is wrapped so an audit failure can NEVER break or roll back the operation
+   * it records — any error is swallowed with a warning. Append-only by contract:
+   * nothing in the engine updates or deletes audit rows.
+   */
+  async function recordAudit(args: RecordAuditArgs): Promise<void> {
+    if (!config.audit.enabled) return
+    try {
+      const principalId = args.principalId !== undefined ? args.principalId : (args.req?.user?.id ?? null)
+      const principalType =
+        args.principalType ?? (args.req ? principalKindFor(args.req, args.overrideAccess ?? false) : 'system')
+      await db.create({
+        collection: AUDIT_TABLE,
+        data: {
+          id: randomUUID(),
+          at: new Date().toISOString(),
+          action: args.action,
+          collection: args.collection ?? null,
+          documentId: args.documentId ?? null,
+          principalId,
+          principalType,
+          fields: args.fields ?? null,
+          meta: args.meta ?? null,
+        },
+      })
+    } catch (err) {
+      // An audit write is best-effort observability — it must never propagate.
+      logger?.warn('Failed to write audit log entry', err)
+    }
+  }
+
+  // System keys excluded from the recorded `fields` list — they are server-owned,
+  // not user-meaningful change attribution.
+  const AUDIT_FIELD_SKIP = new Set(['id', '_status', '_scheduled_at', 'createdAt', 'updatedAt'])
+
+  /** The user-meaningful field names written in a create/update, for the audit row. */
+  function auditedFields(data: Row): string[] {
+    return Object.keys(data).filter((k) => !AUDIT_FIELD_SKIP.has(k))
+  }
+
+  async function findAuditLog(opts: FindAuditLogOptions = {}): Promise<{ docs: AuditDoc[]; count: number }> {
+    if (!config.audit.enabled) return { docs: [], count: 0 }
+    const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
+    const page = Math.max(opts.page ?? 1, 1)
+    let sort: SortSpec[] = parseSort(opts.sort)
+    if (sort.length === 0) sort = [{ field: 'at', direction: 'desc' }]
+    const result = await db.find({ collection: AUDIT_TABLE, where: opts.where, sort, limit, page })
+    return { docs: result.docs as AuditDoc[], count: result.totalDocs }
+  }
+
   async function findVersions(opts: FindVersionsOptions): Promise<PaginatedResult<VersionDoc>> {
     const collection = collectionOrThrow(opts.collection)
     if (!versionsOf(collection).enabled) {
@@ -848,16 +933,19 @@ export function createOperations(ctx: OperationCtx) {
     // otherwise publish immediately and clear any pending schedule.
     const at = opts.publishAt ? new Date(opts.publishAt) : null
     const scheduled = at && !Number.isNaN(at.getTime()) && at.getTime() > Date.now()
-    return update<T>({
-      collection: opts.collection,
-      id: opts.id,
-      data: scheduled
-        ? ({ _status: 'draft', _scheduled_at: at.toISOString() } as Row)
-        : ({ _status: 'published', _scheduled_at: null } as Row),
-      req: opts.req,
-      overrideAccess: opts.overrideAccess,
-      depth: opts.depth,
-    })
+    return update<T>(
+      {
+        collection: opts.collection,
+        id: opts.id,
+        data: scheduled
+          ? ({ _status: 'draft', _scheduled_at: at.toISOString() } as Row)
+          : ({ _status: 'published', _scheduled_at: null } as Row),
+        req: opts.req,
+        overrideAccess: opts.overrideAccess,
+        depth: opts.depth,
+      },
+      'publish',
+    )
   }
 
   /** Publish all drafts whose scheduled time has arrived. Drive from a cron/job. */
@@ -876,12 +964,15 @@ export function createOperations(ctx: OperationCtx) {
       })
       for (const row of due.docs) {
         if (row._status === 'published') continue
-        await update({
-          collection: collection.slug,
-          id: String(row.id),
-          data: { _status: 'published', _scheduled_at: null } as Row,
-          overrideAccess: true,
-        })
+        await update(
+          {
+            collection: collection.slug,
+            id: String(row.id),
+            data: { _status: 'published', _scheduled_at: null } as Row,
+            overrideAccess: true,
+          },
+          'publish',
+        )
         published.push(String(row.id))
       }
     }
@@ -892,14 +983,17 @@ export function createOperations(ctx: OperationCtx) {
     const collection = collectionOrThrow(opts.collection)
     if (!draftsOn(collection))
       throw new BadRequestError(`Collection "${opts.collection}" does not have drafts enabled.`)
-    return update<T>({
-      collection: opts.collection,
-      id: opts.id,
-      data: { _status: 'draft' } as Row,
-      req: opts.req,
-      overrideAccess: opts.overrideAccess,
-      depth: opts.depth,
-    })
+    return update<T>(
+      {
+        collection: opts.collection,
+        id: opts.id,
+        data: { _status: 'draft' } as Row,
+        req: opts.req,
+        overrideAccess: opts.overrideAccess,
+        depth: opts.depth,
+      },
+      'unpublish',
+    )
   }
 
   async function create<T extends Doc = Doc>(opts: CreateOptions): Promise<T> {
@@ -941,6 +1035,14 @@ export function createOperations(ctx: OperationCtx) {
     }
 
     const created = await db.create({ collection: collection.slug, data: row })
+    await recordAudit({
+      action: 'create',
+      collection: collection.slug,
+      documentId: String(created.id),
+      req,
+      overrideAccess: override,
+      fields: auditedFields(opts.data as Row),
+    })
     let doc = rowToDoc(collection, created, req)
     if (versionsOf(collection).enabled) {
       const status = draftsOn(collection) ? statusFromData(created as Row, 'draft') : 'published'
@@ -1029,7 +1131,7 @@ export function createOperations(ctx: OperationCtx) {
     return doc as T
   }
 
-  async function update<T extends Doc = Doc>(opts: UpdateOptions): Promise<T | null> {
+  async function update<T extends Doc = Doc>(opts: UpdateOptions, auditAs?: AuditAction): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
     const req = buildReq(opts.req)
     const override = opts.overrideAccess ?? false
@@ -1089,6 +1191,17 @@ export function createOperations(ctx: OperationCtx) {
     }
     const updated = await db.update({ collection: collection.slug, id: opts.id, data: row })
     if (!updated) return null
+
+    // Record AFTER the write succeeds. publish()/unpublish() route through here and
+    // pass their own action so the log reads 'publish'/'unpublish', not 'update'.
+    await recordAudit({
+      action: auditAs ?? 'update',
+      collection: collection.slug,
+      documentId: opts.id,
+      req,
+      overrideAccess: override,
+      fields: auditAs ? null : auditedFields(opts.data as Row),
+    })
 
     let doc = rowToDoc(collection, updated, req)
     if (versionsOf(collection).enabled) {
@@ -1268,7 +1381,16 @@ export function createOperations(ctx: OperationCtx) {
     for (const hook of collection.hooks?.beforeDelete ?? []) await hook({ req, id: opts.id })
     const removed = await db.delete({ collection: collection.slug, id: opts.id })
     const doc = removed ? rowToDoc(collection, removed, req) : null
-    if (doc) for (const hook of collection.hooks?.afterDelete ?? []) await hook({ req, id: opts.id, doc })
+    if (doc) {
+      await recordAudit({
+        action: 'delete',
+        collection: collection.slug,
+        documentId: opts.id,
+        req,
+        overrideAccess: override,
+      })
+      for (const hook of collection.hooks?.afterDelete ?? []) await hook({ req, id: opts.id, doc })
+    }
     return doc as T | null
   }
 
@@ -1382,6 +1504,13 @@ export function createOperations(ctx: OperationCtx) {
     }
     if (!row || !passwordOk) {
       recordLoginFailure(key)
+      await recordAudit({
+        action: 'login_failed',
+        collection: collection.slug,
+        principalId: null,
+        principalType: 'user',
+        meta: { email: opts.email },
+      })
       throw new UnauthorizedError('Invalid email or password.')
     }
     loginFailures.delete(key)
@@ -1406,6 +1535,14 @@ export function createOperations(ctx: OperationCtx) {
     }
     const user = rowToDoc(collection, row, buildReq()) as AuthUser
     user.collection = collection.slug
+    await recordAudit({
+      action: 'login',
+      collection: collection.slug,
+      documentId: String(row.id),
+      principalId: String(row.id),
+      principalType: 'user',
+      meta: { email: opts.email },
+    })
     const ttl = authTtl(collection)
     const token = issueToken(user.id, collection.slug, row, ttl)
     return { user, token, exp: Math.floor(Date.now() / 1000) + ttl }
@@ -2131,6 +2268,8 @@ export function createOperations(ctx: OperationCtx) {
     publish,
     unpublish,
     processScheduledPublishes,
+    findAuditLog,
+    recordAudit,
     enqueue,
     runDueJobs,
   }

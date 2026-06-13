@@ -568,6 +568,12 @@ export interface KernelConfig {
    *  with its bearer `token` and runs through the full access pipeline scoped by its
    *  `fieldScope`; agents can never publish. Source tokens from env, never hardcode. */
   agents?: AgentConfig[]
+  /** Append-only governance audit log. When enabled, every mutating operation
+   *  (create/update/delete/publish/unpublish) and auth event (login/login_failed)
+   *  is recorded with who/what/when into a single `_audit` system table, queryable
+   *  via `kernel.findAuditLog` and exportable over `GET /api/_admin/audit`.
+   *  Opt-in and DISABLED by default — `true` or `{ enabled: true }` turns it on. */
+  audit?: boolean | { enabled?: boolean }
 }
 
 export interface SanitizedLocalization {
@@ -618,6 +624,9 @@ export interface SanitizedConfig {
   /** Validated non-human principals (see `agents`). The server resolves a bearer
    *  token against these to build an `overrideAccess:false`, field-scoped principal. */
   agents: AgentConfig[]
+  /** Resolved audit-log setting. `enabled` provisions the `_audit` table and turns
+   *  on recording; disabled by default (opt-in governance feature). */
+  audit: { enabled: boolean }
 }
 
 // ---------------------------------------------------------------------------
@@ -748,6 +757,33 @@ export interface RestoreVersionOptions extends OperationBase {
   versionId: string
 }
 
+/** A recorded mutating/auth event in the append-only audit log. */
+export type AuditAction = 'create' | 'update' | 'delete' | 'publish' | 'unpublish' | 'login' | 'login_failed'
+
+/** A single audit-log row as returned by `findAuditLog`. */
+export interface AuditDoc extends Row {
+  id: string
+  /** ISO timestamp the event was recorded. */
+  at: string
+  action: AuditAction
+  collection: string | null
+  documentId: string | null
+  principalId: string | null
+  principalType: 'user' | 'agent' | 'system'
+  /** Field names written/changed (create/update); null otherwise. */
+  fields: string[] | null
+  /** Optional extra context (e.g. login email). */
+  meta: Record<string, unknown> | null
+}
+
+export interface FindAuditLogOptions {
+  where?: Where
+  limit?: number
+  page?: number
+  /** Sort spec(s); defaults to newest-first (`at` descending). */
+  sort?: string | string[]
+}
+
 export interface VersionDoc extends Row {
   id: string
   parent: string
@@ -818,6 +854,9 @@ export interface Kernel {
   publish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null>
   unpublish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null>
   processScheduledPublishes(opts?: ProcessScheduledOptions): Promise<{ published: string[] }>
+  /** Query the append-only audit log (newest-first by default). Returns
+   *  `{ docs: [], count: 0 }` when auditing is disabled. */
+  findAuditLog(opts?: FindAuditLogOptions): Promise<{ docs: AuditDoc[]; count: number }>
   enqueue(opts: EnqueueOptions): Promise<Doc>
   runDueJobs(opts?: RunJobsOptions): Promise<RunJobsResult>
   migrate(): Promise<void>
