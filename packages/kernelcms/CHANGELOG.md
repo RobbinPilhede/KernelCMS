@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.12.0
+
+### Minor Changes
+
+- **Stop editors (and agents) from clobbering each other: presence, soft locks, optimistic concurrency.** As humans and AI agents edit the same content, "last write silently wins" becomes a real data-loss bug. This adds the lightweight safety net — DB-backed, no real-time server required.
+  - **Optimistic concurrency (the hard guarantee).** Pass the `updatedAt` you last read as `expectedUpdatedAt` on an update; if the document moved on since (someone else saved first), the write is **rejected with a 409 conflict** instead of silently overwriting their work. The `ConflictError` carries the current document and the exact fields that diverged, so the client can diff, merge, and retry with the fresh token. Over REST it's standard `If-Match` / `If-Unmodified-Since` headers and an `ETag` on reads. Opt-in and backward-compatible — omit the token and you keep last-write-wins.
+  - **Soft locks (advisory).** `kernel.acquireLock({ collection, id })` signals "I'm editing this"; others see `heldBy: 'other'` with the holder, so two people don't unknowingly start editing the same doc. Locks auto-expire (TTL, refreshed by re-acquiring), can't be stolen from an active holder, and only the holder or an admin can release one. Crucially, locks are **advisory, never authorizing** — a lock can't grant or deny a write that access control wouldn't; authorization stays in one place.
+  - **Presence (live, lightweight).** `kernel.heartbeat({ collection, id, kind })` + `kernel.getPresence(...)` show who's currently viewing or editing a document (active set by TTL), over a simple `GET/POST /api/_presence/:collection/:id` — poll or wire to SSE. No CRDT, no always-on socket server.
+
+  Presence and lock reads are access-scoped (you can't see who's editing a document you can't read), identity always comes from the authenticated principal (never client input), TTLs are clamped, and every system-table write is parameterized. Red-teamed hard — an initial pass found a conflict-payload field leak and a presence authz leak; **both fixed and re-attacked to PASS (no CRITICAL/HIGH remain)**. Verified end-to-end against a live kernel.
+
 ## 0.11.0
 
 ### Minor Changes
