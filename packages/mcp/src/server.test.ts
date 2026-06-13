@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { defineConfig, initKernel } from '@kernel/core'
@@ -107,6 +107,30 @@ describe('MCP CallTool enforces the agent principal end-to-end', () => {
     // The doc stays a draft in storage.
     const after = await kernel.findByID({ collection: 'posts', id, draft: true, overrideAccess: true })
     expect(after?._status).toBe('draft')
+    await server.close()
+  })
+
+  it('logs an unexpected (non-Kernel) error server-side but keeps the client message generic', async () => {
+    // Force a plain (non-Kernel) failure deep in the op, simulating an internal bug.
+    const boom = new Error('internal db pool exploded')
+    vi.spyOn(kernel, 'find').mockRejectedValueOnce(boom)
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { client, server } = await connect(kernel, titleAgent)
+    const result = await client.callTool({ name: 'posts_list', arguments: {} })
+
+    // Client gets ONLY the generic message — no stack/internals leak.
+    expect(result.isError).toBe(true)
+    const text = (result as { content: Array<{ type: string; text?: string }> }).content[0]?.text
+    expect(text).toBe('The tool call failed.')
+    expect(text).not.toContain('db pool')
+
+    // Operators get the real error server-side, tagged with the tool name.
+    expect(errSpy).toHaveBeenCalledOnce()
+    expect(errSpy.mock.calls[0]?.[0]).toContain('posts_list')
+    expect(errSpy.mock.calls[0]?.[1]).toBe(boom)
+
+    errSpy.mockRestore()
     await server.close()
   })
 })

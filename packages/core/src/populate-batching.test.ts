@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { sqliteAdapter } from '@kernel/db-sqlite'
 import type { DatabaseAdapter } from '@kernel/db'
 import { defineConfig, initKernel } from './index'
+import { MAX_POPULATE_DEPTH } from './operations'
 import type { Doc, Kernel } from './index'
 
 const trusted = { overrideAccess: true } as const
@@ -61,6 +62,16 @@ function buildConfig(db: DatabaseAdapter) {
           { name: 'title', type: 'text' },
           { name: 'author', type: 'relationship', relationTo: 'authors' },
           { name: 'tags', type: 'relationship', relationTo: 'tags', hasMany: true },
+        ],
+      },
+      // Self-referential relation to drive the depth-clamp test (a cycle would
+      // otherwise recurse ~depth levels).
+      {
+        slug: 'comments',
+        access: { read: () => true, create: () => true },
+        fields: [
+          { name: 'body', type: 'text' },
+          { name: 'next', type: 'relationship', relationTo: 'comments' },
         ],
       },
     ],
@@ -137,6 +148,23 @@ describe('batched relationship population', () => {
     // A second collection pointing at posts to exercise depth 2.
     const deep = await kernel.findByID({ collection: 'posts', id: post.id, depth: 2, ...trusted })
     expect((deep?.author as Doc).name).toBe('Grace')
+  })
+
+  it('clamps a runaway populate depth so a cyclic relation graph cannot exhaust resources', async () => {
+    // Self-referential cycle: each comment points at the next; depth:1e6 over this
+    // graph would recurse ~1e6 levels (one batched read per level) without a cap.
+    const c1 = await kernel.create({ collection: 'comments', data: { body: 'c1' }, ...trusted })
+    const c2 = await kernel.create({ collection: 'comments', data: { body: 'c2', next: c1.id }, ...trusted })
+    await kernel.update({ collection: 'comments', id: c1.id, data: { next: c2.id }, ...trusted })
+
+    counts.find = 0
+    counts.findByID = 0
+    // A bounded number of reads proves the clamp fired: 1 page read + at most one
+    // batched read per populated level, capped at MAX_POPULATE_DEPTH (10). Without
+    // the clamp this would loop ~1e6 times (and hang).
+    const got = await kernel.findByID({ collection: 'comments', id: c1.id, depth: 1e6, ...trusted })
+    expect(got).not.toBeNull()
+    expect(counts.find).toBeLessThanOrEqual(MAX_POPULATE_DEPTH + 2)
   })
 
   it('keeps a dangling relationship id as the raw id (fallback)', async () => {

@@ -121,3 +121,31 @@ describe('naming validation', () => {
     ).not.toThrow()
   })
 })
+
+describe('agent validation', () => {
+  const base = { secret: ok, db: db(), collections: [] }
+
+  it("rejects an agent granted the 'admin' role (privilege-escalation footgun)", () => {
+    expect(() =>
+      sanitizeConfig({ ...base, agents: [{ id: 'bot', token: 'tok-1', roles: ['admin'] }] }),
+    ).toThrow(/admin/i)
+  })
+
+  it("rejects 'admin' even when mixed with other roles", () => {
+    expect(() =>
+      sanitizeConfig({ ...base, agents: [{ id: 'bot', token: 'tok-1', roles: ['editor', 'admin'] }] }),
+    ).toThrow(/admin/i)
+  })
+
+  it('allows a non-admin (or role-less) agent', () => {
+    expect(() =>
+      sanitizeConfig({
+        ...base,
+        agents: [
+          { id: 'bot', token: 'tok-1', roles: ['editor'] },
+          { id: 'scoped', token: 'tok-2' },
+        ],
+      }),
+    ).not.toThrow()
+  })
+})

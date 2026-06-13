@@ -317,6 +317,13 @@ function sanitizeAgents(agents: AgentConfig[] | undefined): AgentConfig[] {
     )
     assert(!tokens.has(agent.token), `two agents share the same token ("${agent.id}")`)
     tokens.add(agent.token)
+    // Security boundary: 'admin' is the canonical role the auth layer trusts
+    // (see `isAdminUser`). Granting it to an agent would widen every role-gated
+    // read/access rule for a non-human caller. Fail-fast at startup.
+    assert(
+      !(agent.roles ?? []).includes('admin'),
+      `agent "${agent.id}" must not be granted the 'admin' role (it would widen role-gated access rules)`,
+    )
   }
   return agents
 }

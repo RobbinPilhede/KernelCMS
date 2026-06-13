@@ -80,6 +80,15 @@ export interface OperationCtx {
 const MAX_LIMIT = 1000
 const DEFAULT_LIMIT = 25
 
+// Hard cap on relationship populate recursion. `depth` flows uncapped from the
+// Local API / REST / MCP into the recursive populate; an unbounded value over a
+// cyclic relation graph (e.g. a self-referential `comments.parent`) recurses
+// ~depth levels with one batched DB read per level → resource-exhaustion DoS.
+// Mirrors GraphQL's DEFAULT_MAX_DEPTH so both surfaces bound identically. Clamped
+// at the single populate chokepoint, so EVERY caller (find/findByID/create/update,
+// REST, MCP) is bounded. Normal depths (0,1,2…) are unaffected.
+export const MAX_POPULATE_DEPTH = 10
+
 // Login brute-force protection. A per-identifier failure counter with a sliding
 // window: too many failures within the window locks further attempts until it
 // elapses. In-memory and per-process — adequate for a single node; a multi-node
@@ -477,6 +486,11 @@ export function createOperations(ctx: OperationCtx) {
     depth: number,
     req: RequestContext,
   ): Promise<void> {
+    // Single chokepoint clamp: bound runaway depth before any recursion. Every
+    // populate caller funnels through here (populate() wraps it; the join path
+    // re-enters via find()), so this one line caps the whole read populate tree.
+    // Re-clamping on the depth-1 recursion is a no-op (value already ≤ cap).
+    depth = Math.min(Math.max(depth ?? 0, 0), MAX_POPULATE_DEPTH)
     if (depth <= 0 || docs.length === 0) return
 
     const rels = relationshipFields(collection.fields)
@@ -1179,13 +1193,21 @@ export function createOperations(ctx: OperationCtx) {
       }
     }
 
+    // Per-principal override for the cascade/setNull writes. For a HUMAN this is
+    // config-declared referential integrity they already hold the delete grant for,
+    // so the writes run trusted (overrideAccess:true) — unchanged behaviour. For an
+    // AGENT, one authorized delete must NOT fan out into referrer docs the agent has
+    // no access to: run each referrer write access-checked (overrideAccess:false)
+    // under the agent's own req, so a missing grant throws ForbiddenError and aborts
+    // the whole delete (fail-closed). The agent's req is reused either way.
+    const overrideCascade = req.user?.principalType !== 'agent'
     for (const { rule, matches } of resolved) {
       for (const row of matches) {
         const refId = String(row.id)
         if (rule.field.onDelete === 'cascade') {
           const key = `${rule.collection.slug}:${refId}`
           if (visited.has(key)) continue // cycle guard: already being deleted
-          await deleteOne({ collection: rule.collection.slug, id: refId, req, overrideAccess: true }, visited)
+          await deleteOne({ collection: rule.collection.slug, id: refId, req, overrideAccess: overrideCascade }, visited)
         } else {
           // setNull: clear the single ref, or pull the id from a hasMany list. Routed
           // through update() so hooks/versions fire and the value is re-validated.
@@ -1195,7 +1217,7 @@ export function createOperations(ctx: OperationCtx) {
             id: refId,
             data: { [rule.field.name]: next } as Row,
             req,
-            overrideAccess: true,
+            overrideAccess: overrideCascade,
           })
         }
       }

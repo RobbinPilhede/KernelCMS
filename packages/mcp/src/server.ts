@@ -119,7 +119,9 @@ export function createMcpServer(kernel: Kernel, options: McpServerOptions): Serv
       // KernelError (Forbidden/Unauthorized/Validation/…) and unexpected errors
       // both funnel through here; neither leaks a stack to the agent.
       if (err instanceof Error && !isKernelError(err)) {
-        // Unexpected: log server-side, return a generic message.
+        // Unexpected: log server-side (operators need it to diagnose), but the
+        // client still gets a generic message — no stack/internals leak to the agent.
+        console.error(`[KernelCMS MCP] tool "${request.params.name}" failed:`, err)
         return errorResult(new Error('The tool call failed.'))
       }
       return errorResult(err)

@@ -155,6 +155,72 @@ describe('onDelete referential integrity', () => {
   })
 })
 
+// Agent-initiated cascades must flow through the SAME access pipeline as the agent's
+// own writes: an agent's one authorized delete must NOT cascade/setNull into referrer
+// docs the agent cannot access. A human keeps the trusted (overrideAccess) cascade.
+function cascadeAccessConfig() {
+  return defineConfig({
+    secret: 'test-secret',
+    db: sqliteAdapter({ url: ':memory:' }),
+    collections: [
+      // The delete TARGET: anyone may delete it (the agent holds this grant).
+      { slug: 'posts', access: { read: () => true, delete: () => true }, fields: [{ name: 'title', type: 'text' }] },
+      // The REFERRER: only its owner ('u-owner') may delete/update it. An agent that is
+      // not the owner has NO access — its cascade into a comment must be rejected.
+      {
+        slug: 'comments',
+        access: {
+          read: () => true,
+          delete: ({ req }) => req.user?.id === 'u-owner',
+          update: ({ req }) => req.user?.id === 'u-owner',
+        },
+        fields: [
+          { name: 'body', type: 'text' },
+          { name: 'post', type: 'relationship', relationTo: 'posts', onDelete: 'cascade' },
+        ],
+      },
+    ],
+  })
+}
+
+describe('agent-initiated cascade is access-checked (authorization blast radius)', () => {
+  let kernel: Kernel
+  let postId: string
+  let commentId: string
+
+  beforeEach(async () => {
+    kernel = await initKernel(cascadeAccessConfig(), { logLevel: 'error' })
+    await kernel.migrate()
+    const post = await kernel.create({ collection: 'posts', data: { title: 'P' }, ...trusted })
+    postId = post.id
+    const comment = await kernel.create({ collection: 'comments', data: { body: 'c', post: post.id }, ...trusted })
+    commentId = comment.id
+  })
+  afterEach(async () => {
+    await kernel.destroy()
+  })
+
+  it('rejects the delete (ForbiddenError) and leaves both target and referrer intact when the agent cannot access the referrer', async () => {
+    const agent = { user: { id: 'agent-x', principalType: 'agent' as const, roles: [] } }
+    await expect(kernel.delete({ collection: 'posts', id: postId, req: agent })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    })
+    // Fail-closed: the post is NOT deleted (cascade aborted before the target was removed)…
+    expect(await kernel.findByID({ collection: 'posts', id: postId, ...trusted })).not.toBeNull()
+    // …and the referrer the agent could not touch is untouched.
+    expect(await kernel.findByID({ collection: 'comments', id: commentId, ...trusted })).not.toBeNull()
+  })
+
+  it('a human with the same config still cascades successfully (unchanged behaviour)', async () => {
+    // The owner (human, no principalType) cascades the comment as before via the
+    // trusted override path.
+    const human = { user: { id: 'u-owner', collection: 'users', roles: [] } }
+    await kernel.delete({ collection: 'posts', id: postId, req: human })
+    expect(await kernel.findByID({ collection: 'posts', id: postId, ...trusted })).toBeNull()
+    expect(await kernel.findByID({ collection: 'comments', id: commentId, ...trusted })).toBeNull()
+  })
+})
+
 // Sanity: the typed error really is a KernelError surfaced as CONFLICT.
 it('restrict throws a typed KernelError', async () => {
   const k = await initKernel(buildConfig(), { logLevel: 'error' })
