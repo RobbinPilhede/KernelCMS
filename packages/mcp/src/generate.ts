@@ -6,7 +6,7 @@
  * No kernel, no transport, no access logic here — this only describes the tools.
  * Dispatch + access enforcement live in `server.ts`.
  */
-import type { AdminCollection, AdminGlobal, AdminSchema, EndpointConfig, JsonSchema } from '@kernel/core'
+import type { AdminBlock, AdminCollection, AdminGlobal, AdminSchema, EndpointConfig, JsonSchema } from '@kernel/core'
 import { propertiesOf } from '@kernel/core'
 
 /** The Local API operation a tool maps to. The server switches on this, never on
@@ -21,6 +21,7 @@ export type ToolOp =
   | 'updateGlobal'
   | 'count'
   | 'findVersions'
+  | 'composePage'
   | 'invokeEndpoint'
 
 /** MCP tool behaviour hints (SDK `ToolAnnotations`). Advisory only — the core
@@ -169,6 +170,72 @@ function writeTools(coll: AdminCollection): ToolDef[] {
   ]
 }
 
+/** Storage-bearing blocks fields on a collection (recurses presentational containers,
+ *  which `describeConfig` already flattens — so a top-level scan suffices here). */
+function blocksFieldsOf(coll: AdminCollection): { name: string; blocks: AdminBlock[] }[] {
+  const out: { name: string; blocks: AdminBlock[] }[] = []
+  for (const f of coll.fields) {
+    if (f.type === 'blocks' && Array.isArray(f.blocks)) out.push({ name: f.name, blocks: f.blocks })
+  }
+  return out
+}
+
+/**
+ * The `compose_page` tool: assemble a `blocks` layout from a structured spec in one
+ * validated call, created as an agent-authored DRAFT (so it lands in the review inbox).
+ * Emitted only for collections that actually have a blocks field. `field` is required
+ * when the collection has more than one blocks field (ambiguous otherwise). The core op
+ * validates every block type/field, so the schema here is intentionally permissive on
+ * `data` shape and lets core return a precise BadRequest for anything invalid.
+ */
+function composeTools(coll: AdminCollection): ToolDef[] {
+  const blockFields = blocksFieldsOf(coll)
+  if (blockFields.length === 0) return []
+  const allBlockSlugs = [...new Set(blockFields.flatMap((bf) => bf.blocks.map((b) => b.slug)))]
+  const fieldProp: Record<string, JsonSchema> =
+    blockFields.length > 1
+      ? {
+          field: {
+            type: 'string',
+            enum: blockFields.map((bf) => bf.name),
+            description: 'Which blocks field to assemble into.',
+          },
+        }
+      : { field: { type: 'string', description: 'Blocks field to assemble into (defaults to the only one).' } }
+  const required = blockFields.length > 1 ? ['blocks', 'field'] : ['blocks']
+  return [
+    {
+      name: `${coll.slug}_compose_page`,
+      description:
+        `Assemble a ${coll.labels.singular} blocks layout from a list of blocks and create it ` +
+        `as a draft (lands in the review inbox). Block types: ${allBlockSlugs.join(', ') || '(none)'}.`,
+      op: 'composePage',
+      target: coll.slug,
+      // Create-shaped: not idempotent, not destructive, not read-only. The draft-only
+      // brake + field scope + access all apply (it goes through create()).
+      annotations: { title: `Compose ${coll.labels.singular}` },
+      inputSchema: objectSchema(
+        {
+          ...fieldProp,
+          blocks: {
+            type: 'array',
+            description: 'Ordered blocks to assemble.',
+            items: objectSchema(
+              {
+                type: { type: 'string', description: 'Block slug (must match the field schema).' },
+                data: { type: 'object', description: 'Block field values (keys must be fields of that block).' },
+              },
+              ['type'],
+            ),
+          },
+          data: { type: 'object', description: 'Other top-level fields to set on the document.' },
+        },
+        required,
+      ),
+    },
+  ]
+}
+
 function globalTools(global: AdminGlobal): ToolDef[] {
   const dataProps = propertiesOf(global.fields)
   return [
@@ -263,7 +330,7 @@ export function generateTools(schema: AdminSchema, endpoints: readonly EndpointC
   const tools: ToolDef[] = []
   for (const coll of schema.collections) {
     if (coll.hidden || coll.auth) continue
-    tools.push(...listTools(coll), ...writeTools(coll))
+    tools.push(...listTools(coll), ...writeTools(coll), ...composeTools(coll))
   }
   for (const global of schema.globals) {
     tools.push(...globalTools(global))

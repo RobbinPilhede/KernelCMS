@@ -16,7 +16,7 @@
     "format:write": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify": "tsx verify/run.ts && tsx verify/rbac.ts && tsx verify/visual.ts && tsx verify/oidc.ts && tsx verify/richtext.ts && tsx verify/http.ts && tsx verify/mcp.ts && tsx verify/mcp-http.ts && tsx verify/cli.ts",
+    "verify": "tsx verify/run.ts && tsx verify/rbac.ts && tsx verify/visual.ts && tsx verify/review.ts && tsx verify/oidc.ts && tsx verify/richtext.ts && tsx verify/http.ts && tsx verify/mcp.ts && tsx verify/mcp-http.ts && tsx verify/cli.ts",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "changeset publish",

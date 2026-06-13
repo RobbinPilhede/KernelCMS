@@ -22,6 +22,7 @@ import type {
   AdminCollection,
   AdminSchema,
   AuthUser,
+  ComposeBlock,
   EndpointConfig,
   FieldScope,
   Kernel,
@@ -272,6 +273,24 @@ function optPrincipalType(value: unknown): 'user' | 'agent' | undefined {
   return value === 'user' || value === 'agent' ? value : undefined
 }
 
+/** Narrow the untrusted `blocks` arg into a typed list. Shape is loosely validated
+ *  here (array of `{ type: string }`); the core composePage op does the authoritative
+ *  validation (known block type, known fields) and returns a precise BadRequest. */
+function composeBlocks(value: unknown): ComposeBlock[] {
+  if (!Array.isArray(value)) throw new Error('A "blocks" array argument is required.')
+  return value.map((raw, i) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error(`Block at index ${i} must be an object.`)
+    }
+    const block = raw as { type?: unknown; data?: unknown }
+    if (typeof block.type !== 'string' || block.type.length === 0) {
+      throw new Error(`Block at index ${i} needs a string "type".`)
+    }
+    const data = block.data && typeof block.data === 'object' && !Array.isArray(block.data) ? block.data : {}
+    return { type: block.type, data: data as Record<string, unknown> }
+  })
+}
+
 /** Build raw endpoint input from flat tool args: declared `:param`s become string
  *  path params, the rest of the body rides under `body`. `invokeEndpoint` re-runs
  *  the endpoint's own parsers, so anything malformed becomes a ValidationError. */
@@ -339,6 +358,20 @@ async function dispatch(kernel: Kernel, tool: ToolDef, args: ToolArgs, req: Part
         limit: optNumber(args.limit),
         page: optNumber(args.page),
         createdByType: optPrincipalType(args.createdByType),
+        ...localeReq(req, args),
+      })
+    case 'composePage':
+      // Assemble a blocks layout in one validated call. Core validates every block
+      // type/field and creates through create() — the agent draft-only brake, field
+      // scope, and access all apply (no override). `field`/`blocks`/`data` are untrusted;
+      // core rejects unknown blocks/fields and guards against prototype-pollution keys.
+      return kernel.composePage({
+        collection: target,
+        ...(optString(args.field) ? { field: optString(args.field) } : {}),
+        blocks: composeBlocks(args.blocks),
+        ...(args.data && typeof args.data === 'object' && !Array.isArray(args.data)
+          ? { data: args.data as Record<string, unknown> }
+          : {}),
         ...localeReq(req, args),
       })
     case 'invokeEndpoint': {

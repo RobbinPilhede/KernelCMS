@@ -33,6 +33,9 @@ export const GLOBAL_ROW_ID = 'singleton'
 /** Storage table holding the append-only governance audit log. */
 export const AUDIT_TABLE = '_audit'
 
+/** Storage table holding agent-review decisions (the human approval inbox). */
+export const REVIEWS_TABLE = '_reviews'
+
 /** Compile the sanitized config into the storage-facing schema for the adapter. */
 export function compileSchema(config: SanitizedConfig): KernelSchema {
   const tables: TableSchema[] = []
@@ -98,6 +101,29 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'principalType', type: 'text', required: false, unique: false, indexed: false, localized: false },
         { name: 'fields', type: 'json', required: false, unique: false, indexed: false, localized: false },
         { name: 'meta', type: 'json', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Agent-review decisions, provisioned only when the review inbox is enabled. Mirrors
+  // the audit-table style: a flat row of indexed columns. The queue is DERIVED from the
+  // documents (agent-authored drafts) + these rows; this table only persists decisions.
+  // `(collection, documentId)` is the lookup the queue scan and `submitReview` both use;
+  // `documentId` alone is indexed for cross-collection latest-review lookups.
+  if (config.review.enabled) {
+    tables.push({
+      table: REVIEWS_TABLE,
+      slug: REVIEWS_TABLE,
+      columns: [
+        { name: 'at', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
+        { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'documentId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'decision', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'reviewerId', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'reviewerType', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'note', type: 'text', required: false, unique: false, indexed: false, localized: false },
       ],
       timestamps: true,
       singleton: false,

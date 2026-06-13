@@ -637,6 +637,43 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       }
     }
 
+    // /_admin/reviews -> the agent review inbox. REVIEWER-gated (admin OR editor): a
+    // reviewer isn't always an admin, but they must be a trusted human (never an agent).
+    // GET lists the queue (optional ?collection=); POST submits a decision. The reviewer
+    // identity is the server-resolved `user` ONLY — the client-supplied body is treated as
+    // untrusted and never names the reviewer. Approve reuses the publish access gate, so a
+    // reviewer lacking publish access is rejected by core (Forbidden -> 403).
+    if (segments[1] === 'reviews' && segments.length === 2) {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Review inbox access requires an admin or editor role.')
+      if (method === 'GET') {
+        const collection = url.searchParams.get('collection')
+        return json(
+          await kernel.findReviewQueue({
+            ...(collection ? { collection } : {}),
+            limit: toNum(url.searchParams.get('limit')) ?? undefined,
+            page: toNum(url.searchParams.get('page')) ?? undefined,
+            req: { user },
+          }),
+        )
+      }
+      if (method === 'POST') {
+        const body = await readBody(request)
+        const decision = body.decision === 'approve' || body.decision === 'request_changes' ? body.decision : null
+        if (!decision) throw new BadRequestError('`decision` must be "approve" or "request_changes".')
+        return json(
+          await kernel.submitReview({
+            collection: String(body.collection ?? ''),
+            id: String(body.id ?? ''),
+            decision,
+            ...(typeof body.note === 'string' ? { note: body.note } : {}),
+            req: { user },
+          }),
+        )
+      }
+      return methodNotAllowed()
+    }
+
     // POST /_admin/env -> persist chosen connector settings to the project .env.
     // Strictly first-run only (no admin yet = local operator) AND never in
     // production. Only whitelisted, single-line keys are written. Applies on the
@@ -1239,6 +1276,18 @@ export function parseWhere(params: URLSearchParams): Where | undefined {
 /** The admin convention the core access layer trusts: a `roles` list with 'admin'. */
 function isAdmin(user: AuthUser): boolean {
   return Array.isArray(user.roles) && user.roles.includes('admin')
+}
+
+/**
+ * May this principal use the review inbox? Reviewers approve/publish agent content but
+ * aren't always admins, so an `editor` role qualifies too. An AGENT is never a reviewer
+ * (the whole point is a human approves agent work) — its writes are gated elsewhere, but
+ * we also refuse it the inbox surface here. The publish access gate still independently
+ * rejects an approve from anyone lacking publish access, so this is the coarse door only.
+ */
+function isReviewer(user: AuthUser): boolean {
+  if (user.principalType === 'agent') return false
+  return Array.isArray(user.roles) && (user.roles.includes('admin') || user.roles.includes('editor'))
 }
 
 /** Build a `Where` for the audit log from the supported query params. Returns

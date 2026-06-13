@@ -175,6 +175,9 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     createRole: ops.createRole,
     updateRole: ops.updateRole,
     deleteRole: ops.deleteRole,
+    findReviewQueue: ops.findReviewQueue,
+    submitReview: ops.submitReview,
+    composePage: ops.composePage,
     async migrate() {
       await sanitized.db.migrate(schema)
     },

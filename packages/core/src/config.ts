@@ -337,6 +337,19 @@ function sanitizeAudit(audit: KernelConfig['audit']): { enabled: boolean } {
   return { enabled: false }
 }
 
+/**
+ * Resolve the agent-review inbox setting. The inbox exists to gate agent-authored
+ * content, so it defaults ON when any `agents` are configured. An explicit `review`
+ * boolean always wins (`true` forces it on even without agents; `false` forces it off
+ * even with agents). With neither agents nor `review`, it stays off — fully
+ * backward-compatible (no `_reviews` table, ops return empty / throw disabled).
+ */
+function sanitizeReview(review: KernelConfig['review'], hasAgents: boolean): { enabled: boolean } {
+  if (review === true) return { enabled: true }
+  if (review === false) return { enabled: false }
+  return { enabled: hasAgents }
+}
+
 export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
   assert(config.db, 'a database adapter is required (config.db)')
   assert(Array.isArray(config.collections), 'config.collections must be an array')
@@ -491,6 +504,8 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     injectRbac(rbacStore, collections, globals, (c) => resolveVersions(c.versions).drafts)
   }
 
+  const agents = sanitizeAgents(config.agents)
+
   return {
     serverURL: config.serverURL ?? 'http://localhost:3000',
     db: config.db,
@@ -507,10 +522,11 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     cacheTtlBySlug,
     cacheDefaultTtl,
     searchableFields,
-    agents: sanitizeAgents(config.agents),
+    agents,
     audit: sanitizeAudit(config.audit),
     rbac: { enabled: rbacEnabled },
     rbacStore,
+    review: sanitizeReview(config.review, agents.length > 0),
     ...(config.search ? { search: config.search } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),

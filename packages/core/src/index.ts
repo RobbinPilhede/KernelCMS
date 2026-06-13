@@ -5,7 +5,7 @@ export { defineEndpoint, matchEndpoint, parseEndpointInput, invokeEndpoint } fro
 export type { InvokeEndpointArgs } from './endpoints'
 export { initKernel, createLogger } from './kernel'
 export type { InitOptions } from './kernel'
-export { compileSchema, tableForCollection, tableForGlobal, GLOBAL_ROW_ID, AUDIT_TABLE } from './schema'
+export { compileSchema, tableForCollection, tableForGlobal, GLOBAL_ROW_ID, AUDIT_TABLE, REVIEWS_TABLE } from './schema'
 export { generateTypes } from './codegen'
 export type { CodegenInput } from './codegen'
 export { parseSort, mergeWhere, matchesWhere } from './query'

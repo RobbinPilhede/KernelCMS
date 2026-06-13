@@ -6,8 +6,17 @@ import type {
   AuditDoc,
   AuthResult,
   AuthUser,
+  BlockDef,
+  BlocksField,
   CollectionConfig,
+  ComposePageOptions,
   FindAuditLogOptions,
+  FindReviewQueueOptions,
+  ReviewDecision,
+  ReviewDoc,
+  ReviewQueueItem,
+  SubmitReviewOptions,
+  SubmitReviewResult,
   ConfigField,
   CountOptions,
   CreateOptions,
@@ -76,7 +85,7 @@ import { evalAccess, isAllowed, asWhere } from './access'
 import { JOBS_SLUG } from './config'
 import { ROLES_TABLE, cloneRoleDef, assertValidRoleDef } from './rbac'
 import { matchesWhere, mergeWhere, parseSort } from './query'
-import { AUDIT_TABLE, GLOBAL_ROW_ID, resolveVersions, tableForGlobal, tableForVersions } from './schema'
+import { AUDIT_TABLE, GLOBAL_ROW_ID, REVIEWS_TABLE, resolveVersions, tableForGlobal, tableForVersions } from './schema'
 
 export interface OperationCtx {
   config: SanitizedConfig
@@ -103,6 +112,9 @@ export interface RecordAuditArgs {
 
 const MAX_LIMIT = 1000
 const DEFAULT_LIMIT = 25
+// Bounds on agent/MCP-reachable review surfaces (storage-growth guard, not auth).
+const MAX_COMPOSE_BLOCKS = 200
+const MAX_REVIEW_NOTE = 10_000
 
 // Hard cap on relationship populate recursion. `depth` flows uncapped from the
 // Local API / REST / MCP into the recursive populate; an unbounded value over a
@@ -848,6 +860,306 @@ export function createOperations(ctx: OperationCtx) {
     if (sort.length === 0) sort = [{ field: 'at', direction: 'desc' }]
     const result = await db.find({ collection: AUDIT_TABLE, where: opts.where, sort, limit, page })
     return { docs: result.docs as AuditDoc[], count: result.totalDocs }
+  }
+
+  // -------------------------------------------------------------------------
+  // Agent review inbox
+  //
+  // The human approval layer over agent-authored content. The queue is DERIVED, not
+  // a new `_status` value: an item is PENDING when the document's CURRENT row was
+  // agent-authored (`createdByType==='agent'`), is still a `draft` (drafts-enabled
+  // collections only), AND has not been approved — i.e. there is no review row, OR the
+  // latest review requested changes and the agent has since revised the doc
+  // (`updatedAt` is strictly after that review's `at`). Decisions live in `_reviews`.
+  // -------------------------------------------------------------------------
+
+  /** The single blocks field on a collection, or the named one. Errors when the field
+   *  is missing, not a blocks field, or (no name given) the collection has 0 or >1. */
+  function resolveBlocksField(collection: CollectionConfig, name: string | undefined): BlocksField {
+    const blockFields = storageFields(collection.fields).filter((f): f is BlocksField => f.type === 'blocks')
+    if (name) {
+      const field = blockFields.find((f) => f.name === name)
+      if (!field) throw new BadRequestError(`Collection "${collection.slug}" has no blocks field "${name}".`)
+      return field
+    }
+    if (blockFields.length === 0) throw new BadRequestError(`Collection "${collection.slug}" has no blocks field.`)
+    if (blockFields.length > 1) {
+      throw new BadRequestError(
+        `Collection "${collection.slug}" has multiple blocks fields; specify which one with \`field\`.`,
+      )
+    }
+    return blockFields[0]!
+  }
+
+  /** The latest review row for a (collection, documentId), or null. */
+  async function latestReview(collection: string, documentId: string): Promise<ReviewDoc | null> {
+    const res = await db.find({
+      collection: REVIEWS_TABLE,
+      where: { and: [{ collection: { equals: collection } }, { documentId: { equals: documentId } }] },
+      sort: [{ field: 'at', direction: 'desc' }],
+      limit: 1,
+      page: 1,
+    })
+    return (res.docs[0] as ReviewDoc | undefined) ?? null
+  }
+
+  /**
+   * Whether a document was AGENT-AUTHORED. Attribution lives on the version snapshots
+   * (`createdByType`), not the main collection row — see `snapshotVersion`. A document
+   * is agent-authored when its CREATE snapshot (the earliest version) was made by an
+   * agent. Returns false when versions are unavailable (history-only off, or no rows),
+   * so a collection without snapshot attribution simply yields no agent queue items.
+   */
+  async function authoredByAgent(collection: CollectionConfig, documentId: string): Promise<boolean> {
+    if (!versionsOf(collection).enabled) return false
+    const res = await db.find({
+      collection: tableForVersions(collection.slug),
+      where: { parent: { equals: documentId } },
+      sort: [{ field: 'createdAt', direction: 'asc' }],
+      limit: 1,
+      page: 1,
+    })
+    return res.docs[0]?.createdByType === 'agent'
+  }
+
+  /**
+   * Whether an agent-authored draft is still PENDING review. An item leaves the queue
+   * only when its latest decision is `approved`. With no review it is pending; with a
+   * `changes_requested` it stays pending — the reviewer keeps seeing it (with the note)
+   * and it remains actionable after the agent revises. `revisedSince` distinguishes
+   * "revised after the last changes-request" (freshly actionable) from "awaiting the
+   * agent" — surfaced on the item, not used to remove it from the queue.
+   */
+  function isPending(review: ReviewDoc | null): boolean {
+    return !review || review.decision !== 'approved'
+  }
+
+  /** True when the draft's last write is strictly after the given review — i.e. the
+   *  agent has revised it since the reviewer's last decision. */
+  function revisedSince(updatedAt: string | null, review: ReviewDoc | null): boolean {
+    if (!review || updatedAt == null) return false
+    const updated = new Date(updatedAt).getTime()
+    const reviewedAt = review.at != null ? new Date(String(review.at)).getTime() : NaN
+    return Number.isFinite(updated) && Number.isFinite(reviewedAt) && updated > reviewedAt
+  }
+
+  async function findReviewQueue(
+    opts: FindReviewQueueOptions = {},
+  ): Promise<{ docs: ReviewQueueItem[]; count: number }> {
+    if (!config.review.enabled) return { docs: [], count: 0 }
+
+    // Only collections that have drafts can hold a "draft pending review".
+    const targets = opts.collection ? [collectionOrThrow(opts.collection)] : config.collections
+    const draftCollections = targets.filter((c) => draftsOn(c))
+
+    // Gather every agent-authored draft, scoped by the REVIEWER's read access. Each draft
+    // is loaded through the access-checked `find` path (overrideAccess:false) — a reviewer
+    // can only ever see drafts they could read directly, so the queue never widens access.
+    // Agent-authorship is derived from the create version snapshot (`authoredByAgent`),
+    // since the main row carries no `createdByType` column.
+    const items: ReviewQueueItem[] = []
+    for (const collection of draftCollections) {
+      let found
+      try {
+        found = await find({
+          collection: collection.slug,
+          where: { _status: { equals: 'draft' } },
+          draft: true,
+          sort: '-updatedAt',
+          limit: MAX_LIMIT,
+          page: 1,
+          req: opts.req,
+        })
+      } catch (err) {
+        // When scanning the whole inbox, a single collection the reviewer can't
+        // read must not 403 the entire queue — skip it. An explicitly requested
+        // collection still surfaces the access error to the caller.
+        if (!opts.collection && err instanceof ForbiddenError) continue
+        throw err
+      }
+      for (const doc of found.docs) {
+        if (!(await authoredByAgent(collection, doc.id))) continue
+        const updatedAt = doc.updatedAt != null ? String(doc.updatedAt) : null
+        const review = await latestReview(collection.slug, doc.id)
+        if (!isPending(review)) continue
+        items.push({
+          collection: collection.slug,
+          id: doc.id,
+          doc,
+          createdBy: await creatorOf(collection, doc.id),
+          updatedAt,
+          ...(review && review.decision === 'changes_requested'
+            ? { revisedSince: revisedSince(updatedAt, review) }
+            : {}),
+          ...(review
+            ? {
+                lastReview: {
+                  decision: review.decision,
+                  note: review.note ?? null,
+                  at: review.at,
+                  reviewerId: review.reviewerId ?? null,
+                },
+              }
+            : {}),
+        })
+      }
+    }
+
+    // Newest revision first across the whole queue, then paginate in-memory (the queue
+    // is bounded per-collection by MAX_LIMIT and is an operator-facing inbox, not a hot
+    // read path). count is the full pending set; docs is the requested page.
+    items.sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')))
+    const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
+    const page = Math.max(opts.page ?? 1, 1)
+    const start = (page - 1) * limit
+    return { docs: items.slice(start, start + limit), count: items.length }
+  }
+
+  /** The principal id that created `documentId`, read from its earliest version snapshot
+   *  (`createdBy`). Null when no snapshot exists. */
+  async function creatorOf(collection: CollectionConfig, documentId: string): Promise<string | null> {
+    if (!versionsOf(collection).enabled) return null
+    const res = await db.find({
+      collection: tableForVersions(collection.slug),
+      where: { parent: { equals: documentId } },
+      sort: [{ field: 'createdAt', direction: 'asc' }],
+      limit: 1,
+      page: 1,
+    })
+    const v = res.docs[0]
+    return v?.createdBy != null ? String(v.createdBy) : null
+  }
+
+  async function submitReview(opts: SubmitReviewOptions): Promise<SubmitReviewResult> {
+    if (!config.review.enabled) throw new BadRequestError('The review inbox is not enabled (set `config.review`).')
+    if (opts.decision !== 'approve' && opts.decision !== 'request_changes') {
+      throw new BadRequestError('`decision` must be "approve" or "request_changes".')
+    }
+    if (opts.note != null && String(opts.note).length > MAX_REVIEW_NOTE) {
+      throw new BadRequestError(`\`note\` too long (max ${MAX_REVIEW_NOTE} characters).`)
+    }
+    const collection = collectionOrThrow(opts.collection)
+    if (!draftsOn(collection)) {
+      throw new BadRequestError(`Collection "${opts.collection}" does not have drafts enabled.`)
+    }
+    const req = buildReq(opts.req)
+
+    // The target must exist and be an agent-authored draft. This path is exclusively for
+    // reviewing AGENT content; reviewing a human draft through it is rejected so the
+    // approval inbox can't be repurposed to publish arbitrary documents. Agent-authorship
+    // is derived from the create snapshot (the main row carries no `createdByType`).
+    const existing = await db.findByID({ collection: collection.slug, id: opts.id })
+    if (!existing) throw new NotFoundError()
+    if (existing._status !== 'draft') {
+      throw new BadRequestError('Only draft documents can be reviewed.')
+    }
+    if (!(await authoredByAgent(collection, opts.id))) {
+      throw new BadRequestError('Only agent-authored documents can be reviewed.')
+    }
+
+    const reviewerType = principalKindFor(req, false)
+    const decision: ReviewDecision = opts.decision === 'approve' ? 'approved' : 'changes_requested'
+
+    if (opts.decision === 'approve') {
+      // Reuse the EXISTING publish op with the reviewer's req, so a reviewer who lacks
+      // publish access is rejected by `assertCanPublish` exactly as a direct publish
+      // would be. No override — the publish access gate is the single source of truth.
+      const published = await publish({ collection: opts.collection, id: opts.id, req: opts.req })
+      if (!published) throw new NotFoundError()
+    }
+
+    // Persist the decision (after a successful publish on approve, so a rejected publish
+    // never records an "approved" row). Note is a free-form string from the reviewer.
+    const note = typeof opts.note === 'string' && opts.note.length > 0 ? opts.note : null
+    await db.create({
+      collection: REVIEWS_TABLE,
+      data: {
+        id: randomUUID(),
+        at: new Date().toISOString(),
+        collection: collection.slug,
+        documentId: opts.id,
+        decision,
+        reviewerId: req.user?.id ?? null,
+        reviewerType,
+        note,
+      },
+    })
+
+    await recordAudit({
+      action: opts.decision === 'approve' ? 'review.approve' : 'review.request_changes',
+      collection: collection.slug,
+      documentId: opts.id,
+      req,
+      ...(note ? { meta: { note } } : {}),
+    })
+
+    return { decision, documentId: opts.id }
+  }
+
+  // Keys that must never reach a serialized document via block data — guarding the
+  // assembled object against prototype pollution from untrusted block.data keys.
+  const COMPOSE_FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+  async function composePage<T extends Doc = Doc>(opts: ComposePageOptions): Promise<T> {
+    const collection = collectionOrThrow(opts.collection)
+    const field = resolveBlocksField(collection, opts.field)
+    if (!Array.isArray(opts.blocks)) throw new BadRequestError('`blocks` must be an array.')
+    // Bound the spec: compose is agent/MCP-reachable, so an unbounded blocks array
+    // would let a client push arbitrarily large payloads into storage in one call.
+    if (opts.blocks.length > MAX_COMPOSE_BLOCKS) {
+      throw new BadRequestError(`Too many blocks (${opts.blocks.length}); max ${MAX_COMPOSE_BLOCKS}.`)
+    }
+
+    // The value: validate the spec against the schema so an AI can compose a page in one
+    // call and never produce an invalid layout. Every block.type must be a known
+    // BlockDef.slug on this field; every key in block.data must be a field of that block.
+    const blockBySlug = new Map<string, BlockDef>(field.blocks.map((b) => [b.slug, b]))
+    const assembled: Row[] = []
+    for (let i = 0; i < opts.blocks.length; i++) {
+      const block = opts.blocks[i]!
+      if (!block || typeof block !== 'object') throw new BadRequestError(`Block at index ${i} must be an object.`)
+      const def = blockBySlug.get(block.type)
+      if (!def) {
+        throw new BadRequestError(
+          `Unknown block type "${block.type}" at index ${i} for field "${field.name}". ` +
+            `Allowed: ${field.blocks.map((b) => b.slug).join(', ') || '(none)'}.`,
+        )
+      }
+      const data = block.data ?? {}
+      if (typeof data !== 'object' || Array.isArray(data)) {
+        throw new BadRequestError(`Block "${block.type}" at index ${i}: \`data\` must be an object.`)
+      }
+      const allowedKeys = new Set(effectiveFields(def.fields).map((f) => f.name))
+      const row: Row = { blockType: def.slug }
+      for (const key of Object.keys(data)) {
+        // Reject prototype-pollution keys outright; then reject any field not declared
+        // on the block (a clear BadRequest — an AI can't smuggle an unknown field).
+        if (COMPOSE_FORBIDDEN_KEYS.has(key)) throw new BadRequestError(`Illegal block field key "${key}".`)
+        if (!allowedKeys.has(key)) {
+          throw new BadRequestError(
+            `Block "${block.type}" at index ${i} has no field "${key}". ` +
+              `Allowed: ${[...allowedKeys].join(', ') || '(none)'}.`,
+          )
+        }
+        row[key] = (data as Row)[key]
+      }
+      assembled.push(row)
+    }
+
+    // Merge any other top-level fields with the assembled layout, then create through the
+    // NORMAL pipeline — so the agent draft-only brake, field scope, and access all apply
+    // (no override). `field`/`blocks`/`data` are untrusted; top-level data keys are also
+    // guarded against prototype pollution before they reach the document.
+    const top = opts.data ?? {}
+    if (typeof top !== 'object' || Array.isArray(top)) throw new BadRequestError('`data` must be an object.')
+    const docData: Row = {}
+    for (const key of Object.keys(top)) {
+      if (COMPOSE_FORBIDDEN_KEYS.has(key)) throw new BadRequestError(`Illegal data key "${key}".`)
+      docData[key] = (top as Row)[key]
+    }
+    docData[field.name] = assembled
+
+    return create<T>({ collection: opts.collection, data: docData, req: opts.req })
   }
 
   async function findVersions(opts: FindVersionsOptions): Promise<PaginatedResult<VersionDoc>> {
@@ -2386,6 +2698,9 @@ export function createOperations(ctx: OperationCtx) {
     createRole,
     updateRole,
     deleteRole,
+    findReviewQueue,
+    submitReview,
+    composePage,
   }
 }
 

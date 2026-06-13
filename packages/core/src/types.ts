@@ -632,6 +632,12 @@ export interface KernelConfig {
    *  effect immediately. An `admin: true` role (or the literal 'admin' role) gets full
    *  access. Explicit `collection.access[op]` rules always win over RBAC. */
   rbac?: RbacConfig
+  /** Human approval inbox for agent-authored content. Provisions a `_reviews` system
+   *  table and enables `findReviewQueue`/`submitReview`. Enabled by default when
+   *  `agents` are configured (the inbox is for agent drafts); set `true` to force it
+   *  on, `false` to force it off. When disabled, the review ops return empty / throw
+   *  cleanly (like `findRoles` with RBAC off) — fully backward-compatible. */
+  review?: boolean
 }
 
 export interface SanitizedLocalization {
@@ -687,6 +693,9 @@ export interface SanitizedConfig {
   audit: { enabled: boolean }
   /** Whether granular RBAC is enabled (provisions the `_roles` table + injects access). */
   rbac: { enabled: boolean }
+  /** Resolved agent-review setting. `enabled` provisions the `_reviews` table and the
+   *  review queue/decision ops; defaults to on when `agents` are configured. */
+  review: { enabled: boolean }
   /** The mutable runtime role store. Seeded from `config.rbac.roles`, merged from the
    *  `_roles` table at boot, and captured by reference by the injected access rules.
    *  Empty (`{ roles: {} }`) and unused when RBAC is disabled. */
@@ -833,6 +842,8 @@ export type AuditAction =
   | 'role.create'
   | 'role.update'
   | 'role.delete'
+  | 'review.approve'
+  | 'review.request_changes'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -856,6 +867,102 @@ export interface FindAuditLogOptions {
   page?: number
   /** Sort spec(s); defaults to newest-first (`at` descending). */
   sort?: string | string[]
+}
+
+// ---------------------------------------------------------------------------
+// Agent review inbox
+//
+// The human approval layer over agent-authored content. Agents are already
+// draft-only + attributed (`createdByType:'agent'`); the review queue is DERIVED
+// ("agent-authored drafts not yet approved") and decisions are persisted in a
+// `_reviews` system table — mirroring the audit/roles pattern, NOT a new value on
+// the draft|published `_status` state machine.
+// ---------------------------------------------------------------------------
+
+/** A reviewer's decision, as persisted in `_reviews`. */
+export type ReviewDecision = 'approved' | 'changes_requested'
+
+/** A single persisted review decision row from the `_reviews` table. */
+export interface ReviewDoc extends Row {
+  id: string
+  /** ISO timestamp the decision was recorded. */
+  at: string
+  collection: string
+  documentId: string
+  decision: ReviewDecision
+  reviewerId: string | null
+  reviewerType: 'user' | 'agent' | 'system'
+  /** Optional reviewer note (used on `changes_requested`). */
+  note: string | null
+}
+
+/** One pending item in the agent review queue: an agent-authored draft awaiting
+ *  a human decision, with its latest review (if any) for context. */
+export interface ReviewQueueItem {
+  collection: string
+  id: string
+  /** The current draft document. */
+  doc: Doc
+  /** The principal id that authored the document (`createdBy`). */
+  createdBy: string | null
+  /** Last write time of the draft (drives the "revised after changes_requested" re-queue). */
+  updatedAt: string | null
+  /** True when the agent revised the draft after the most recent `changes_requested`
+   *  — i.e. it is freshly actionable for the reviewer (vs. awaiting the agent). */
+  revisedSince?: boolean
+  /** The most recent review decision on this document, when one exists. */
+  lastReview?: {
+    decision: ReviewDecision
+    note: string | null
+    at: string
+    reviewerId: string | null
+  }
+}
+
+export interface FindReviewQueueOptions {
+  /** Narrow to a single collection. Omit to scan every draft-enabled collection. */
+  collection?: string
+  limit?: number
+  page?: number
+  /** The reviewer request context — its read access scopes which drafts are listed. */
+  req?: Partial<RequestContext>
+}
+
+export interface SubmitReviewOptions {
+  collection: string
+  id: string
+  /** `approve` publishes (reusing the publish access gate); `request_changes` keeps
+   *  the doc a draft and records the note. */
+  decision: 'approve' | 'request_changes'
+  /** Reviewer note, surfaced back to the agent (recorded on `request_changes`). */
+  note?: string
+  /** The reviewer request context — drives the publish access gate on approve and
+   *  attributes the decision. Identity comes from the server `user`, never the client. */
+  req?: Partial<RequestContext>
+}
+
+export interface SubmitReviewResult {
+  decision: ReviewDecision
+  documentId: string
+}
+
+/** A block to assemble into a `blocks` layout via {@link Kernel.composePage}. */
+export interface ComposeBlock {
+  /** Must match a `BlockDef.slug` available on the target blocks field. */
+  type: string
+  /** Field values for the block; every key must be a field of that block. */
+  data: Record<string, unknown>
+}
+
+export interface ComposePageOptions {
+  collection: string
+  /** The `blocks`-type field to assemble into. Defaults to the collection's single
+   *  blocks field (errors when ambiguous or absent). */
+  field?: string
+  blocks: ComposeBlock[]
+  /** Other top-level fields to set on the created document. */
+  data?: Record<string, unknown>
+  req?: Partial<RequestContext>
 }
 
 export interface VersionDoc extends Row {
@@ -950,6 +1057,18 @@ export interface Kernel {
   updateRole(name: string, def: RoleDef, opts?: RoleMutationOptions): Promise<RoleDoc>
   /** Remove a role from `_roles` and the live store. Throws if RBAC is disabled. */
   deleteRole(name: string, opts?: RoleMutationOptions): Promise<{ name: string }>
+  /** List agent-authored drafts awaiting human review (derived; respects the
+   *  reviewer's read access). Returns `{ docs: [], count: 0 }` when review is disabled. */
+  findReviewQueue(opts?: FindReviewQueueOptions): Promise<{ docs: ReviewQueueItem[]; count: number }>
+  /** Decide on an agent-authored draft. `approve` publishes it through the existing
+   *  publish gate (a reviewer lacking publish access is rejected); `request_changes`
+   *  keeps it a draft and records the note. Both decisions persist to `_reviews` and
+   *  are audited. */
+  submitReview(opts: SubmitReviewOptions): Promise<SubmitReviewResult>
+  /** Assemble a `blocks` page layout from a validated spec and create it through the
+   *  normal `create()` path (agent draft-only brake + field scope + access all apply),
+   *  so it lands in the review queue. Rejects unknown block types / fields. */
+  composePage<T extends Doc = Doc>(opts: ComposePageOptions): Promise<T>
   migrate(): Promise<void>
   destroy(): Promise<void>
 }
