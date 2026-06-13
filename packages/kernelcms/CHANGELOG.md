@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.21.0
+
+### Minor Changes
+
+- **Automatic schema.org JSON-LD — content that search engines and AI parse with explicit semantics.** Structured data is how Google rich results, and increasingly AI answer engines, _understand_ your content. KernelCMS generates valid schema.org JSON-LD straight from your typed model — completing the discoverability trio with semantic search and llms.txt/GEO.
+  - **Map a collection to a schema.org type.** `structuredData: { collections: [{ slug: 'articles', type: 'Article', urlPattern: '/blog/:slug' }] }`. With no explicit `mapping`, smart defaults do the work: your title → `name`/`headline`, rich-text body → `articleBody` (+ a `description`), publish/updated dates → `datePublished`/`dateModified`, an author relationship → `author`, an image field → `image`. Override any property with an explicit `mapping`.
+  - **Generate or embed it.** `kernel.jsonLd({ collection, id })` returns the JSON-LD object (`{ '@context': 'https://schema.org', '@type': 'Article', '@id': <canonical url>, … }`); `kernel.jsonLdScript({ collection, id })` returns the ready-to-embed `<script type="application/ld+json">…</script>`. Over REST: `GET /api/:collection/:id/jsonld` (`application/ld+json`).
+  - **Safe by construction.** Generation goes through the access-checked read path — a draft, private, or read-denied document or field is never emitted (public callers get only published, publicly-readable content). The `<script>` embedding HTML-escapes content so it can't break out of the tag (no JSON-LD XSS), and `@id`/`image` URLs are injection-safe (no `javascript:`/`data:`/traversal). Red-teamed exhaustively — **Risk: LOW** — verified by a live harness and a Playwright end-to-end test.
+
+  Opt-in via `structuredData`; fully backward-compatible.
+
 ## 0.20.0
 
 ### Minor Changes
