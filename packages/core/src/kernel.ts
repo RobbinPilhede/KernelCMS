@@ -8,6 +8,9 @@ import type {
   ChangesOptions,
   ChangesResult,
   Doc,
+  DuplicatePairResult,
+  FindDuplicatesOptions,
+  RelatedContentOptions,
   PurgeFeedOptions,
   PurgeFeedResult,
   GraphEdge,
@@ -50,7 +53,15 @@ import { cacheTags as computeCacheTags, computePurge, purgeTagsForEvent } from '
 import { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
 import { WORKFLOW_JOB_TASK } from './config'
 import { attachSearch } from './search'
-import { attachSemantic, reciprocalRankFusion } from './vector'
+import { attachSemantic, enrichedEmbeddingText, reciprocalRankFusion } from './vector'
+import {
+  clampPairLimit,
+  clampThreshold,
+  filterReadablePairs,
+  findDuplicatePairs,
+  MAX_DEDUP_DOCS,
+  MAX_CANDIDATE_PAIRS,
+} from './content-intel'
 import { applyPlugins } from './plugins'
 import { evalAccess } from './access'
 import { ROLES_TABLE, cloneRoleDef } from './rbac'
@@ -755,6 +766,75 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
       )
       emitRetrieval(opts.collection, query, docs)
       return { docs }
+    },
+    async relatedContent<T extends Doc = Doc>(opts: RelatedContentOptions): Promise<{ docs: T[] }> {
+      const { embeddings, vector } = sanitized
+      if (!embeddings || !vector) {
+        throw new Error('Related content requires `config.embeddings` (and a vector store).')
+      }
+      const fields = sanitized.semanticFields[opts.collection]
+      const collection = sanitized.collectionsBySlug[opts.collection]
+      if (!fields || !collection) {
+        throw new Error(`Collection "${opts.collection}" does not have semantic search enabled.`)
+      }
+      if (typeof opts.id !== 'string' || opts.id.length === 0) {
+        throw new BadRequestError('relatedContent requires a document id.')
+      }
+      const limit = clampLimit(opts.limit)
+      const filter = validateVectorFilter(sanitized, opts.collection, opts.filter)
+      // The seed must itself be readable by the caller — otherwise we neither embed nor
+      // return anything (a forbidden/missing seed yields no related docs, never a leak).
+      const seed = await loadAccessChecked<T>(ops, opts.collection, [opts.id], 1, opts)
+      if (seed.length === 0) return { docs: [] }
+      // Re-embed the seed's CURRENT content (always fresh — no stale stored vector) using
+      // the same enriched-text + embed path as index-on-write. embedQuery converts any
+      // provider error into a generic one (the embed closure may hold an API key).
+      const text = enrichedEmbeddingText(collection, fields, seed[0] as Doc)
+      const vec = await embedQuery(embeddings.embed, text)
+      if (!vec) return { docs: [] }
+      // Over-fetch: +1 covers dropping the seed, ×4 covers access filtering on load.
+      const { hits } = await vector.query({
+        collection: opts.collection,
+        vector: vec,
+        limit: (limit + 1) * 4,
+        filter,
+      })
+      const ids = hits.map((h) => h.id).filter((id) => id !== opts.id)
+      const docs = await loadAccessChecked<T>(ops, opts.collection, ids, limit, opts)
+      return { docs }
+    },
+    async findDuplicates(opts: FindDuplicatesOptions): Promise<{ pairs: DuplicatePairResult[] }> {
+      const { embeddings, vector } = sanitized
+      if (!embeddings || !vector) {
+        throw new Error('Duplicate detection requires `config.embeddings` (and a vector store).')
+      }
+      if (!sanitized.semanticFields[opts.collection] || !sanitized.collectionsBySlug[opts.collection]) {
+        throw new Error(`Collection "${opts.collection}" does not have semantic search enabled.`)
+      }
+      const threshold = clampThreshold(opts.threshold)
+      const pairLimit = clampPairLimit(opts.limit)
+      // Pull a BOUNDED snapshot of the collection's vectors (cap MAX_DEDUP_DOCS) — the
+      // O(n²) scan below is bounded by this cap, not by the (unbounded) collection size.
+      const entries = await vector.list({ collection: opts.collection, limit: MAX_DEDUP_DOCS })
+      // Over-fetch candidate pairs (cap MAX_CANDIDATE_PAIRS) so dropping pairs that touch
+      // an unreadable doc can't starve the result — readable pairs ranked below the limit
+      // still surface. The final slice to `pairLimit` happens AFTER the access filter.
+      const candidates = findDuplicatePairs(entries, threshold, MAX_CANDIDATE_PAIRS)
+      if (candidates.length === 0) return { pairs: [] }
+      // Access-check every id that appears in a candidate pair through the read path, then
+      // keep only pairs whose BOTH ids are readable. A pair touching a doc the caller can't
+      // read is dropped entirely, so dedup never reveals hidden content or its id.
+      const ids = new Set<string>()
+      for (const p of candidates) {
+        ids.add(p.a)
+        ids.add(p.b)
+      }
+      const idList = [...ids]
+      const loaded = await loadAccessChecked<Doc>(ops, opts.collection, idList, idList.length, opts)
+      const readable = new Set(loaded.map((d) => String(d.id)))
+      // Filter to pairs the caller can fully read, THEN slice to the requested limit.
+      const pairs = filterReadablePairs(candidates, readable).slice(0, pairLimit)
+      return { pairs }
     },
     find: ops.find,
     findByID: ops.findByID,

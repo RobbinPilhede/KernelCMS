@@ -298,6 +298,17 @@ export interface VectorResult {
   hits: VectorHit[]
 }
 
+/** One stored vector returned by {@link VectorAdapter.list} — the id, its (normalized)
+ *  vector, and the scalar metadata it was upserted with. Used by content-intelligence
+ *  pairwise duplicate detection, which needs every vector in a collection (not a
+ *  query-ranked slice). NEVER exposed to an untrusted caller: the ops that consume it
+ *  access-check the resulting document ids before returning anything. */
+export interface VectorEntry {
+  id: string
+  vector: number[]
+  metadata: Record<string, string | number | boolean | null>
+}
+
 /**
  * A per-collection vector store backing semantic + hybrid search. KernelCMS keeps
  * it in sync by embedding a document's metadata-enriched text on write (when the
@@ -334,6 +345,14 @@ export interface VectorAdapter extends Adapter {
   }): Promise<VectorResult>
   /** Remove a document's vector. */
   remove(args: { collection: string; id: string }): Promise<void>
+  /** Return a BOUNDED snapshot of every stored vector in a collection (id + vector +
+   *  metadata), capped at `limit` entries. Backs pairwise near-duplicate detection,
+   *  which compares each document against every other (an O(n²) scan core caps via
+   *  `limit`). This is INTERNAL: it exposes raw vectors, so it is never reachable from
+   *  an HTTP boundary — the content-intelligence ops that call it access-check every
+   *  document id before returning a result. A SQL-backed adapter implements it as
+   *  `SELECT id, embedding, metadata FROM … WHERE collection = $1 LIMIT $2`. */
+  list(args: { collection: string; limit: number }): Promise<VectorEntry[]>
   /** Drop the store for one collection, or everything when no slug is given. */
   clear(collection?: string): Promise<void>
 }

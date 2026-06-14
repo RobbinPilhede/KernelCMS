@@ -10,7 +10,7 @@
  * indexed here is derived server-side from the full document; only the RETURNED
  * documents are access-checked (the embeddings themselves are never exposed).
  */
-import type { AdapterContext, Logger, VectorAdapter, VectorResult } from '@kernel/db'
+import type { AdapterContext, Logger, VectorAdapter, VectorEntry, VectorResult } from '@kernel/db'
 import type { CollectionConfig, Doc, EmbedFn } from './types'
 import { effectiveFields, fieldLabel } from './fields'
 import { extractSearchText } from './search'
@@ -114,6 +114,20 @@ export function memoryVector(): VectorAdapter {
       }
       scored.sort((a, b) => b.score - a.score)
       return { hits: scored.slice(0, k) }
+    },
+    async list({ collection, limit }): Promise<VectorEntry[]> {
+      const m = store.get(collection)
+      if (!m || m.size === 0) return []
+      // Bounded snapshot: cap the number of entries materialized so a huge collection
+      // can't be pulled into memory wholesale (core also caps the dedup scan). The
+      // vectors are returned as defensive copies so a caller can't mutate the store.
+      const cap = Math.max(0, Math.floor(limit))
+      const out: VectorEntry[] = []
+      for (const [id, entry] of m) {
+        if (out.length >= cap) break
+        out.push({ id, vector: entry.vector.slice(), metadata: { ...entry.metadata } })
+      }
+      return out
     },
     async remove({ collection, id }): Promise<void> {
       store.get(collection)?.delete(id)

@@ -71,6 +71,15 @@ the cutting-edge RAG technique — straight from the relationships you already m
 Every node is loaded through the same access-checked read path, and a node the caller
 can't read (and the edge to it) is simply omitted.
 
+And those embeddings power **content intelligence** beyond search. `kernel.relatedContent(...)`
+returns the documents semantically most like a given one — built-in "more like this" for
+internal-linking and recommendations — and `kernel.findDuplicates(...)` surfaces
+near-duplicate / redundant pairs for content-quality and dedupe cleanups, straight from the
+vectors you already index. Both run through the **same access-checked read path**: a related
+or duplicate result never surfaces (or even implies the existence of) a document the caller
+can't read, a duplicate pair touching a hidden doc is dropped whole, and the dedup scan is
+bounded — an admin operation, not a hot path.
+
 And the same content engine is **AI-discoverable**. Opt into `discoverability` and KernelCMS
 serves `llms.txt`, a full-text corpus, retrieval-ready content chunks, and per-document
 GEO markdown with provenance-backed citations — so answer engines (ChatGPT, Claude,
@@ -670,6 +679,48 @@ path. A node the caller can't read is dropped **and the edge to it is omitted**,
 relationship's very existence never leaks; read-denied fields never appear in a `label` or
 `context`. The bounds (`depth`, `maxNodes`, fan-out, de-dupe) make traversal DoS-safe.
 This is retrieval only — see the [knowledge graph guide](docs/knowledge-graph.md).
+
+### Content intelligence (related content & near-duplicate detection)
+
+The same embeddings that power semantic search also power **content intelligence**:
+"more like this" recommendations and automatic near-duplicate detection, straight from
+the vectors you already index. Both **require `embeddings`** + a vector store (the
+semantic-search setup) — they build on it.
+
+- **Related content (more-like-this).** `kernel.relatedContent({ collection, id, limit?,
+  filter?, req })` → `{ docs }` re-embeds a seed document from its current content and
+  returns the others most semantically similar to it (the seed itself excluded). Great for
+  internal-linking and "you might also like". `limit` and `filter` behave exactly as in
+  `semanticSearch`. REST: `GET /api/:collection/:id/related?limit=`.
+- **Near-duplicate detection.** `kernel.findDuplicates({ collection, threshold?, limit?,
+  req })` → `{ pairs: Array<{ a, b, score }> }` returns pairs of documents whose
+  embeddings are at least `threshold` cosine-similar (default `0.9`, clamped to `[0, 1]`)
+  — for content-QA and dedupe cleanups. Similarity is computed over the last-indexed
+  content within a **bounded scan** (caps the docs scanned and pairs returned — an admin
+  operation, not a hot path). REST: `GET /api/_admin/duplicates?collection=&threshold=&limit=`
+  (**admin/editor-gated**).
+
+```ts
+// Local API — documents most like this one, access-checked:
+const { docs } = await kernel.relatedContent({ collection: 'posts', id, limit: 5, req })
+
+// Near-duplicate pairs across a collection (admin operation, bounded scan):
+const { pairs } = await kernel.findDuplicates({ collection: 'posts', threshold: 0.92, req })
+```
+
+```bash
+curl "http://localhost:3000/api/posts/<id>/related?limit=5"
+curl "http://localhost:3000/api/_admin/duplicates?collection=posts&threshold=0.92&limit=50"  # admin/editor-gated
+```
+
+**The access & bounds guarantee:** every result goes through the **same access-checked
+read path** — a related or duplicate result never surfaces (or implies the existence of)
+a document the caller can't read. A duplicate **pair is returned only when the caller can
+read both documents**, so a pair touching a hidden doc is dropped whole — it never reveals
+a hidden doc's id or existence. `threshold` is clamped to `[0, 1]`, `limit` is clamped, and
+`filter` is validated to real columns (no injection); the dedup scan is bounded; and the
+embedding provider's key and text never leak. Red-teamed to Risk LOW. See the
+[content intelligence guide](docs/content-intelligence.md).
 
 ### Real-time change feed (CDC & SSE)
 

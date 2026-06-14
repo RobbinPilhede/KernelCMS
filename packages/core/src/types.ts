@@ -1476,6 +1476,34 @@ export interface HybridSearchOptions extends OperationBase {
   limit?: number
 }
 
+export interface RelatedContentOptions extends OperationBase {
+  collection: string
+  /** The seed document. Its current content is re-embedded and the store is queried for
+   *  the nearest neighbours; the seed itself is always excluded from the results. */
+  id: string
+  /** Max related documents to return (after access filtering + self-exclusion). Default 25. */
+  limit?: number
+  /** Exact-match scalar metadata pre-filter passed to the vector store. Keys are validated
+   *  against the collection's fields (unknown / prototype-pollution keys are rejected). */
+  filter?: Record<string, string | number | boolean | null>
+}
+
+export interface FindDuplicatesOptions extends OperationBase {
+  collection: string
+  /** Cosine-similarity threshold a pair must meet to count as a near-duplicate. Clamped to
+   *  [0, 1]; default 0.9. Raising it toward 1 returns only ever-closer matches. */
+  threshold?: number
+  /** Max pairs to return, highest similarity first. Clamped to [1, 100]; default 100. */
+  limit?: number
+}
+
+/** One near-duplicate pair: two readable document ids and their cosine similarity. */
+export interface DuplicatePairResult {
+  a: string
+  b: string
+  score: number
+}
+
 export interface ProcessScheduledOptions {
   /** "Now" reference for which scheduled publishes are due. Defaults to current time. */
   now?: string | Date | number
@@ -2465,6 +2493,19 @@ export interface Kernel {
    *  top ids. Falls back gracefully to whichever signal is available (full-text only
    *  when no embeddings; semantic only when no full-text fields). */
   hybridSearch<T extends Doc = Doc>(opts: HybridSearchOptions): Promise<{ docs: T[] }>
+  /** Related content (more-like-this): re-embed a seed document's current content, find
+   *  its nearest neighbours in the vector store, drop the seed itself, then load each hit
+   *  through the access-checked read path (most-similar first). A related doc the caller
+   *  can't read is dropped — never leaked; an unreadable/missing seed yields `{ docs: [] }`.
+   *  Requires `config.embeddings` and a collection with `search: { semantic: true }`. */
+  relatedContent<T extends Doc = Doc>(opts: RelatedContentOptions): Promise<{ docs: T[] }>
+  /** Near-duplicate detection: compare every pair of documents in a collection (a bounded
+   *  O(n²) scan over the stored embeddings) and return the pairs whose cosine similarity is
+   *  ≥ `threshold`, highest first. A pair is returned ONLY when the caller can read BOTH
+   *  documents — a pair touching an unreadable doc is dropped, so it cannot reveal hidden
+   *  content or ids. The scan is capped (see `MAX_DEDUP_DOCS`) against O(n²) DoS. Requires
+   *  `config.embeddings` and a collection with `search: { semantic: true }`. */
+  findDuplicates(opts: FindDuplicatesOptions): Promise<{ pairs: DuplicatePairResult[] }>
   /** The durable, access-filtered change feed (CDC pull). Returns metadata-only
    *  {@link ChangeEvent}s with `seq > since` (optionally for one collection), dropping any
    *  event the caller cannot read — for a non-delete event, the document is re-fetched

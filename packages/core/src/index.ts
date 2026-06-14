@@ -236,6 +236,7 @@ export type {
   SearchResult,
   VectorAdapter,
   VectorAdapterFactory,
+  VectorEntry,
   VectorHit,
   VectorResult,
 } from '@kernel/db'

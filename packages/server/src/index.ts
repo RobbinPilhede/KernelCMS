@@ -748,6 +748,27 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       return json(result)
     }
 
+    // GET /_admin/duplicates?collection=&threshold=&limit= -> near-duplicate detection: the
+    // pairs of documents in a collection whose embeddings are ≥ `threshold` cosine similar.
+    // REVIEWER-gated (admin OR editor; never an agent), a content-quality tool. Core access-
+    // checks BOTH ids of every pair with this reviewer's principal, so a pair touching a doc
+    // they can't read is dropped — it can't be used to infer hidden content/ids. `threshold`
+    // is clamped to [0,1] and the O(n²) scan is bounded in core.
+    if (segments[1] === 'duplicates' && segments.length === 2 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Duplicate detection requires an admin or editor role.')
+      const q = url.searchParams
+      const collection = q.get('collection')
+      if (!collection) throw new BadRequestError('A `collection` query parameter is required.')
+      const result = await kernel.findDuplicates({
+        collection,
+        ...(toNum(q.get('threshold')) !== undefined ? { threshold: toNum(q.get('threshold')) } : {}),
+        ...(toNum(q.get('limit')) !== undefined ? { limit: toNum(q.get('limit')) } : {}),
+        req: { user },
+      })
+      return json(result)
+    }
+
     // /_admin/roles -> manage runtime-editable RBAC roles. ADMIN-ONLY (same gate as
     // /_admin/audit): the future role-builder UI calls these. GET lists, POST creates,
     // PATCH /:name replaces, DELETE /:name removes. Each mutation persists to `_roles`
@@ -1563,6 +1584,18 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
         maxNodes: toNum(url.searchParams.get('maxNodes')),
         req: base.req,
         overrideAccess: base.overrideAccess,
+      })
+      return json(result)
+    }
+    // GET /:collection/:id/related?limit= -> related content (more-like-this): re-embed the
+    // seed and return its nearest neighbours, access-checked with the REQUEST principal so a
+    // related doc the caller can't read never appears (and an unreadable seed yields []).
+    if (segments[2] === 'related' && method === 'GET') {
+      const result = await kernel.relatedContent({
+        collection,
+        id,
+        limit: toNum(url.searchParams.get('limit')),
+        ...base,
       })
       return json(result)
     }
