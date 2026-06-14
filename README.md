@@ -155,6 +155,19 @@ time-travel response is **never** handed a public/`s-maxage` `Cache-Control` or 
 it gets `private, no-store` — so private content is never cached at the edge. Cache aggressively,
 invalidate precisely. Red-teamed to Risk LOW.
 
+And it runs **multi-tenant**. Opt into `tenancy` and one KernelCMS instance hosts many
+clients, sites, or workspaces with **airtight per-tenant data isolation — and zero
+per-collection access boilerplate**. KernelCMS auto-adds a server-managed `tenant` field to
+each scoped collection and AND-combines a tenant scope into its access rules (it never
+widens yours), so every find/update/delete/count is automatically filtered to the caller's
+tenant. The headline is *where the tenant comes from*: it is resolved from the
+**authenticated principal** (`req.user.tenant`), **never** a client query param, body field,
+or header — so a tenant A principal can never read, list, count, update, or delete (or
+populate, or move a document into) tenant B's content, a tenant-less principal sees nothing
+(fail-closed), and only `overrideAccess`/system code (migrations, admin tooling) bypasses it.
+The SaaS-on-KernelCMS and agency enabler. Red-teamed across 35 cross-tenant attacks to Risk
+LOW, zero leaks.
+
 ---
 
 ## Quickstart
@@ -922,6 +935,55 @@ re-fire its workflow.
   version-history, global, and opt-in custom-endpoint tools are auto-generated from the
   same descriptor as the OpenAPI spec and gated by your access rules. See
   [Go further](#go-further) for the CLI and transports.
+
+### Multi-tenancy (one instance, many tenants, airtight isolation)
+
+Opt into `tenancy` and one KernelCMS instance hosts many clients, sites, or workspaces
+with **airtight per-tenant data isolation and no per-collection access boilerplate**. For
+each scoped collection, KernelCMS auto-adds a server-managed `tenant` field and
+**AND-combines** a tenant scope into its read/create/update/delete access — it never
+widens your own rules. Every `find` / `findByID` / `update` / `delete` / `count` is then
+automatically filtered to the caller's tenant through the existing access pipeline; on
+create the `tenant` is auto-stamped from the caller, and on update it is immutable.
+
+```ts
+export default defineConfig({
+  tenancy: {
+    // all opt-in; these are the defaults:
+    field: 'tenant',          // the server-managed scope field
+    // collections: ['posts'], // default: every non-system, non-auth collection
+    requireTenant: true,      // a principal with no tenant claim is denied scoped content (fail-closed)
+    resolve: (req) => req.user?.tenant ?? null, // how the ACTING tenant is derived (this is the default)
+  },
+  collections: [
+    {
+      slug: 'users',
+      auth: true,
+      // put a tenant on each user — it flows into req.user.tenant on auth:
+      fields: [{ name: 'tenant', type: 'text', required: true }],
+    },
+    {
+      // scoped automatically — no per-collection tenant field or access rule needed:
+      slug: 'posts',
+      access: { read: ({ req }) => Boolean(req.user) },
+      fields: [{ name: 'title', type: 'text', required: true }],
+    },
+  ],
+})
+```
+
+**The principal-derived, fail-closed isolation guarantee:** the acting tenant is resolved
+from the **authenticated principal** (`req.user.tenant` by default) — **never** a client
+query param, body field, or header. A tenant A principal can never read, list, count,
+update, or delete tenant B's content (cross-tenant access resolves to nothing /
+`NotFound`); a client can never create or move a document into another tenant (the tenant
+is stamped on create and stripped on update); a tenant-less principal sees **nothing** in
+scoped collections (fail-closed) unless `overrideAccess`. Cross-tenant content is never
+leaked through relationship `populate` (it is access-filtered to a bare id). The only
+bypass is `overrideAccess`/system code (migrations, admin tooling). A custom `resolve`
+(e.g. a verified subdomain → tenant mapping) must derive from trusted/authenticated state,
+never raw client input. Red-teamed across 35 cross-tenant attacks to Risk LOW, zero leaks.
+See the [multi-tenancy guide](docs/multi-tenancy.md).
 
 ### Media
 

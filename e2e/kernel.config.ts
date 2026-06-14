@@ -53,6 +53,8 @@ export default defineConfig({
       ],
     },
   ],
+  // Multi-tenancy: auto-scope the `notes` collection by the caller's `user.tenant`.
+  tenancy: { field: 'tenant', collections: ['notes'] },
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content analytics: capture views/searches/AI-retrievals → aggregate insights (no PII).
@@ -102,7 +104,20 @@ export default defineConfig({
             update: ({ req }) => Boolean(req.user?.roles?.includes('admin')),
           },
         },
+        // The tenant claim — flows into req.user.tenant on auth and scopes `notes`.
+        { name: 'tenant', type: 'text' },
       ],
+    },
+    {
+      // Tenant-scoped: each tenant only ever sees/touches their own notes.
+      slug: 'notes',
+      access: {
+        read: () => true,
+        create: ({ req }) => Boolean(req.user),
+        update: ({ req }) => Boolean(req.user),
+        delete: ({ req }) => Boolean(req.user),
+      },
+      fields: [{ name: 'body', type: 'text' }],
     },
     {
       slug: 'pages',

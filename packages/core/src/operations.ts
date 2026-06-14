@@ -132,6 +132,7 @@ import { evalAccess, isAllowed, asWhere } from './access'
 import { bucketVariant, fnv1a32 } from './personalization'
 import { JOBS_SLUG } from './config'
 import { ROLES_TABLE, cloneRoleDef, assertValidRoleDef } from './rbac'
+import { resolveTenant } from './tenancy'
 import { matchesWhere, mergeWhere, parseSort } from './query'
 import {
   AUDIT_TABLE,
@@ -542,6 +543,46 @@ export function createOperations(ctx: OperationCtx) {
     const global = config.globalsBySlug[slug]
     if (!global) throw new BadRequestError(`Unknown global "${slug}".`)
     return global
+  }
+
+  /** Whether a collection is tenant-scoped under the active tenancy config. */
+  function isTenantScoped(collection: CollectionConfig): boolean {
+    return config.tenancy.enabled && config.tenancy.collections.includes(collection.slug)
+  }
+
+  /**
+   * Auto-stamp the tenant field on a NON-override create into a scoped collection. The
+   * tenant is resolved from the trusted PRINCIPAL (never the client body): any client-
+   * supplied tenant value in `data` is OVERWRITTEN with the principal's tenant, so a tenant
+   * A caller can never create a doc under tenant B. A tenant-less principal under
+   * `requireTenant` is rejected (it has no tenant to own the row). Mutates `data` in place.
+   * No-op under `overrideAccess` (trusted server seeds the tenant directly) and for
+   * non-scoped collections. The injected create access scope already denies a cross-tenant
+   * create; this guarantees the STORED value is the acting tenant regardless.
+   */
+  function stampTenantOnCreate(collection: CollectionConfig, data: Row, req: RequestContext): void {
+    if (!isTenantScoped(collection)) return
+    const tenant = resolveTenant(config.tenancy, req)
+    if (tenant === null) {
+      if (config.tenancy.requireTenant) {
+        throw new ForbiddenError('A tenant is required to create this document.')
+      }
+      return
+    }
+    data[config.tenancy.field] = tenant
+  }
+
+  /**
+   * Anti-spoof on update: the tenant field is server-managed, so a NON-override client can
+   * never change which tenant owns a document (no "move a doc across tenants"). Strip the
+   * field from the incoming write so the stored value is preserved as-is. The injected
+   * update access scope already prevents touching another tenant's row at all; this stops a
+   * same-tenant caller from re-stamping their own row to a different tenant. No-op under
+   * `overrideAccess` and for non-scoped collections.
+   */
+  function stripTenantOnUpdate(collection: CollectionConfig, data: Row): void {
+    if (!isTenantScoped(collection)) return
+    delete data[config.tenancy.field]
   }
 
   function rowToDoc(collection: CollectionConfig, row: Row, req: RequestContext): Doc {
@@ -2423,6 +2464,9 @@ export function createOperations(ctx: OperationCtx) {
 
     const incoming: Row = { ...opts.data }
     if (!override) await applyFieldAccess(collection.fields, incoming, 'create', req)
+    // Multi-tenancy: auto-stamp the owning tenant from the trusted principal, overriding any
+    // client-supplied value (anti-spoof). Rejects a tenant-less create under requireTenant.
+    if (!override) stampTenantOnCreate(collection, incoming, req)
     let data = applyDefaults(collection.fields, incoming)
     data = await prepareAuthInput(collection, data, 'create', override)
     // Email verification: seed a hashed, expiring token for a fresh signup. Trusted
@@ -2647,6 +2691,9 @@ export function createOperations(ctx: OperationCtx) {
 
     const filtered: Row = { ...opts.data }
     if (!override) await applyFieldAccess(collection.fields, filtered, 'update', req, opts.id)
+    // Multi-tenancy: the tenant field is server-managed — a client can never move a doc to
+    // another tenant. Strip any incoming value so the stored tenant is preserved.
+    if (!override) stripTenantOnUpdate(collection, filtered)
     const input = await prepareAuthInput(collection, filtered, 'update', override)
     // A password change invalidates existing sessions (bump the session epoch).
     if (collection.auth && typeof input.hash === 'string') {

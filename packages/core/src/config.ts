@@ -19,6 +19,7 @@ import type {
   SanitizedLocalization,
   SanitizedRealtime,
   SanitizedSigningConfig,
+  SanitizedTenancy,
   WorkflowDefinition,
 } from './types'
 import { clampRetain } from './realtime'
@@ -27,6 +28,7 @@ import { effectiveFields, joinFields } from './fields'
 import { FORBIDDEN_SEGMENT_KEYS } from './personalization'
 import { consoleEmail, type EmailAdapter } from './email'
 import { createRbacStore, injectRbac } from './rbac'
+import { injectTenancy, sanitizeTenancy } from './tenancy'
 import { resolveVersions } from './schema'
 import { memoryVector } from './vector'
 
@@ -178,6 +180,28 @@ function withUploadFields(collection: CollectionConfig): CollectionConfig {
   const existing = new Set(effectiveFields(collection.fields).map((f) => f.name))
   const injected = sys.filter((f) => !existing.has(f.name))
   return { ...collection, fields: [...collection.fields, ...injected] }
+}
+
+/**
+ * Inject the server-managed tenant column into a tenant-scoped collection. The field is a
+ * plain indexed text column (auto-stamped on create, immutable to clients on update). It is
+ * write-locked at the field level to an unsatisfiable rule on BOTH create and update so a
+ * client can never set or change it through the field-access path — the engine stamps it
+ * directly via `overrideAccess`-free server logic in `create`/`update`. Read is left open
+ * so the admin can display the owning tenant. Skipped when the field already exists.
+ */
+function withTenantField(collection: CollectionConfig, field: string): CollectionConfig {
+  if (effectiveFields(collection.fields).some((f) => f.name === field)) return collection
+  const tenantField: AnyField = {
+    name: field,
+    type: 'text',
+    index: true,
+    admin: { readOnly: true },
+    // Server-managed: a client write of the tenant field is always denied at the field
+    // level (defence in depth — the create/update ops also stamp/strip it directly).
+    access: { create: () => false, update: () => false },
+  }
+  return { ...collection, fields: [...collection.fields, tenantField] }
 }
 
 /** Reserved slug for the injected background-jobs queue collection. */
@@ -827,13 +851,24 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     baseCollections.push(cacheCollection())
   }
   const hasOAuth = Boolean(config.oauth && config.oauth.length > 0)
-  const collections = baseCollections.map((c) => {
+  let collections = baseCollections.map((c) => {
     let out = c
     if (out.auth) out = withAuthFields(out, hasOAuth)
     if (out.upload) out = withUploadFields(out)
     return out
   })
   const globals = config.globals ?? []
+
+  // Multi-tenancy (opt-in). Resolve the scoped collections + tenant field FIRST (validated
+  // against the real, non-system collection list), then inject the server-managed tenant
+  // column into each scoped collection — like rbac/audit add columns. The access scope is
+  // injected later (after rbac), so the tenant scope wraps the collection's own rule.
+  const SYSTEM_SLUGS = new Set([JOBS_SLUG, CACHE_SLUG])
+  const tenancy = sanitizeTenancy(config.tenancy, collections, SYSTEM_SLUGS, assert)
+  if (tenancy.enabled) {
+    const scoped = new Set(tenancy.collections)
+    collections = collections.map((c) => (scoped.has(c.slug) ? withTenantField(c, tenancy.field) : c))
+  }
 
   // Report every naming violation (slugs + field names, collections + globals) in
   // one shot, with field paths — instead of failing one error at a time.
@@ -996,6 +1031,12 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     injectRbac(rbacStore, collections, globals, (c) => resolveVersions(c.versions).drafts)
   }
 
+  // Multi-tenancy access scope. Injected AFTER rbac so the tenant scope wraps whatever rule
+  // governs the collection (explicit OR rbac-injected OR the secure-by-default base),
+  // AND-combining a per-tenant `Where` so the existing find/findByID/update/delete/count
+  // pipeline auto-filters by tenant. No-op when tenancy is disabled.
+  injectTenancy(tenancy, collections)
+
   const agents = sanitizeAgents(config.agents)
   const collectionSlugSet = new Set(collections.map((c) => c.slug))
   const workflows = sanitizeWorkflows(config.workflows, agents, collectionSlugSet, new Set([JOBS_SLUG, CACHE_SLUG]))
@@ -1049,6 +1090,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     analytics: sanitizeAnalytics(config.analytics),
     rbac: { enabled: rbacEnabled },
     rbacStore,
+    tenancy,
     review: sanitizeReview(config.review, agents.length > 0),
     releases: sanitizeReleases(config.releases),
     signing: sanitizeSigning(config.signing),

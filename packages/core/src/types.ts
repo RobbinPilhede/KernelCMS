@@ -41,6 +41,10 @@ export interface AuthUser {
   /** Restrict which top-level fields this principal may write (see {@link FieldScope}).
    *  Enforced in `applyFieldAccess` BEFORE per-field rules. Humans omit this. */
   fieldScope?: FieldScope
+  /** The principal's tenant (a TRUSTED claim, set only by the auth layer). When
+   *  `config.tenancy` is enabled, this scopes every read/write to the tenant's own rows.
+   *  Never derive this from a client query/body/header. See {@link TenancyConfig}. */
+  tenant?: string
   [key: string]: unknown
 }
 
@@ -127,6 +131,45 @@ export interface RbacConfig {
  *  next access check with no recompile. */
 export interface RbacStore {
   roles: Record<string, RoleDef>
+}
+
+// ---------------------------------------------------------------------------
+// Multi-tenancy (automatic per-tenant content scoping)
+// ---------------------------------------------------------------------------
+
+/** Opt-in multi-tenancy. When set, every scoped collection is automatically constrained
+ *  so a principal only ever sees/touches rows of ITS OWN tenant — with zero per-collection
+ *  boilerplate. The acting tenant is read from the AUTHENTICATED PRINCIPAL (a trusted
+ *  claim), never from a client-supplied param. Omit to disable (nothing changes). */
+export interface TenancyConfig {
+  /** The server-managed tenant column added to each scoped collection. Default `'tenant'`.
+   *  Must be a safe snake_case identifier. */
+  field?: string
+  /** Which collections are tenant-scoped. Omit to scope ALL non-system, non-auth
+   *  collections; or give an explicit allow-list of slugs. */
+  collections?: string[]
+  /** Fail-closed default (true): a principal with NO resolved tenant is denied all scoped
+   *  content (sees nothing) and cannot create scoped docs. Set false to let a tenant-less
+   *  principal fall through to the collection's own (un-tenant-scoped) access. */
+  requireTenant?: boolean
+  /** Extract the acting tenant from the request. DEFAULT: the trusted `req.user.tenant`
+   *  claim. MUST derive only from the authenticated principal — never a client query/body/
+   *  header — or cross-tenant isolation is broken. Return null/undefined for "no tenant". */
+  resolve?: (req: RequestContext) => string | null | undefined
+}
+
+/** Resolved multi-tenancy settings (after sanitize). `enabled:false` when unconfigured
+ *  (no tenant field, no access wrapping — fully backward-compatible). */
+export interface SanitizedTenancy {
+  enabled: boolean
+  /** The server-managed tenant column name. */
+  field: string
+  /** Resolved slugs of the tenant-scoped collections. */
+  collections: string[]
+  /** Fail-closed: deny scoped content to a tenant-less principal. */
+  requireTenant: boolean
+  /** Principal-derived tenant resolver (defaults to `req.user.tenant`). */
+  resolve: (req: RequestContext) => string | null | undefined
 }
 
 /** A role as returned by the Local/HTTP API: its name plus its definition. */
@@ -1048,6 +1091,13 @@ export interface KernelConfig {
    *  effect immediately. An `admin: true` role (or the literal 'admin' role) gets full
    *  access. Explicit `collection.access[op]` rules always win over RBAC. */
   rbac?: RbacConfig
+  /** Automatic multi-tenancy. OPT-IN: when omitted, nothing changes. When set, scoped
+   *  collections gain a server-managed tenant column and an injected access scope so a
+   *  principal only ever reads/writes its OWN tenant's rows — no per-collection boilerplate.
+   *  The acting tenant is read from the trusted authenticated principal (`req.user.tenant`
+   *  by default), never a client param. `overrideAccess` (migrations/admin tooling) bypasses
+   *  tenancy. See {@link TenancyConfig}. */
+  tenancy?: TenancyConfig
   /** Human approval inbox for agent-authored content. Provisions a `_reviews` system
    *  table and enables `findReviewQueue`/`submitReview`. Enabled by default when
    *  `agents` are configured (the inbox is for agent drafts); set `true` to force it
@@ -1334,6 +1384,10 @@ export interface SanitizedConfig {
    *  `_roles` table at boot, and captured by reference by the injected access rules.
    *  Empty (`{ roles: {} }`) and unused when RBAC is disabled. */
   rbacStore: RbacStore
+  /** Resolved multi-tenancy settings. `enabled` provisions a server-managed tenant column
+   *  on each scoped collection and injects a per-tenant access scope; disabled by default
+   *  (opt-in), in which case nothing is scoped. */
+  tenancy: SanitizedTenancy
   /** Resolved content-credential signing material. `enabled:false` disables signing
    *  (no `_credentials` writes; verify reports no credential). Key material is
    *  server-only and never serialized into output. */

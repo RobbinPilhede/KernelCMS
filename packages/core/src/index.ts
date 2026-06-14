@@ -40,6 +40,7 @@ export type { CodegenInput } from './codegen'
 export { parseSort, mergeWhere, matchesWhere } from './query'
 export { evalAccess, isAllowed, asWhere } from './access'
 export { rbacAllows, createRbacStore, injectRbac, assertValidRoleDef, ROLES_TABLE } from './rbac'
+export { sanitizeTenancy, injectTenancy, resolveTenant } from './tenancy'
 export {
   humanize,
   fieldLabel,
