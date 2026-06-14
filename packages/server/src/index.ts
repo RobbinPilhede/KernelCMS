@@ -26,6 +26,7 @@ import {
   pkceVerifier,
   pkceChallenge,
   cacheTagsHeader,
+  verifyAssetUrl,
   KERNEL_VERSION,
 } from '@kernel/core'
 import type { AgentConfig, AuditDoc, Doc, EndpointConfig, RequestContext, RoleDef } from '@kernel/core'
@@ -387,7 +388,8 @@ const INLINE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'i
 async function maybeServeFile(kernel: Kernel, options: HandlerOptions, request: Request): Promise<Response | null> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return null
   const adapters = collectAdapters(kernel)
-  const { pathname } = new URL(request.url)
+  const url = new URL(request.url)
+  const { pathname } = url
   for (const adapter of adapters) {
     const base = adapter.servePath
     if (!base || base.includes('://')) continue
@@ -400,20 +402,33 @@ async function maybeServeFile(kernel: Kernel, options: HandlerOptions, request: 
     const collection = kernel.config.collectionsBySlug[slug]
     if (!collection?.upload) return new Response('Not found', { status: 404 })
 
-    // Re-check access by resolving the document with the caller's identity.
-    const { user, overrideAccess } = await resolveAuth(kernel, options, request)
     let allowed = false
-    try {
-      const found = await kernel.find({
-        collection: slug,
-        where: { storage_key: { equals: key } },
-        limit: 1,
-        overrideAccess,
-        req: { user },
-      })
-      allowed = found.docs.length > 0
-    } catch {
-      allowed = false
+    const exp = url.searchParams.get('exp')
+    const sig = url.searchParams.get('sig')
+    if (sig != null || exp != null) {
+      // A signed capability URL: the HMAC over (key, exp) IS the authorization — no session
+      // needed. A present-but-invalid or expired signature is rejected (no silent fallback).
+      const secret = kernel.config.secret
+      const { valid, expired } = secret
+        ? verifyAssetUrl(secret, key, exp, sig, Math.floor(Date.now() / 1000))
+        : { valid: false, expired: false }
+      if (!valid || expired) return new Response('Forbidden', { status: 403 })
+      allowed = true
+    } else {
+      // No signature: re-check access by resolving the document with the caller's identity.
+      const { user, overrideAccess } = await resolveAuth(kernel, options, request)
+      try {
+        const found = await kernel.find({
+          collection: slug,
+          where: { storage_key: { equals: key } },
+          limit: 1,
+          overrideAccess,
+          req: { user },
+        })
+        allowed = found.docs.length > 0
+      } catch {
+        allowed = false
+      }
     }
     if (!allowed) return new Response('Not found', { status: 404 })
 
@@ -1714,6 +1729,18 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       const doc = await kernel.restoreAsOf({ collection, id, asOf, ...base })
       if (!doc) throw new NotFoundError()
       return withConcurrencyHeaders(json(doc), doc)
+    }
+    // GET /:collection/:id/signed-url?ttl= -> mint a signed, expiring capability URL for an
+    // upload document's file. Access-checked as the caller (they must be able to read the doc).
+    if (segments[2] === 'signed-url' && method === 'GET') {
+      const ttlRaw = toNum(url.searchParams.get('ttl'))
+      const signedUrl = await kernel.signedAssetUrl({
+        collection,
+        id,
+        ...(ttlRaw !== undefined ? { ttl: ttlRaw } : {}),
+        ...base,
+      })
+      return json({ url: signedUrl })
     }
     if (segments[2] === 'publish' && method === 'POST') {
       const doc = await kernel.publish({ collection, id, ...base })

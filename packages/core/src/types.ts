@@ -1787,6 +1787,14 @@ export interface UploadDocOptions extends OperationBase {
   data?: Row
 }
 
+export interface SignedAssetUrlOptions extends OperationBase {
+  collection: string
+  /** The upload document whose file to link. The caller must be able to READ it. */
+  id: string
+  /** Link lifetime in seconds (clamped 1 .. 7 days; default 1 hour). */
+  ttl?: number
+}
+
 export interface UpdateOptions extends OperationBase {
   collection: string
   id: string
@@ -3017,6 +3025,12 @@ export interface Kernel {
   findByID<T extends Doc = Doc>(opts: FindByIDOptions): Promise<T | null>
   create<T extends Doc = Doc>(opts: CreateOptions): Promise<T>
   upload<T extends Doc = Doc>(opts: UploadDocOptions): Promise<T>
+  /** Mint a signed, expiring capability URL for an upload document's file. The caller must be
+   *  able to READ the document. The returned URL carries an `exp` + HMAC `sig` (keyed by
+   *  `config.secret`) and fetches the file without a session until it expires — for emailing a
+   *  private download, embedding a time-limited image, or handing a file to a service. When the
+   *  storage adapter mints its own signed URLs (e.g. S3 presign), that is returned instead. */
+  signedAssetUrl(opts: SignedAssetUrlOptions): Promise<string>
   update<T extends Doc = Doc>(opts: UpdateOptions): Promise<T | null>
   /** Write several locales of one document in a single call, merging each locale's
    *  partial into the stored per-locale maps (untouched locales preserved). Runs the

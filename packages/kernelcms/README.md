@@ -1383,6 +1383,45 @@ See the [multi-tenancy guide](docs/multi-tenancy.md).
   `@kernel/image-sharp` adapter. Install it only if you need it; the core stays
   native-dependency-free.
 
+### Signed asset URLs (capability links for private files)
+
+Private media is served with a **per-request access check** against the caller's session. A
+**signed asset URL** is the bearer-capability alternative: a single-file link that anyone holding
+it can fetch **without a session**, until it expires — to email a private download, embed a
+time-limited image, or hand a file to a service that can't authenticate.
+
+```ts
+const url = await kernel.signedAssetUrl({
+  collection: 'media',
+  id: file.id,
+  ttl: 600,   // seconds; optional, default 3600 (1h), clamped to 1s..7days
+  req,        // the caller — must be able to READ this document
+})
+// → "/files/2026/06/invoice.pdf?exp=1750000000&sig=9f86d0818..."
+```
+
+Minting is access-checked, so you can never sign a link to a file you can't read. The same is
+exposed over REST:
+
+```bash
+# mint a 10-minute link as the authenticated caller
+curl "http://localhost:3000/api/media/$FILE_ID/signed-url?ttl=600" \
+  -H "Authorization: Bearer $TOKEN"
+# → {"url":"/files/2026/06/invoice.pdf?exp=1750000000&sig=9f86d0818..."}
+
+# a receiver just GETs the URL — no session needed, until it expires (then 403)
+curl "http://localhost:3000/files/2026/06/invoice.pdf?exp=1750000000&sig=9f86d0818..."
+```
+
+**A signed link can't be forged or extended:** the `sig` is an HMAC keyed by `config.secret`
+(server-only, never in the URL) over **both** the storage key **and** the expiry, compared
+constant-time — swap the file or bump `exp` and the file route answers `403`. It expires (`ttl`
+clamped to 7 days), minting requires read access, and when the storage adapter mints its own
+signed URLs (e.g. S3 presign) that is delegated to instead. A link is a capability — shareable
+within its TTL and not individually revocable, so use a short TTL for sensitive files (rotate
+`config.secret` to invalidate every outstanding link at once). Red-teamed to Risk LOW. See
+[Signed asset URLs](docs/signed-asset-urls.md).
+
 ### Admin panel
 
 - A React app on TanStack Router, Query, and Table.

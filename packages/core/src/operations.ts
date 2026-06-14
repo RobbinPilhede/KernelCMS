@@ -123,6 +123,7 @@ import type {
   RetryWebhookDeliveryOptions,
   WebhookSummary,
   WebhookEvent,
+  SignedAssetUrlOptions,
 } from './types'
 import {
   BadRequestError,
@@ -164,6 +165,7 @@ import { resolveTenant } from './tenancy'
 import { mergeTemplateData, TemplateMergeError } from './templates'
 import { matchesWhere, mergeWhere, parseSort } from './query'
 import { deliverWebhook, type WebhookPayload } from './webhooks'
+import { signAssetUrl } from './asset-urls'
 import {
   AUDIT_TABLE,
   COMMENTS_TABLE,
@@ -212,6 +214,9 @@ const DEFAULT_LIMIT = 25
 /** Max `and`/`or` nesting depth a `where` filter may have — bounds the validator's
  *  recursion so a pathologically deep client filter can't exhaust the stack. */
 const MAX_WHERE_DEPTH = 30
+/** Signed-asset-URL lifetime: default 1 hour, max 7 days. */
+const DEFAULT_ASSET_TTL = 3600
+const MAX_ASSET_TTL = 7 * 24 * 3600
 // Bounds on agent/MCP-reachable review surfaces (storage-growth guard, not auth).
 const MAX_COMPOSE_BLOCKS = 200
 const MAX_REVIEW_NOTE = 10_000
@@ -3737,7 +3742,9 @@ export function createOperations(ctx: OperationCtx) {
     for (const hook of collection.hooks?.beforeDelete ?? []) await hook({ req, id: opts.id })
     const removed = await db.delete({ collection: collection.slug, id: opts.id })
     const doc = removed ? rowToDoc(collection, removed, req) : null
-    if (doc) {
+    if (doc && removed) {
+      // Sweep the upload binary so bytes never outlive the row (and no signed link survives it).
+      await sweepUploadBinary(collection, removed)
       await recordAudit({
         action: 'delete',
         collection: collection.slug,
@@ -4464,6 +4471,29 @@ export function createOperations(ctx: OperationCtx) {
     return adapter
   }
 
+  /** Best-effort sweep of an upload document's binary (and image derivatives) when the
+   *  document is deleted, so bytes never outlive the row — and a signed capability URL can't
+   *  keep serving a "deleted" file until its TTL. Never throws into the delete path. */
+  async function sweepUploadBinary(collection: CollectionConfig, row: Row): Promise<void> {
+    if (!collection.upload) return
+    const key = typeof row.storage_key === 'string' ? row.storage_key : ''
+    if (!key) return
+    const uploadCfg: UploadConfig = collection.upload === true ? {} : collection.upload
+    let store: StorageAdapter
+    try {
+      store = resolveStore(uploadCfg)
+    } catch {
+      return
+    }
+    const filename = typeof row.filename === 'string' ? row.filename : key
+    const keys = [key]
+    for (const def of uploadCfg.imageSizes ?? []) {
+      const ext = def.format ? extForFormat(def.format) : fileExtension(filename)
+      keys.push(derivativeKey(key, def.name, ext))
+    }
+    await Promise.all(keys.map((k) => store.delete(k).catch(() => {})))
+  }
+
   function mimeAllowed(declared: string, patterns: string[] | undefined): boolean {
     if (!patterns || patterns.length === 0) return true
     return patterns.some((p) => {
@@ -4585,6 +4615,46 @@ export function createOperations(ctx: OperationCtx) {
       await Promise.all(derivativeKeys.map((k) => store.delete(k).catch(() => {})))
       throw err
     }
+  }
+
+  /** Mint a signed, expiring capability URL for an upload document's file. Access-checked:
+   *  the caller must be able to READ the document (you can't link a file you can't see). The
+   *  link carries `?exp=<unix>&sig=<hmac>` keyed by `config.secret`, covering the storage key
+   *  and the expiry so neither can be swapped/extended. When the adapter mints its own signed
+   *  URLs (S3 presign), that is delegated to instead. */
+  async function signedAssetUrl(opts: SignedAssetUrlOptions): Promise<string> {
+    const collection = collectionOrThrow(opts.collection)
+    if (!collection.upload) {
+      throw new BadRequestError(`Collection "${opts.collection}" is not an upload collection.`)
+    }
+    // Authorize via the normal access-checked read; only mint for a readable document.
+    const doc = await findByID({
+      collection: collection.slug,
+      id: opts.id,
+      req: opts.req,
+      overrideAccess: opts.overrideAccess,
+    })
+    if (!doc) throw new NotFoundError()
+    // Read the storage key from the raw row (it may be field-access-hidden on the doc).
+    const raw = await db.findByID({ collection: collection.slug, id: opts.id })
+    const key = raw && typeof raw.storage_key === 'string' ? raw.storage_key : ''
+    if (!key) throw new NotFoundError()
+
+    const uploadCfg: UploadConfig = collection.upload === true ? {} : collection.upload
+    const store = resolveStore(uploadCfg)
+    const servePath = store.servePath
+    const ttl = Math.min(Math.max(Math.trunc(opts.ttl ?? DEFAULT_ASSET_TTL), 1), MAX_ASSET_TTL)
+    // An adapter that serves over an absolute base (e.g. S3) mints its own signed URL.
+    if (!servePath || servePath.includes('://')) {
+      return store.url(key, { ttl })
+    }
+    if (!config.secret) {
+      throw new BadRequestError('Signed asset URLs require `config.secret`.')
+    }
+    const exp = Math.floor(Date.now() / 1000) + ttl
+    const sig = signAssetUrl(config.secret, key, exp)
+    const path = key.split('/').map(encodeURIComponent).join('/')
+    return `${servePath}/${path}?exp=${exp}&sig=${sig}`
   }
 
   function fileExtension(name: string): string {
@@ -5645,6 +5715,7 @@ export function createOperations(ctx: OperationCtx) {
     create,
     assignVariant,
     upload,
+    signedAssetUrl,
     find,
     findByID,
     update,

@@ -119,6 +119,14 @@ export default defineConfig({
       fields: [{ name: 'alt', type: 'text', required: true }],
     },
     {
+      // Private uploads: only an authenticated user can read the doc (and thus the file via
+      // the session path). A signed capability URL fetches it without a session until expiry.
+      slug: 'secure_media',
+      access: { read: ({ req }) => Boolean(req.user), create: ({ req }) => Boolean(req.user) },
+      upload: { mimeTypes: ['image/*', 'text/*'], maxFileSize: 5 * 1024 * 1024 },
+      fields: [{ name: 'alt', type: 'text' }],
+    },
+    {
       slug: 'users',
       auth: true,
       access: { read: () => true, create: () => true, update: () => true },

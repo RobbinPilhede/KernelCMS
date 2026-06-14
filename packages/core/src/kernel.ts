@@ -861,6 +861,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     findByID: ops.findByID,
     create: ops.create,
     upload: ops.upload,
+    signedAssetUrl: ops.signedAssetUrl,
     update: ops.update,
     updateLocales: ops.updateLocales,
     translationStatus: ops.translationStatus,
