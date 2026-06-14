@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.30.0
+
+### Minor Changes
+
+- **Content lifecycle: set an expiry, and content retires itself.** The inverse of scheduled publish — when content's time is up, KernelCMS automatically unpublishes, archives, or deletes it. For embargoes, time-limited campaigns, retention/compliance, and auto-clearing stale content.
+  - **Declare an expiry policy.** `lifecycle: { collections: [{ slug: 'promos', expireField: 'expire_at', onExpire: 'unpublish' }] }`. Editors set the `expire_at` date on a document; when it passes, the next drain retires it: `unpublish` → back to draft; `archive` → draft plus a server-managed `_archived_at` timestamp (hidden from public reads, distinguishable from a plain draft); `delete` → removed.
+  - **Cron-driven.** `kernel.processContentLifecycle()` is a trusted maintenance operation — run it from a cron via `kernel jobs:run` (which now also drains scheduled publishes and releases) or the dedicated `kernel lifecycle:run`. Every retirement is audited (`content.expire`), bounded, and resilient per-document.
+  - **Safe by construction.** The drain is operator/cron-only — there's no HTTP trigger, so it can run with full authority without an exposed attack surface. The `_archived_at` marker is server-managed and **client-immutable**: a normal user can never fake-archive or un-archive content through the API. The `expireField` is an ordinary editor field (you can only set an expiry on content you can write), and the drain only ever touches the collections you configure. Red-teamed — **Risk: LOW** — verified by a live harness and a Playwright end-to-end test (proving `_archived_at` immutability over HTTP).
+
+  Opt-in via `lifecycle`; you own the date-field schema; fully backward-compatible.
+
 ## 0.29.0
 
 ### Minor Changes
