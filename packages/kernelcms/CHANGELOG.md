@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.28.0
+
+### Minor Changes
+
+- **AI-assisted translation: auto-fill every locale, with the provider of your choice.** Your localized content already stores a value per locale — now KernelCMS can translate the gaps for you, while keeping access control, strict-mode validation, and your human-review workflow fully intact.
+  - **Bring any translator.** Set `translation: { translate }` with a function that maps source strings → translations (DeepL, OpenAI, Google, a local model — your choice; no hard dependency). `kernel.translateDocument({ collection, id, from: 'en', to: 'es' })` reads the document's English values for its localized fields, translates them, and writes them into Spanish — merging, never clobbering other locales, and filling only the missing values by default (`overwrite: true` replaces). `kernel.translateMissing({ collection, to: 'fr' })` bulk-fills every document missing a locale. Over REST: `POST /api/:collection/:id/translate` and `POST /api/_admin/translate-missing`.
+  - **It's a normal, governed write.** Translation goes through the standard access-checked update — the caller must be able to update the document, strict-mode per-locale required validation still applies, and the agent draft-only brake still holds, so a translation **never** auto-publishes. It pairs with the localization strict mode and the translation-status dashboard: see what's missing, fill it, review it.
+  - **Safe with external providers.** The provider may hold an API key — its text and errors never leak (a failure surfaces a generic message; source and translated text are never logged), a provider failure can never leave a document half-translated (no partial write), `from`/`to` must be configured locales (prototype-pollution-guarded), a read-denied localized field is never sent to the provider, and per-field input is bounded. Red-teamed exhaustively — **Risk: LOW** — verified by a live harness and a Playwright end-to-end test driving the translate endpoint over HTTP.
+
+  Opt-in via `translation` (needs `localization`); fully backward-compatible.
+
 ## 0.27.0
 
 ### Minor Changes
