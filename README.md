@@ -131,6 +131,19 @@ as a direct publish (a caller can only publish a release whose every member they
 publish directly; an agent can never publish one), so coordinated launches stay as safe
 as a single edit. This is the practical heart of *content environments*.
 
+And content starts from **templates**. Opt into `templates` and you define reusable
+document skeletons — a landing-page block `layout`, a standard article shell, a pre-filled
+campaign brief — and give editors a "New from template" that pre-fills a fresh document in
+one click. `kernel.createFromTemplate({ template, data })` deep-merges the template's
+defaults with the caller's overrides (caller wins) and creates the document through the
+**normal create pipeline** — so it is exactly a create: access control, field scope,
+validation, and the agent draft-only brake all apply. A caller who can't create can't use
+a template, an agent's result is still a draft (a template setting `_status: 'published'`
+never publishes for an agent), out-of-scope fields are stripped, the caller's override is
+prototype-pollution-guarded, the frozen config can't be mutated between instantiations, and
+a template only ever creates into its configured collection. Skeletons, not a side door.
+Red-teamed to Risk LOW.
+
 And content has a **lifecycle**. The inverse of scheduled publish: opt into `lifecycle`,
 put an expiry date on a published document, and when it passes the next cron drain
 automatically retires it — `unpublish` back to draft, `archive` (draft + a server-managed
@@ -401,6 +414,71 @@ that is persisted at write time and therefore sortable and filterable:
   deterministic A/B `experiments`. See [Personalization & A/B](#personalization--ab-experiments).
 - Conditional fields, default values, validation, read-only and hidden flags, and
   sidebar field positioning.
+
+### Content templates (reusable document skeletons)
+
+Opt into `templates` and you define reusable **document skeletons** — a landing-page
+block `layout`, a standard article shell, a pre-filled brief — that editors instantiate
+with one "New from template" click. Each template names a target `collection` and a `data`
+object of default field values (which may include a blocks `layout`, default text, etc.).
+It is opt-in; `data` is **deep-frozen**, so one instantiation can never mutate the defaults
+for the next.
+
+```ts
+export default defineConfig({
+  templates: [
+    {
+      slug: 'landing_page',        // unique, snake_case
+      collection: 'pages',
+      name: 'Landing page',
+      description: 'Hero + feature grid + CTA',
+      data: {
+        title: 'Untitled landing page',
+        layout: [
+          { blockType: 'hero', heading: 'Headline goes here' },
+          { blockType: 'features', items: [] },
+          { blockType: 'cta', label: 'Get started', href: '/signup' },
+        ],
+      },
+    },
+  ],
+  collections: [/* … a `pages` collection with a blocks `layout` field … */],
+})
+```
+
+- **List templates (metadata only).** `kernel.listTemplates({ collection? })` returns
+  template **metadata** — `slug`, `collection`, `name`, `description`, optionally filtered
+  by collection — and **never** the raw `data`. REST: `GET /api/_admin/templates?collection=`
+  (admin/editor-gated).
+- **Create from a template.** `kernel.createFromTemplate({ template, data?, req })` looks up
+  the template, **deep-merges** its defaults with the caller's `data` (the caller wins on
+  conflicts; nested objects merge), and creates the document through the **normal create
+  pipeline**. Returns the created document. REST: `POST /api/:collection/from-template` with
+  body `{ template, data? }`, created as the request principal — and the route's
+  `:collection` **must match** the template's `collection`.
+
+```ts
+const page = await kernel.createFromTemplate({
+  template: 'landing_page',
+  data: { title: 'Spring launch' }, // overrides the template default; layout is inherited
+  req,
+})
+```
+
+```bash
+curl "http://localhost:3000/api/_admin/templates?collection=pages"             # metadata only
+curl -X POST "http://localhost:3000/api/pages/from-template" \
+  -d '{"template":"landing_page","data":{"title":"Spring launch"}}'            # :collection must match
+```
+
+**The normal-create guarantee:** create-from-template is a create, not a side door. A
+caller who can't create in the collection can't use a template; an agent's result is still
+a **draft** (a template setting `_status: 'published'` never publishes for an agent);
+out-of-scope fields are stripped by field scope; validation runs. The caller's `data`
+override is **prototype-pollution-guarded**, the template's config is **frozen** (one
+instantiation can't change the next), and a template only ever creates into its configured
+collection. Red-teamed to Risk LOW. See the
+[content templates guide](docs/content-templates.md).
 
 ### Data and APIs
 

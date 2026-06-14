@@ -33,6 +33,7 @@ import { FORBIDDEN_SEGMENT_KEYS } from './personalization'
 import { consoleEmail, type EmailAdapter } from './email'
 import { createRbacStore, injectRbac } from './rbac'
 import { injectTenancy, sanitizeTenancy } from './tenancy'
+import { sanitizeTemplates } from './templates'
 import { resolveVersions } from './schema'
 import { memoryVector } from './vector'
 
@@ -1155,6 +1156,10 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     ]
   }
 
+  // Content templates (opt-in): named document skeletons. Validated against real,
+  // non-system collections; `data` deep-cloned + frozen (no prototype-pollution keys).
+  const { templates, templatesBySlug } = sanitizeTemplates(config.templates, collectionsBySlug, SYSTEM_SLUGS, assert)
+
   return {
     serverURL: config.serverURL ?? 'http://localhost:3000',
     db: config.db,
@@ -1191,6 +1196,8 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     workflows,
     discoverability: sanitizeDiscoverability(config, collections, collectionsBySlug),
     structuredData: sanitizeStructuredData(config, collectionsBySlug),
+    templates,
+    templatesBySlug,
     ...(config.search ? { search: config.search } : {}),
     ...(config.embeddings ? { embeddings: config.embeddings } : {}),
     ...(vector ? { vector } : {}),

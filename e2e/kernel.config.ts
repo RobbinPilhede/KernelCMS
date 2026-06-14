@@ -57,6 +57,15 @@ export default defineConfig({
   ],
   // Multi-tenancy: auto-scope the `notes` collection by the caller's `user.tenant`.
   tenancy: { field: 'tenant', collections: ['notes'] },
+  // Content templates: pre-filled document skeletons for a "New from template" flow.
+  templates: [
+    {
+      slug: 'article_starter',
+      collection: 'articles',
+      name: 'Article starter',
+      data: { title: 'Untitled article', summary: 'Start writing…' },
+    },
+  ],
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).

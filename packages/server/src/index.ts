@@ -802,6 +802,22 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       }
     }
 
+    // GET /_admin/templates?collection= -> list the available content templates (named
+    // document skeletons), optionally for one collection. REVIEWER-gated (admin OR editor;
+    // never an agent) — templates are an editorial productivity surface. Metadata only
+    // (slug/collection/name/description); the raw default `data` is never returned. Empty
+    // when no templates are configured. Instantiate one via POST /:collection/from-template.
+    if (segments[1] === 'templates' && segments.length === 2 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Template access requires an admin or editor role.')
+      const collection = url.searchParams.get('collection')
+      const templates = await kernel.listTemplates({
+        ...(collection ? { collection } : {}),
+        req: { user },
+      })
+      return json({ templates })
+    }
+
     // /_admin/reviews -> the agent review inbox. REVIEWER-gated (admin OR editor): a
     // reviewer isn't always an admin, but they must be a trusted human (never an agent).
     // GET lists the queue (optional ?collection=); POST submits a decision. The reviewer
@@ -1439,6 +1455,30 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       ...base,
     })
     return json(result)
+  }
+
+  // POST /:collection/from-template  { template, data? } -> create a document from a named
+  // template. The template's `collection` MUST equal this route's `:collection` (a template
+  // can't be used to create into a different collection). Runs through the NORMAL create
+  // pipeline with the request principal — access, field scope, validation, and the agent
+  // draft-only brake all apply. (Reserved subpath; document ids are UUIDs.)
+  if (segments.length === 2 && segments[1] === 'from-template' && method === 'POST') {
+    const body = await readBody(request)
+    const template = typeof body.template === 'string' ? body.template : ''
+    if (!template) throw new BadRequestError('A `template` slug is required.')
+    // Own-property lookup so an inherited key (`__proto__`/`constructor`) can't resolve to
+    // a truthy prototype member — an unknown slug falls through to core's clean 404.
+    const tmpl = Object.prototype.hasOwnProperty.call(kernel.config.templatesBySlug, template)
+      ? kernel.config.templatesBySlug[template]
+      : undefined
+    // Reject a slug whose template targets a DIFFERENT collection than this route, so the
+    // route's `:collection` is authoritative (a template can't smuggle a cross-collection
+    // create).
+    if (tmpl && tmpl.collection !== collection) {
+      throw new BadRequestError(`Template "${template}" does not belong to collection "${collection}".`)
+    }
+    const data = (body.data ?? undefined) as Row | undefined
+    return json(await kernel.createFromTemplate({ template, ...(data !== undefined ? { data } : {}), ...base }), 201)
   }
 
   // /:collection/:id

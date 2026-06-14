@@ -895,6 +895,8 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     cancelRelease: ops.cancelRelease,
     processScheduledReleases: ops.processScheduledReleases,
     composePage: ops.composePage,
+    listTemplates: ops.listTemplates,
+    createFromTemplate: ops.createFromTemplate,
     acquireLock: ops.acquireLock,
     releaseLock: ops.releaseLock,
     getLock: ops.getLock,

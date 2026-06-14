@@ -55,6 +55,9 @@ import type {
   PresenceKind,
   BulkResult,
   CreateAPIKeyOptions,
+  CreateFromTemplateOptions,
+  ListTemplatesOptions,
+  TemplateSummary,
   ContentLifecycleAction,
   DeleteManyOptions,
   EnqueueOptions,
@@ -138,6 +141,7 @@ import { bucketVariant, fnv1a32 } from './personalization'
 import { JOBS_SLUG } from './config'
 import { ROLES_TABLE, cloneRoleDef, assertValidRoleDef } from './rbac'
 import { resolveTenant } from './tenancy'
+import { mergeTemplateData, TemplateMergeError } from './templates'
 import { matchesWhere, mergeWhere, parseSort } from './query'
 import {
   AUDIT_TABLE,
@@ -1967,6 +1971,79 @@ export function createOperations(ctx: OperationCtx) {
     docData[field.name] = assembled
 
     return create<T>({ collection: opts.collection, data: docData, req: opts.req })
+  }
+
+  // -------------------------------------------------------------------------
+  // Content templates — named document skeletons + create-from-template
+  // -------------------------------------------------------------------------
+
+  /**
+   * List the available content templates as METADATA ONLY (slug/collection/name/description —
+   * never the raw `data` blob), optionally filtered to one collection. Templates are TRUSTED
+   * config skeletons (not stored content), so the list is non-sensitive: it is NOT scoped per
+   * row by the caller's read access (there is no per-document data to leak — instantiating one
+   * still goes through the full create access gate). Empty when no templates are configured.
+   */
+  async function listTemplates(opts: ListTemplatesOptions = {}): Promise<TemplateSummary[]> {
+    return config.templates
+      .filter((t) => (opts.collection ? t.collection === opts.collection : true))
+      .map((t) => ({
+        slug: t.slug,
+        collection: t.collection,
+        ...(t.name !== undefined ? { name: t.name } : {}),
+        ...(t.description !== undefined ? { description: t.description } : {}),
+      }))
+  }
+
+  /**
+   * Instantiate a content template into a fully pre-filled document. Looks the template up by
+   * slug (unknown → a clean BadRequest, no injection via the lookup), deep-merges its TRUSTED
+   * default `data` with the caller's UNTRUSTED `data` override (caller wins; nested objects
+   * deep-merge; the merge is prototype-pollution-guarded), then creates through the NORMAL
+   * `create()` path — NO `overrideAccess`. So the caller needs create access, field scope
+   * strips out-of-scope fields, validation runs, and the agent draft-only brake holds (a
+   * template that sets `_status:'published'` can NEVER let an agent publish). Audited as a
+   * `create` with the template slug in `meta` (the underlying `create` records the row).
+   */
+  async function createFromTemplate<T extends Doc = Doc>(opts: CreateFromTemplateOptions): Promise<T> {
+    if (typeof opts.template !== 'string' || opts.template.length === 0) {
+      throw new BadRequestError('A `template` slug is required.')
+    }
+    // Own-property lookup only: never reach a key inherited from Object.prototype
+    // (e.g. a `template:'constructor'` slug must 404, not resolve to a function).
+    const template = Object.prototype.hasOwnProperty.call(config.templatesBySlug, opts.template)
+      ? config.templatesBySlug[opts.template]
+      : undefined
+    if (!template) throw new NotFoundError(`Unknown template "${opts.template}".`)
+
+    // Merge trusted defaults with the untrusted override (caller wins). A pollution key in
+    // the override is rejected as a clean 400 rather than leaking a 500 / poisoning a proto.
+    let data: Row
+    try {
+      data = mergeTemplateData(template.data, opts.data)
+    } catch (err) {
+      if (err instanceof TemplateMergeError) throw new BadRequestError(err.message)
+      throw err
+    }
+
+    // The NORMAL create — access, field scope, validation, and the agent draft-only brake
+    // all apply (no override). A template can only ever create into ITS OWN collection.
+    const doc = await create<T>({
+      collection: template.collection,
+      data,
+      ...(opts.req ? { req: opts.req } : {}),
+      ...(opts.overrideAccess !== undefined ? { overrideAccess: opts.overrideAccess } : {}),
+    })
+    // Record the template provenance (the create itself is already audited by `create`).
+    await recordAudit({
+      action: 'create',
+      collection: template.collection,
+      documentId: String(doc.id),
+      req: buildReq(opts.req),
+      overrideAccess: opts.overrideAccess ?? false,
+      meta: { template: template.slug },
+    })
+    return doc
   }
 
   async function findVersions(opts: FindVersionsOptions): Promise<PaginatedResult<VersionDoc>> {
@@ -4841,6 +4918,8 @@ export function createOperations(ctx: OperationCtx) {
     cancelRelease,
     processScheduledReleases,
     composePage,
+    listTemplates,
+    createFromTemplate,
     acquireLock,
     releaseLock,
     getLock,

@@ -1170,6 +1170,13 @@ export interface KernelConfig {
    *  collection names a schema.org `type`; field → property mapping is either explicit or
    *  derived from sensible smart defaults. Omit to disable. */
   structuredData?: StructuredDataConfig
+  /** Content templates: named, reusable document skeletons (default field values + a
+   *  starting blocks layout). `kernel.createFromTemplate` instantiates one into a fully
+   *  pre-filled document through the NORMAL access-checked `create` (access, field scope,
+   *  validation, and the agent draft-only brake all apply — a template can never be a
+   *  publish bypass). OPT-IN; omit to disable (no templates, the ops return empty / throw
+   *  cleanly). See {@link ContentTemplateConfig}. */
+  templates?: ContentTemplateConfig[]
 }
 
 /** Per-collection discoverability options. */
@@ -1436,6 +1443,11 @@ export interface SanitizedConfig {
   /** Resolved schema.org structured-data (JSON-LD) settings. `enabled:false` when
    *  unconfigured (the ops then return null / `''`). */
   structuredData: SanitizedStructuredData
+  /** Resolved content templates (named document skeletons), each with deep-cloned + frozen
+   *  `data`. Empty when none configured. */
+  templates: SanitizedTemplate[]
+  /** Slug index into {@link SanitizedConfig.templates} for O(1) lookup. */
+  templatesBySlug: Record<string, SanitizedTemplate>
 }
 
 // ---------------------------------------------------------------------------
@@ -2137,6 +2149,62 @@ export interface ComposePageOptions {
   req?: Partial<RequestContext>
 }
 
+// ---------------------------------------------------------------------------
+// Content templates — named, reusable document skeletons
+//
+// A template is TRUSTED config: a named set of default field values (which may include a
+// blocks `layout`, default text, a default `_status`, …) plus the target collection. A
+// `createFromTemplate` merges the template's defaults with the caller's (untrusted)
+// overrides and creates the document through the NORMAL access-checked `create` — so
+// access, field scope, validation, and the agent draft-only brake all still apply. A
+// template is editorial productivity ("New from template"), never a privilege bypass.
+// ---------------------------------------------------------------------------
+
+/** One content template (config). `slug` is unique snake_case; `collection` must be a real,
+ *  non-system collection; `data` are the default field values for a new document (deep-cloned
+ *  + frozen at sanitize, with no prototype-pollution keys). */
+export interface ContentTemplateConfig {
+  slug: string
+  collection: string
+  name?: string
+  description?: string
+  /** Default field values for a new document. May include a blocks `layout`, default
+   *  text, `_status`, etc. Plain object only; copied keys must be pollution-free. */
+  data: Record<string, unknown>
+}
+
+/** Resolved content template (after sanitize): `data` is deep-cloned + frozen. */
+export interface SanitizedTemplate {
+  slug: string
+  collection: string
+  name?: string
+  description?: string
+  data: Record<string, unknown>
+}
+
+/** Template metadata as returned by {@link Kernel.listTemplates} (no raw `data`). */
+export interface TemplateSummary {
+  slug: string
+  collection: string
+  name?: string
+  description?: string
+}
+
+export interface ListTemplatesOptions {
+  /** Filter to templates that create into this collection. */
+  collection?: string
+  req?: Partial<RequestContext>
+}
+
+export interface CreateFromTemplateOptions extends OperationBase {
+  /** The template slug to instantiate (looked up by slug; unknown → clean error). */
+  template: string
+  /** Caller overrides merged OVER the template defaults (caller wins; deep-merge for
+   *  nested objects). Untrusted: prototype-pollution-guarded, and still subject to the
+   *  normal create field access + validation. */
+  data?: Record<string, unknown>
+}
+
 export interface VersionDoc extends Row {
   id: string
   parent: string
@@ -2790,6 +2858,18 @@ export interface Kernel {
    *  normal `create()` path (agent draft-only brake + field scope + access all apply),
    *  so it lands in the review queue. Rejects unknown block types / fields. */
   composePage<T extends Doc = Doc>(opts: ComposePageOptions): Promise<T>
+  /** List the available content templates (metadata only — slug/collection/name/description,
+   *  never the raw `data`), optionally filtered to one `collection`. Templates are config
+   *  skeletons (not content), so the list is non-sensitive and not access-scoped per row.
+   *  Empty when no templates are configured. */
+  listTemplates(opts?: ListTemplatesOptions): Promise<TemplateSummary[]>
+  /** Instantiate a content template into a fully pre-filled document. Looks up the template
+   *  by slug, deep-merges the template's default `data` with the caller's (untrusted)
+   *  overrides — caller wins, prototype-pollution-guarded — then creates through the NORMAL
+   *  `create()` path, so create access, field scope, validation, and the agent draft-only
+   *  brake all apply (a template that sets `_status:'published'` still can't let an agent
+   *  publish). An unknown slug throws a clean error. */
+  createFromTemplate<T extends Doc = Doc>(opts: CreateFromTemplateOptions): Promise<T>
   /** Acquire (or refresh) an ADVISORY soft lock on a document. Returns `heldBy:'you'`
    *  when you now hold it (no lock, expired, or you already held it — refreshed); returns
    *  `heldBy:'other'` WITHOUT stealing when a different principal holds an unexpired lock.
