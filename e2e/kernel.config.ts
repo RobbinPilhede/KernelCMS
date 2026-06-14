@@ -68,6 +68,8 @@ export default defineConfig({
       data: { title: 'Untitled article', summary: 'Start writing…' },
     },
   ],
+  // Audit log: append-only record of writes — also feeds the per-document activity timeline.
+  audit: true,
   // Editorial comments: threaded review annotations on documents, gated by doc read access.
   comments: true,
   // Saved views / smart collections: named query presets (where+sort) per collection.

@@ -1713,6 +1713,21 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     if (segments[2] === 'history' && method === 'GET') {
       return json(await kernel.history({ collection, id, ...base }))
     }
+    // Activity feed: a merged, time-ordered timeline (versions + comments for any reader;
+    // reviews + audit for reviewers). Gated on the document's read access.
+    if (segments[2] === 'activity' && method === 'GET') {
+      const typesParam = url.searchParams.get('types')
+      const limit = toNum(url.searchParams.get('limit'))
+      return json(
+        await kernel.documentActivity({
+          collection,
+          id,
+          ...(typesParam ? { types: typesParam.split(',') as never } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+          ...base,
+        }),
+      )
+    }
     // Time-machine: field-level diff between two points. `from`/`to` are each a versionId or
     // an ISO timestamp. Both are required; only fields the caller may read appear.
     if (segments[2] === 'diff' && method === 'GET') {

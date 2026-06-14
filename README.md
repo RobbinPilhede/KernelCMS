@@ -658,6 +658,45 @@ doc now can't read its `asOf` state, `history`, or `diff`; a read-denied field n
 appears in an `asOf` doc, in `changedFields`, or in a diff; historical drafts stay hidden
 unless `draft: true`. See the [content time-machine guide](docs/time-machine.md).
 
+### Document activity timeline (one feed, four sources)
+
+`kernel.documentActivity(...)` merges everything that happened to one document — saved
+versions, editorial comments, agent-draft reviews, and audit-log entries — into a single,
+newest-first feed, instead of four panels an editor has to cross-reference. Each `event` is
+`{ type: 'version' | 'comment' | 'review' | 'audit', at, actor, action, data }`. The whole
+feed is gated on the document's **read access**, and the two reviewer-only sources (review +
+audit) are folded in only for an admin/editor principal.
+
+```ts
+const { events, includesReviewerEvents } = await kernel.documentActivity({
+  collection: 'articles',
+  id: article.id,
+  types: ['version', 'comment', 'review', 'audit'], // optional filter; default: all available
+  limit: 100,                                        // default 100, clamped to 500
+  req,                                               // gated on the document's read access
+})
+// includesReviewerEvents === true only for an admin/editor principal
+```
+
+```bash
+curl "http://localhost:3000/api/articles/$ID/activity?types=version,comment&limit=20" \
+  -H "Authorization: Bearer $TOKEN"   # GET /api/:collection/:id/activity?types=&limit=
+```
+
+- **Merges four sources.** version (snapshot `status`/`changedFields`/`autosave`), comment
+  (`body`/`field`/`resolved`), review (agent-draft `decision` + `note`), and audit (`action`/
+  `fields`/`meta`) — newest-first, capped by `limit` (max 500), `types` filters the kinds.
+- **Doc-read-gated as a whole.** Every call checks the document's `access.read` rule and
+  row-scope first; a caller who can't read the document gets Forbidden/NotFound, never an event.
+- **Reviewer-only review + audit.** Those two sources are included only for an admin/editor
+  principal; a non-reviewer gets `includesReviewerEvents: false` and only version + comment.
+
+**The composed-read guarantee:** the timeline is a read-only merge of sources the caller is
+**already** allowed to see — each keeps its own access rules (version events field-strip like
+`history`, comments follow the comment read gate), a source whose feature is off is simply
+absent, and review/audit never surface for a non-reviewer. Red-teamed to Risk LOW. See the
+[document activity timeline guide](docs/activity-timeline.md).
+
 ### Content releases (atomic, schedulable publishing bundles)
 
 Opt into `releases` and you can bundle a set of draft documents into a named **release**

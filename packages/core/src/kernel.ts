@@ -889,6 +889,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     findVersions: ops.findVersions,
     restoreVersion: ops.restoreVersion,
     history: ops.history,
+    documentActivity: ops.documentActivity,
     diffVersions: ops.diffVersions,
     restoreAsOf: ops.restoreAsOf,
     publish: ops.publish,

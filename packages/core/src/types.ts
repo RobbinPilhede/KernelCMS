@@ -1992,6 +1992,47 @@ export interface HistoryEntry {
   changedFields: string[]
 }
 
+// ---------------------------------------------------------------------------
+// Document activity timeline
+//
+// A single, time-ordered feed of everything that happened to one document — version
+// snapshots, editorial comments, review decisions, and audit-log entries — each pulled from
+// its own access-checked source. The whole feed is gated on the document's READ access; the
+// reviewer-only sources (audit, reviews) are included only for a reviewer principal.
+// ---------------------------------------------------------------------------
+
+export type DocumentActivityType = 'version' | 'comment' | 'review' | 'audit'
+
+export interface DocumentActivityEvent {
+  type: DocumentActivityType
+  /** ISO timestamp the event occurred. */
+  at: string
+  /** Who did it (id may be null for a system/unknown actor). */
+  actor: { id: string | null; type: 'user' | 'agent' | 'system' }
+  /** A short machine label: the version status, `'comment'`, the review decision, or the
+   *  audit action. */
+  action: string
+  /** Type-specific detail — e.g. `changedFields`/`versionId` (version), `body`/`field`/
+   *  `resolved` (comment), `note` (review), `fields`/`meta` (audit). */
+  data: Record<string, unknown>
+}
+
+export interface DocumentActivityOptions extends OperationBase {
+  collection: string
+  id: string
+  /** Restrict to these event types (default: all the caller is allowed to see). */
+  types?: DocumentActivityType[]
+  /** Cap the number of events returned, newest-first (default 100, max 500). */
+  limit?: number
+}
+
+export interface DocumentActivityResult {
+  events: DocumentActivityEvent[]
+  /** Whether the caller is a reviewer — i.e. whether the `audit`/`review` events are included
+   *  (a non-reviewer sees only `version`/`comment`). */
+  includesReviewerEvents: boolean
+}
+
 export interface HistoryOptions extends OperationBase {
   collection: string
   id: string
@@ -3107,6 +3148,10 @@ export interface Kernel {
    *  caller must be able to read the document (else Forbidden / empty); read-denied fields
    *  never appear in `changedFields`. Requires `versions` enabled (else BadRequestError). */
   history(opts: HistoryOptions): Promise<HistoryEntry[]>
+  /** A single, time-ordered activity feed for one document — version snapshots + editorial
+   *  comments (for any reader) plus review decisions + audit entries (reviewers only). Gated
+   *  on the document's READ access; each source keeps its own access rules. Newest-first. */
+  documentActivity(opts: DocumentActivityOptions): Promise<DocumentActivityResult>
   /** Field-level diff of one document between two points in time. `from`/`to` may each be
    *  a versionId or an ISO timestamp. Only fields the caller can read appear. Access-checked
    *  exactly like a read. Requires `versions` enabled (else BadRequestError). */

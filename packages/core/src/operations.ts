@@ -124,6 +124,10 @@ import type {
   WebhookSummary,
   WebhookEvent,
   SignedAssetUrlOptions,
+  DocumentActivityOptions,
+  DocumentActivityResult,
+  DocumentActivityEvent,
+  DocumentActivityType,
 } from './types'
 import {
   BadRequestError,
@@ -5698,6 +5702,105 @@ export function createOperations(ctx: OperationCtx) {
     return { documentId: opts.id, collection: collection.slug, chain, createdBy, lastEditedBy, contributors }
   }
 
+  /** A single, time-ordered activity feed for one document. Gated on the document's READ
+   *  access; versions + comments are shown to any reader, while the reviewer-only sources
+   *  (audit, reviews) are added only for a reviewer principal — so the feed never leaks
+   *  audit/review detail to a non-reviewer. */
+  async function documentActivity(opts: DocumentActivityOptions): Promise<DocumentActivityResult> {
+    const collection = collectionOrThrow(opts.collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    // The whole feed is gated on reading the document (throws Forbidden/NotFound — no leak).
+    await assertCanReadDoc(collection, opts.id, req, override)
+
+    const docId = String(opts.id)
+    const isReviewer = override || isReviewerPrincipal(req)
+    const want = (t: DocumentActivityType): boolean => !opts.types || opts.types.includes(t)
+    const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500)
+    const events: DocumentActivityEvent[] = []
+
+    // Versions (any reader; field-stripped + doc-read-gated by `history`).
+    if (want('version') && versionsOf(collection).enabled) {
+      for (const h of await history({
+        collection: collection.slug,
+        id: docId,
+        req: opts.req,
+        overrideAccess: override,
+      })) {
+        events.push({
+          type: 'version',
+          at: h.at,
+          actor: { id: h.by, type: h.byType },
+          action: h.autosave ? 'autosave' : h.status,
+          data: { versionId: h.versionId, status: h.status, autosave: h.autosave, changedFields: h.changedFields },
+        })
+      }
+    }
+
+    // Comments (any reader; doc-read-gated by `listComments`). Include resolved for the feed.
+    if (want('comment') && config.comments.enabled) {
+      for (const c of await listComments({
+        collection: collection.slug,
+        id: docId,
+        includeResolved: true,
+        req: opts.req,
+        overrideAccess: override,
+      })) {
+        events.push({
+          type: 'comment',
+          at: c.createdAt,
+          actor: { id: c.authorId, type: c.authorType },
+          action: 'comment',
+          data: { commentId: c.id, body: c.body, field: c.field, resolved: c.resolved, parentId: c.parentId },
+        })
+      }
+    }
+
+    // Reviews + audit are reviewer-only (admin/editor) — omitted for a non-reviewer.
+    if (isReviewer) {
+      if (want('review') && config.review.enabled) {
+        const reviewRows = await db.find({
+          collection: REVIEWS_TABLE,
+          where: { and: [{ collection: { equals: collection.slug } }, { documentId: { equals: docId } }] },
+          sort: [{ field: 'at', direction: 'desc' }],
+          limit,
+          page: 1,
+        })
+        for (const r of reviewRows.docs) {
+          events.push({
+            type: 'review',
+            at: r.at != null ? String(r.at) : '',
+            actor: {
+              id: r.reviewerId != null ? String(r.reviewerId) : null,
+              type: normalizePrincipalType(r.reviewerType),
+            },
+            action: typeof r.decision === 'string' ? r.decision : 'review',
+            data: { note: r.note != null ? String(r.note) : null },
+          })
+        }
+      }
+      if (want('audit') && config.audit.enabled) {
+        const auditRows = await findAuditLog({
+          where: { and: [{ collection: { equals: collection.slug } }, { documentId: { equals: docId } }] },
+          limit,
+        })
+        for (const a of auditRows.docs) {
+          events.push({
+            type: 'audit',
+            at: a.at,
+            actor: { id: a.principalId, type: a.principalType },
+            action: a.action,
+            data: { fields: a.fields, meta: a.meta },
+          })
+        }
+      }
+    }
+
+    // Newest-first, capped.
+    events.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0))
+    return { events: events.slice(0, limit), includesReviewerEvents: isReviewer }
+  }
+
   async function getContentCredential(opts: GetCredentialOptions): Promise<CredentialDoc | null> {
     const collection = collectionOrThrow(opts.collection)
     const req = buildReq(opts.req)
@@ -5792,6 +5895,7 @@ export function createOperations(ctx: OperationCtx) {
     findVersions,
     restoreVersion,
     history,
+    documentActivity,
     diffVersions,
     restoreAsOf,
     publish,
