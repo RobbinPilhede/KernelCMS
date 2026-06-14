@@ -936,6 +936,49 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     // who can read its collection). The acting/owner identity is the server-resolved `user`
     // ONLY — the client body never names the owner. Applying a view runs the normal
     // access-checked find, so it can never widen visibility. 404 when views are disabled.
+    // /_admin/subscriptions -> saved-search alerts. AUTH-REQUIRED; owner-scoped (you manage
+    // only your OWN subscriptions). The owner identity is the server-resolved `user`.
+    if (segments[1] === 'subscriptions') {
+      if (!kernel.config.subscriptions.enabled) {
+        return json({ error: { code: 'NOT_FOUND', message: 'Saved-search alerts are not enabled.' } }, 404)
+      }
+      if (!user) throw new UnauthorizedError()
+      const q = url.searchParams
+      const asWhere = (v: unknown): Where | undefined =>
+        v != null && typeof v === 'object' && !Array.isArray(v) ? (v as Where) : undefined
+
+      // GET /_admin/subscriptions?collection= , POST /_admin/subscriptions
+      if (segments.length === 2) {
+        if (method === 'GET') {
+          const collection = q.get('collection')
+          return json({
+            subscriptions: await kernel.listSubscriptions({ ...(collection ? { collection } : {}), req: { user } }),
+          })
+        }
+        if (method === 'POST') {
+          const body = await readBody(request)
+          const where = asWhere(body.where)
+          return json(
+            await kernel.createSubscription({
+              collection: String(body.collection ?? ''),
+              webhook: String(body.webhook ?? ''),
+              ...(where ? { where } : {}),
+              req: { user },
+            }),
+            201,
+          )
+        }
+        return methodNotAllowed()
+      }
+      // DELETE /_admin/subscriptions/:id
+      if (segments.length === 3 && method === 'DELETE') {
+        return json(
+          await kernel.deleteSubscription({ subscriptionId: decodeURIComponent(segments[2]!), req: { user } }),
+        )
+      }
+      return methodNotAllowed()
+    }
+
     if (segments[1] === 'views') {
       if (!kernel.config.views.enabled) {
         return json({ error: { code: 'NOT_FOUND', message: 'Saved views are not enabled.' } }, 404)

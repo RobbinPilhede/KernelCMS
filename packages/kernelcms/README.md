@@ -1120,6 +1120,55 @@ returned by the admin surface or logged. Durable delivery is **at-least-once** w
 retries — dedupe on `id` + `event` + `timestamp`. The `_webhook_deliveries` outbox is unreachable
 via generic CRUD, and management is admin-only. See the [webhooks guide](docs/webhooks.md).
 
+### Saved-search alerts (content subscriptions)
+
+Set `subscriptions: true` (it builds on `realtime` + `webhooks`) and an editor can save a
+**standing query** — a collection plus an optional `where` — and get **notified when content
+matching it changes**: "ping me when a `posts` row in my section is updated". A cron drain
+reads the change feed since each subscription's cursor and re-evaluates every change **as the
+subscription's owner** (an access-checked document reload + `where` match) before delivering a
+webhook — so an alert can only ever fire for content the owner could already read.
+
+```ts
+export default defineConfig({
+  subscriptions: true,           // off by default; requires realtime + webhooks
+  realtime: { enabled: true },   // alerts read the change feed
+  webhooks: [
+    // collections: [] → this webhook NEVER fires on content writes; only the
+    // subscription drain enqueues to it (no double-send).
+    { slug: 'alerts', url: 'https://hooks.example.com/alerts', collections: [] },
+  ],
+  collections: [/* … */],
+})
+```
+
+- **Subscribe.** `kernel.createSubscription({ collection, where?, webhook, req })` saves a
+  standing query (owner from `req`, `webhook` is a configured slug, `lastSeq` set to the
+  current cursor so it alerts on **future** changes only); `kernel.listSubscriptions({ collection?, req })`
+  lists your own, `kernel.deleteSubscription({ subscriptionId, req })` removes one (owner/admin).
+- **The cron drain.** `kernel.processSubscriptions({ limit? })` → `{ scanned, delivered }`
+  reads the change feed since each cursor, reloads + re-matches each change **as the owner**,
+  and enqueues a delivery to the subscription's webhook through the durable outbox
+  (retry/backoff). Wired into `kernel jobs:run`, or standalone `kernel subscriptions:run`.
+- **Owner-scoped REST.** `GET /api/_admin/subscriptions?collection=` (your own),
+  `POST /api/_admin/subscriptions { collection, where?, webhook }`,
+  `DELETE /api/_admin/subscriptions/:id` (owner/admin) — auth required, owner from the token.
+
+```bash
+curl -X POST "http://localhost:3000/api/_admin/subscriptions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"collection":"posts","where":{"section":{"equals":"sports"}},"webhook":"alerts"}'
+```
+
+**The access-scoped (re-match as owner) guarantee:** every candidate change is re-evaluated
+through an **access-checked reload as the subscription's owner** plus a `where` match before any
+alert fires — an alert can **never leak content (or a field) the owner can't read**, and a
+missing claim fails **closed** (it under-notifies, never over-notifies). The owner comes from
+the principal (a forged `ownerId` is ignored), `lastSeq` means future-only (no backfill), deletes
+don't fire (no live row to match), the payload is field-stripped + encrypted-field-redacted like a
+normal read, `_subscriptions` is unreachable via generic CRUD, and create/delete are audited.
+Red-teamed to Risk LOW. See the [saved-search alerts guide](docs/saved-search-alerts.md).
+
 ### Edge delivery & CDN caching (cache tags + change-driven purge)
 
 Opt into `edge` and KernelCMS turns public reads into edge-cacheable responses with

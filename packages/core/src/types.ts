@@ -794,6 +794,62 @@ export interface WebhookSummary {
 }
 
 // ---------------------------------------------------------------------------
+// Saved-search alerts / content subscriptions
+//
+// A subscription is a standing query (collection + optional `where`) owned by a principal.
+// The cron drain reads the change feed since the subscription's cursor, RE-EVALUATES each
+// change AS THE OWNER (an access-checked reload + `where` match), and enqueues a webhook
+// delivery for matches — so an alert never fires for content the owner can't read.
+// ---------------------------------------------------------------------------
+
+export interface SubscriptionDoc extends Row {
+  id: string
+  /** The principal that owns the subscription (recorded from the trusted principal). */
+  ownerId: string | null
+  /** The owner's principal kind — used to rebuild the owner's request context on the drain. */
+  ownerType: 'user' | 'agent' | 'system'
+  collection: string
+  /** The standing filter, or null for "any change to the collection". */
+  where: Where | null
+  /** The configured webhook slug matches are delivered to. */
+  webhook: string
+  active: boolean
+  /** The highest change-feed `seq` this subscription has already processed (its cursor). */
+  lastSeq: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateSubscriptionOptions extends OperationBase {
+  collection: string
+  /** The standing filter (validated against the collection's filterable fields). */
+  where?: Where
+  /** The configured webhook slug to deliver matches to (must exist in `config.webhooks`). */
+  webhook: string
+}
+
+export interface ListSubscriptionsOptions extends OperationBase {
+  /** Narrow to one collection. */
+  collection?: string
+}
+
+export interface DeleteSubscriptionOptions extends OperationBase {
+  subscriptionId: string
+}
+
+export interface ProcessSubscriptionsOptions {
+  /** Max change-feed rows to scan per subscription this drain (default 200, clamped 1–1000). */
+  limit?: number
+}
+
+export interface ProcessSubscriptionsResult {
+  /** Active subscriptions scanned this drain. */
+  scanned: number
+  /** Webhook deliveries enqueued for matched changes. */
+  delivered: number
+}
+
+// ---------------------------------------------------------------------------
 // Real-time content: change feed (CDC, pull) + in-process bus + SSE (push)
 //
 // Every content change on a non-system collection emits a METADATA-ONLY event —
@@ -1244,6 +1300,14 @@ export interface KernelConfig {
    *  the stored `where`/`sort` are re-validated on every save AND apply — so a saved view can
    *  only ever NARROW results within the caller's access, never bypass it. */
   views?: boolean
+  /** Saved-search alerts / content subscriptions: an editor subscribes to a query (a
+   *  collection + optional `where`) and is notified — via a configured webhook — when content
+   *  matching it changes. Provisions a `_subscriptions` system table and enables the
+   *  subscription ops. OPT-IN, disabled by default. Requires `realtime` (the change feed it
+   *  reads) and a configured `webhooks` target. A subscription is owned by its creator; the
+   *  match is re-evaluated AS THE OWNER (access-checked doc reload + `where` match), so an
+   *  alert never fires for content the owner can't read. */
+  subscriptions?: boolean
   /** Content releases: stage a coordinated set of draft documents and publish them as
    *  one unit, optionally on a schedule. Provisions `_releases` + `_release_items` system
    *  tables and enables the release ops (`createRelease`/`publishRelease`/…) + the
@@ -1548,6 +1612,9 @@ export interface SanitizedConfig {
   /** Resolved saved-views setting. `enabled` provisions the `_views` table and the view
    *  ops; disabled by default (opt-in). */
   views: { enabled: boolean }
+  /** Resolved saved-search-alerts setting. `enabled` provisions the `_subscriptions` table
+   *  and the subscription ops; disabled by default (opt-in). */
+  subscriptions: { enabled: boolean }
   /** Resolved content-releases setting. `enabled` provisions the `_releases` +
    *  `_release_items` tables and the release ops; disabled by default (opt-in). */
   releases: { enabled: boolean }
@@ -2088,6 +2155,8 @@ export type AuditAction =
   | 'view.delete'
   | 'webhook.deliver'
   | 'webhook.fail'
+  | 'subscription.create'
+  | 'subscription.delete'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -3236,6 +3305,18 @@ export interface Kernel {
    *  `where`+`sort` (re-validated), optionally narrowed by an extra `where`. The result can
    *  only ever be within the caller's read access — a view never widens visibility. */
   applyView<T extends Doc = Doc>(opts: ApplyViewOptions): Promise<PaginatedResult<T>>
+  /** Create a saved-search alert: a standing query (collection + optional `where`) owned by
+   *  the caller, whose matches are delivered to a configured `webhook`. Requires
+   *  `config.subscriptions`. The `where` is validated; the owner is recorded from the principal. */
+  createSubscription(opts: CreateSubscriptionOptions): Promise<SubscriptionDoc>
+  /** List the caller's own subscriptions (newest-first), optionally by collection. */
+  listSubscriptions(opts?: ListSubscriptionsOptions): Promise<SubscriptionDoc[]>
+  /** Delete a subscription. Only the owner (or an admin) may delete it. */
+  deleteSubscription(opts: DeleteSubscriptionOptions): Promise<{ id: string }>
+  /** Drain the subscriptions: read the change feed since each subscription's cursor, re-match
+   *  AS THE OWNER (access-checked reload + `where`), and enqueue a webhook delivery per match.
+   *  A trusted cron op (wired into `kernel jobs:run` / `subscriptions:run`). */
+  processSubscriptions(opts?: ProcessSubscriptionsOptions): Promise<ProcessSubscriptionsResult>
   /** Drain the durable webhook outbox: deliver due `_webhook_deliveries` (POST + sign),
    *  marking each delivered, retried (with backoff), or exhausted. A trusted cron op (like
    *  `processContentLifecycle`); wired into `kernel jobs:run` / `webhooks:run`. Returns the

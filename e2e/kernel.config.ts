@@ -86,7 +86,17 @@ export default defineConfig({
       durable: true,
       allowPrivateNetwork: true,
     },
+    {
+      // Subscription-only delivery target: `collections: []` means it never fires on a content
+      // write (no double-send) — only saved-search alerts enqueue to it.
+      slug: 'alerts',
+      url: 'http://127.0.0.1:3199/alerts',
+      collections: [],
+      allowPrivateNetwork: true,
+    },
   ],
+  // Saved-search alerts: subscribe to a query; matches deliver via the `alerts` webhook.
+  subscriptions: true,
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).

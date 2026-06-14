@@ -128,6 +128,12 @@ import type {
   DocumentActivityResult,
   DocumentActivityEvent,
   DocumentActivityType,
+  SubscriptionDoc,
+  CreateSubscriptionOptions,
+  ListSubscriptionsOptions,
+  DeleteSubscriptionOptions,
+  ProcessSubscriptionsOptions,
+  ProcessSubscriptionsResult,
 } from './types'
 import {
   BadRequestError,
@@ -183,6 +189,8 @@ import {
   REVIEWS_TABLE,
   VIEWS_TABLE,
   WEBHOOK_DELIVERIES_TABLE,
+  SUBSCRIPTIONS_TABLE,
+  CHANGES_TABLE,
   resolveVersions,
   tableForGlobal,
   tableForVersions,
@@ -2711,7 +2719,9 @@ export function createOperations(ctx: OperationCtx) {
   const NOOP_LOGGER: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
 
   function durableWebhooksConfigured(): boolean {
-    return config.webhooks.some((w) => w.durable)
+    // The outbox is also the delivery channel for saved-search alerts, so the drain runs when
+    // subscriptions are enabled even if no webhook opted into `durable`.
+    return config.webhooks.some((w) => w.durable) || config.subscriptions.enabled
   }
 
   /** Shape a raw `_webhook_deliveries` row into a public WebhookDeliveryDoc. */
@@ -5617,6 +5627,248 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   // -------------------------------------------------------------------------
+  // Saved-search alerts / content subscriptions
+  //
+  // A subscription is a standing (collection + where) query owned by a principal. The drain
+  // reads the change feed since the subscription's cursor and, for each change, RE-LOADS the
+  // document AS THE OWNER (the access-checked read) and matches it against the stored `where`
+  // — so an alert only ever fires for content the owner can currently read, and the webhook
+  // payload is field-access-stripped + encrypted-field-redacted exactly like a normal read.
+  // -------------------------------------------------------------------------
+
+  function rowToSubscription(row: Row): SubscriptionDoc {
+    return {
+      id: String(row.id),
+      ownerId: row.ownerId == null ? null : String(row.ownerId),
+      ownerType: normalizePrincipalType(row.ownerType),
+      collection: String(row.collection),
+      where: (row.where ?? null) as Where | null,
+      webhook: String(row.webhook),
+      active: row.active === true,
+      lastSeq: Number(row.lastSeq ?? 0),
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+    }
+  }
+
+  /** The highest change-feed seq right now (a new subscription starts from here, so it never
+   *  back-fills the entire history on its first drain). */
+  async function currentMaxChangeSeq(): Promise<number> {
+    const res = await db.find({
+      collection: CHANGES_TABLE,
+      sort: [{ field: 'seq', direction: 'desc' }],
+      limit: 1,
+      page: 1,
+    })
+    return res.docs.length ? Number(res.docs[0]!.seq ?? 0) : 0
+  }
+
+  async function createSubscription(opts: CreateSubscriptionOptions): Promise<SubscriptionDoc> {
+    if (!config.subscriptions.enabled) {
+      throw new BadRequestError('Saved-search alerts are not enabled (set `config.subscriptions`).')
+    }
+    const collection = collectionOrThrow(opts.collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    if (!override && !req.user) throw new UnauthorizedError('Authentication is required to subscribe.')
+    // You can only subscribe to a collection you can READ.
+    await assertCanReadCollection(collection, req, override)
+    // Validate the standing filter up front (rejected here, never silently stored to fail).
+    assertWhereFields(collection, opts.where)
+    // The delivery target must be a configured webhook.
+    const webhook = String(opts.webhook ?? '')
+    if (!config.webhooks.some((w) => w.slug === webhook)) {
+      throw new BadRequestError(`Unknown webhook "${webhook}" — configure it in \`config.webhooks\`.`)
+    }
+
+    const me = principalOf(req)
+    const id = randomUUID()
+    const created = await db.create({
+      collection: SUBSCRIPTIONS_TABLE,
+      data: {
+        id,
+        // Owner is the trusted principal, never client input; the owner's roles are
+        // snapshotted so the drain can re-evaluate the read access as the owner. A claim NOT
+        // captured (e.g. a tenant) fails CLOSED on the drain (under-notify). The snapshot is
+        // point-in-time: a role REMOVED after subscribing stays in the snapshot until the
+        // subscription is recreated (a bounded, owner-only over-notify window — no cross-user
+        // leak, since the doc is still re-loaded through the live read rule).
+        ownerId: override ? null : me.id,
+        ownerType: override ? 'system' : me.type,
+        ownerRoles: override ? [] : (req.user?.roles ?? []),
+        collection: collection.slug,
+        where: opts.where ?? null,
+        webhook,
+        active: true,
+        // Start from "now" so the first drain doesn't back-fill the whole history.
+        lastSeq: await currentMaxChangeSeq(),
+      },
+    })
+    await recordAudit({
+      action: 'subscription.create',
+      collection: collection.slug,
+      documentId: String(created.id),
+      req,
+      overrideAccess: override,
+      meta: { subscriptionId: String(created.id), webhook },
+    })
+    return rowToSubscription(created)
+  }
+
+  async function listSubscriptions(opts: ListSubscriptionsOptions = {}): Promise<SubscriptionDoc[]> {
+    if (!config.subscriptions.enabled) return []
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    const me = principalOf(req)
+    const and: Where[] = []
+    // Owner-scoped: you see only your OWN subscriptions (an override/admin call sees all).
+    if (!override) and.push({ ownerId: { equals: me.id } })
+    if (opts.collection != null) and.push({ collection: { equals: String(opts.collection) } })
+    const res = await db.find({
+      collection: SUBSCRIPTIONS_TABLE,
+      where: and.length ? { and } : undefined,
+      sort: [{ field: 'createdAt', direction: 'desc' }],
+      limit: MAX_LIMIT,
+      page: 1,
+    })
+    return res.docs.map(rowToSubscription)
+  }
+
+  async function deleteSubscription(opts: DeleteSubscriptionOptions): Promise<{ id: string }> {
+    if (!config.subscriptions.enabled) {
+      throw new BadRequestError('Saved-search alerts are not enabled (set `config.subscriptions`).')
+    }
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    const { subscriptionId } = opts
+    if (
+      typeof subscriptionId !== 'string' ||
+      subscriptionId.length === 0 ||
+      COMMENT_FORBIDDEN_KEYS.has(subscriptionId)
+    ) {
+      throw new BadRequestError('A valid `subscriptionId` is required.')
+    }
+    const row = await db.findByID({ collection: SUBSCRIPTIONS_TABLE, id: subscriptionId })
+    if (!row) throw new NotFoundError()
+    // Only the owner (or an admin / override) may delete it.
+    const me = principalOf(req)
+    const isOwner = row.ownerId != null && String(row.ownerId) === me.id
+    if (!override && !isOwner && !isAdminPrincipal(req)) {
+      throw new ForbiddenError('Only the subscription owner or an admin can delete it.')
+    }
+    await db.delete({ collection: SUBSCRIPTIONS_TABLE, id: subscriptionId })
+    await recordAudit({
+      action: 'subscription.delete',
+      collection: String(row.collection),
+      documentId: subscriptionId,
+      req,
+      overrideAccess: override,
+      meta: { subscriptionId },
+    })
+    return { id: subscriptionId }
+  }
+
+  async function processSubscriptions(opts: ProcessSubscriptionsOptions = {}): Promise<ProcessSubscriptionsResult> {
+    if (!config.subscriptions.enabled) return { scanned: 0, delivered: 0 }
+    const limit = Math.min(Math.max(opts.limit ?? 200, 1), MAX_LIMIT)
+    const subs = await db.find({
+      collection: SUBSCRIPTIONS_TABLE,
+      where: { active: { equals: true } },
+      limit: MAX_LIMIT,
+      page: 1,
+    })
+    let delivered = 0
+    let scanned = 0
+
+    for (const subRow of subs.docs) {
+      const sub = rowToSubscription(subRow)
+      // A subscription with no owner can't be re-evaluated against an access rule — skip it
+      // (fail closed).
+      if (!sub.ownerId) continue
+      scanned++
+      const collection = config.collectionsBySlug[sub.collection]
+      if (!collection) continue
+
+      // Rebuild the owner's request context from the snapshot (id + kind + roles). The reload
+      // below runs the LIVE read rule, so this never over-notifies for an id/row-scoped rule;
+      // an uncaptured claim (e.g. tenant) makes that rule deny → under-notify.
+      const ownerReq = {
+        user: {
+          id: sub.ownerId,
+          principalType: sub.ownerType,
+          roles: Array.isArray(subRow.ownerRoles) ? (subRow.ownerRoles as string[]) : [],
+        },
+      } as Partial<RequestContext>
+
+      const changes = await db.find({
+        collection: CHANGES_TABLE,
+        where: { and: [{ seq: { greater_than: sub.lastSeq } }, { collection: { equals: sub.collection } }] },
+        sort: [{ field: 'seq', direction: 'asc' }],
+        limit,
+        page: 1,
+      })
+
+      const encrypted = encryptedFieldNames(collection)
+      let maxSeq = sub.lastSeq
+      for (const ch of changes.docs) {
+        const seq = Number(ch.seq ?? 0)
+        if (seq > maxSeq) maxSeq = seq
+        const event = String(ch.event)
+        const documentId = String(ch.documentId)
+        // Deletes have no live row to match a `where` against — skip (no notification).
+        if (event === 'delete') continue
+
+        // Reload AS THE OWNER (access-checked + field-stripped). Returns null if the owner
+        // can't read it (or it's gone) → no alert.
+        let doc: Doc | null = null
+        try {
+          doc = await findByID({ collection: sub.collection, id: documentId, req: ownerReq })
+        } catch {
+          doc = null
+        }
+        if (!doc) continue
+        if (!matchesWhere(doc, sub.where ?? undefined)) continue
+
+        // Redact encrypted fields from the delivered payload (their plaintext must not egress).
+        let payloadDoc: Doc = doc
+        if (encrypted.length > 0) {
+          payloadDoc = { ...doc }
+          for (const name of encrypted) delete payloadDoc[name]
+        }
+        const payload: WebhookPayload = {
+          event: event as WebhookPayload['event'],
+          collection: sub.collection,
+          id: documentId,
+          doc: payloadDoc,
+          timestamp: Date.now(),
+        }
+        await db.create({
+          collection: WEBHOOK_DELIVERIES_TABLE,
+          data: {
+            id: randomUUID(),
+            webhook: sub.webhook,
+            event,
+            collection: sub.collection,
+            documentId,
+            payload,
+            status: 'pending',
+            attempts: 0,
+            lastStatus: null,
+            nextAttemptAt: new Date().toISOString(),
+            deliveredAt: null,
+          },
+        })
+        delivered++
+      }
+
+      if (maxSeq > sub.lastSeq) {
+        await db.update({ collection: SUBSCRIPTIONS_TABLE, id: sub.id, data: { lastSeq: maxSeq } })
+      }
+    }
+    return { scanned, delivered }
+  }
+
+  // -------------------------------------------------------------------------
   // Provenance + content credentials (read/verify surface)
   // -------------------------------------------------------------------------
 
@@ -5923,6 +6175,10 @@ export function createOperations(ctx: OperationCtx) {
     updateView,
     deleteView,
     applyView,
+    createSubscription,
+    listSubscriptions,
+    deleteSubscription,
+    processSubscriptions,
     processWebhooks,
     listWebhooks,
     webhookDeliveries,

@@ -629,6 +629,25 @@ function sanitizeViews(views: KernelConfig['views']): { enabled: boolean } {
 }
 
 /**
+ * Resolve the saved-search-alerts setting. OPT-IN, disabled by default. When enabled it
+ * requires the real-time change feed (the source it drains) and at least one configured
+ * webhook (a delivery target) — both asserted here so a misconfigured subscription feature
+ * fails fast at load rather than silently never delivering.
+ */
+function sanitizeSubscriptions(config: KernelConfig): { enabled: boolean } {
+  if (config.subscriptions !== true) return { enabled: false }
+  assert(
+    config.realtime?.enabled === true,
+    'config.subscriptions requires `realtime: { enabled: true }` (it drains the change feed)',
+  )
+  assert(
+    Array.isArray(config.webhooks) && config.webhooks.length > 0,
+    'config.subscriptions requires at least one configured `webhooks` entry (the delivery target)',
+  )
+  return { enabled: true }
+}
+
+/**
  * Resolve the content-releases setting. OPT-IN and disabled by default — `true`
  * provisions the `_releases` + `_release_items` tables and the release ops; anything
  * else (absent / `false`) stays off, fully backward-compatible (no tables, ops throw a
@@ -1393,6 +1412,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     review: sanitizeReview(config.review, agents.length > 0),
     comments: sanitizeComments(config.comments),
     views: sanitizeViews(config.views),
+    subscriptions: sanitizeSubscriptions(config),
     releases: sanitizeReleases(config.releases),
     lifecycle: sanitizeLifecycle(config.lifecycle, collectionsBySlug, SYSTEM_SLUGS),
     signing: sanitizeSigning(config.signing),

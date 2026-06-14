@@ -121,6 +121,7 @@ Commands:
   jobs:run           Run due background jobs + drain scheduled publishes/releases + expire content + deliver webhooks (cron)
   lifecycle:run      Retire expired content once — unpublish/archive/delete past-expiry docs (drive from a cron)
   webhooks:run       Deliver the durable webhook outbox once — POST due deliveries with retry/backoff (drive from a cron)
+  subscriptions:run  Drain saved-search alerts once — match new changes against subscriptions + queue webhook deliveries (cron)
   generate:types     Write generated TypeScript types for the content model
   generate:module    Scaffold a new module (collection + endpoint) — <name> [--out path]
   dev                Migrate, then start the REST API server (development)
@@ -480,12 +481,24 @@ export async function run(argv: string[]): Promise<void> {
       const { published } = await kernel.processScheduledPublishes()
       const releases = await kernel.processScheduledReleases()
       const { processed } = await kernel.processContentLifecycle()
+      // Drain subscriptions BEFORE webhooks so any alerts they enqueue go out this same pass.
+      const subs = await kernel.processSubscriptions()
       const webhooks = await kernel.processWebhooks()
       console.log(
         `✓ Jobs: ${ran.length} ran, ${failed.length} failed; ` +
           `${published.length} published, ${releases.published.length} releases, ${processed.length} expired, ` +
+          `${subs.delivered} alerts queued, ` +
           `${webhooks.delivered.length} webhooks delivered (${webhooks.retried.length} retried, ${webhooks.exhausted.length} exhausted).`,
       )
+      await kernel.destroy()
+      break
+    }
+
+    case 'subscriptions:run': {
+      const { config } = await loadConfig(flags)
+      const kernel = await initKernel(config)
+      const { scanned, delivered } = await kernel.processSubscriptions()
+      console.log(`✓ Subscriptions: ${scanned} scanned, ${delivered} alerts queued.`)
       await kernel.destroy()
       break
     }

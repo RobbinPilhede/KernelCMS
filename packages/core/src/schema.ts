@@ -106,6 +106,13 @@ export const VIEWS_TABLE = '_views'
  *  the cron drain scan. NEVER reachable via generic CRUD. */
 export const WEBHOOK_DELIVERIES_TABLE = '_webhook_deliveries'
 
+/** Storage table backing saved-search alerts / content subscriptions — one row per standing
+ *  query (`ownerId`/`ownerType`, target `collection`, JSON `where`, the delivery `webhook`
+ *  slug, `active`, and a `lastSeq` change-feed cursor). Provisioned only when
+ *  `config.subscriptions` is enabled. `ownerId` + `collection` + `active` are indexed for the
+ *  drain scan. NEVER reachable via generic CRUD. */
+export const SUBSCRIPTIONS_TABLE = '_subscriptions'
+
 /** Storage table holding the durable workflow run log — one row per workflow run,
  *  recording its status, trigger, and per-step status/log. Provisioned only when
  *  `config.workflows` is set. The engine reads/writes it via the trusted (overrideAccess)
@@ -474,7 +481,9 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
   // `durable` delivery. One row per queued delivery; `status` + `nextAttemptAt` index the
   // cron drain scan. Never reachable via generic CRUD; written only by the webhook enqueue
   // hook + the drain (`processWebhooks`), both trusted/override.
-  if (config.webhooks.some((w) => w.durable)) {
+  // The webhook outbox is also the delivery channel for saved-search alerts, so provision it
+  // when subscriptions are enabled even if no webhook opted into `durable`.
+  if (config.webhooks.some((w) => w.durable) || config.subscriptions.enabled) {
     tables.push({
       table: WEBHOOK_DELIVERIES_TABLE,
       slug: WEBHOOK_DELIVERIES_TABLE,
@@ -489,6 +498,28 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'lastStatus', type: 'text', required: false, unique: false, indexed: false, localized: false },
         { name: 'nextAttemptAt', type: 'timestamp', required: false, unique: false, indexed: true, localized: false },
         { name: 'deliveredAt', type: 'timestamp', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Saved-search alerts / content subscriptions, provisioned only when enabled. One row per
+  // standing query; `ownerId`/`collection`/`active` index the drain scan. Never reachable via
+  // generic CRUD; written only by the subscription ops + the drain (cursor advance).
+  if (config.subscriptions.enabled) {
+    tables.push({
+      table: SUBSCRIPTIONS_TABLE,
+      slug: SUBSCRIPTIONS_TABLE,
+      columns: [
+        { name: 'ownerId', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'ownerType', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'ownerRoles', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'where', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'webhook', type: 'text', required: true, unique: false, indexed: false, localized: false },
+        { name: 'active', type: 'boolean', required: false, unique: false, indexed: true, localized: false },
+        { name: 'lastSeq', type: 'integer', required: false, unique: false, indexed: false, localized: false },
       ],
       timestamps: true,
       singleton: false,
