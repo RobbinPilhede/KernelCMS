@@ -1620,6 +1620,50 @@ leak through the lint surface. Built-in rules are pure and deterministic; a rule
 fails closed (a blocking error, never a silent pass). Red-teamed to Risk LOW. See the
 [content QA & linting guide](docs/content-qa.md).
 
+### Content decisions
+
+A **content decision** is a named delivery slot that, at request time, picks the single best
+**published** document for the caller's audience and pins that choice per viewer —
+`GET /api/_decide/hero_promo` returns *one* document instead of a list. It is **stateless**:
+no table, no extra schema; it composes the access-checked published read, audience resolution,
+and deterministic bucketing.
+
+```ts
+export default defineConfig({
+  audiences: { segments: ['default', 'vip'], default: 'default' }, // only if a decision uses audienceField
+  decisions: [
+    {
+      slug: 'hero_promo',          // unique snake_case; GET /api/_decide/hero_promo
+      collection: 'promos',        // a real, non-system collection
+      where: { active: { equals: true } }, // optional trusted candidate filter
+      sort: '-priority',           // optional candidate sort
+      audienceField: 'segment',    // optional — doc field naming the targeted segment
+      fallback: 'default',         // when an audience has no match: 'default' | 'any' (default) | 'none'
+    },
+  ],
+  collections: [/* … */],
+})
+```
+
+- **Decide.** `kernel.decide({ slug, viewerKey, req })` returns a `DecisionResult | null` —
+  `{ slug, collection, audience, candidateIds, chosenId, reason, document }` where `reason` is
+  `'single' | 'audience-match' | 'audience-fallback' | 'rotation'`. The viewer defaults to the
+  authed user id, else `'anonymous'`.
+- **Sticky & deterministic.** The same viewer always gets the same document (FNV-1a hash of
+  `slug:viewerKey`, modulo the pool). Only the **hash** is used — the raw key is never stored
+  (no PII). The pool is bounded to the top 100 candidates by sort.
+
+```bash
+curl "http://localhost:3000/api/_decide/hero_promo?audience=vip&viewer=visitor-123"
+```
+
+**Published-only and access-checked** — a decision can never surface a draft, a private doc, or
+a field the caller can't read (a non-public collection yields a 404). `?audience=` is untrusted
+and an unknown/prototype-pollution value collapses to the default segment. The response is
+personalized, so it is sent `cache-control: private, no-store`; with analytics `autoCapture` on
+each decision records a `variant_impression` (no PII). See the
+[content decisions guide](docs/content-decisions.md).
+
 ### Auth
 
 - Scrypt password hashing and stateless, JWT-compatible tokens.

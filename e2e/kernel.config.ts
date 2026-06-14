@@ -101,6 +101,12 @@ export default defineConfig({
   branches: true,
   // Content federation: export a content set as a portable bundle + sync it into another env.
   federation: true,
+  // Content decisions: a named delivery slot that picks the best PUBLISHED promo for the
+  // caller's audience (`?audience=`) + a sticky per-viewer choice (`?viewer=`), highest
+  // priority first, falling back to default-segment promos when the audience has no match.
+  decisions: [
+    { slug: 'hero_promo', collection: 'promos', audienceField: 'segment', fallback: 'default', sort: '-priority' },
+  ],
   // Content QA / linting: required-before-publish + a readability nudge on the `qa_docs`
   // collection, surfaced on demand via GET /api/:c/:id/lint and enforced at publish.
   evals: [
@@ -233,6 +239,19 @@ export default defineConfig({
       fields: [
         { name: 'label', type: 'text', required: true },
         { name: 'body', type: 'text' },
+      ],
+    },
+    {
+      // Content decisions demo: published, audience-targeted promos with a priority. The
+      // `hero_promo` decision picks one for the caller's segment, sticky per viewer. Drafts
+      // exist so the spec can prove a draft promo is never chosen (published-only).
+      slug: 'promos',
+      versions: { drafts: true },
+      access: { read: () => true, create: ({ req }) => Boolean(req.user), update: ({ req }) => Boolean(req.user) },
+      fields: [
+        { name: 'label', type: 'text', required: true },
+        { name: 'segment', type: 'select', options: ['default', 'vip'] },
+        { name: 'priority', type: 'number' },
       ],
     },
     {

@@ -18,6 +18,8 @@ import type {
   SanitizedDiscoverability,
   SanitizedEdge,
   SanitizedExperiment,
+  SanitizedDecision,
+  SanitizedDecisions,
   SanitizedStructuredData,
   StructuredDataCollectionConfig,
   SanitizedLocalization,
@@ -1011,6 +1013,55 @@ function sanitizeExperiments(
 }
 
 /**
+ * Validate content decisions. Each needs a unique snake_case slug and a real, non-system
+ * `collection` to pick from. `audienceField` (segment-targeting) requires `audiences` to be
+ * enabled. `fallback` defaults to `'any'`. `where`/`sort` are config-authored and validated
+ * against the collection's fields at request time by the normal `find` path.
+ */
+function sanitizeDecisions(
+  decisions: KernelConfig['decisions'],
+  collectionsBySlug: Record<string, CollectionConfig>,
+  audiences: SanitizedAudiences,
+  systemSlugs: Set<string>,
+): SanitizedDecisions {
+  if (!decisions || decisions.length === 0) return { enabled: false, list: [], bySlug: {} }
+  const slugs = new Set<string>()
+  const list: SanitizedDecision[] = []
+  for (const d of decisions) {
+    assert(typeof d.slug === 'string' && IDENT_RE.test(d.slug), `decision slug "${d.slug}" must be ${NAMING_RULE}`)
+    assert(!slugs.has(d.slug), `duplicate decision slug "${d.slug}"`)
+    slugs.add(d.slug)
+    assert(
+      typeof d.collection === 'string' && Boolean(collectionsBySlug[d.collection]) && !systemSlugs.has(d.collection),
+      `decision "${d.slug}" references unknown collection "${d.collection}"`,
+    )
+    if (d.audienceField !== undefined) {
+      assert(
+        typeof d.audienceField === 'string' && d.audienceField.length > 0,
+        `decision "${d.slug}" audienceField must be a non-empty string`,
+      )
+      assert(audiences.enabled, `decision "${d.slug}" sets audienceField but \`audiences\` is not configured`)
+    }
+    const fallback = d.fallback ?? 'any'
+    assert(
+      fallback === 'default' || fallback === 'any' || fallback === 'none',
+      `decision "${d.slug}" fallback must be 'default', 'any', or 'none'`,
+    )
+    list.push({
+      slug: d.slug,
+      collection: d.collection,
+      ...(d.where !== undefined ? { where: d.where } : {}),
+      ...(d.sort !== undefined ? { sort: d.sort } : {}),
+      ...(d.audienceField !== undefined ? { audienceField: d.audienceField } : {}),
+      fallback,
+    })
+  }
+  const bySlug: Record<string, SanitizedDecision> = {}
+  for (const d of list) bySlug[d.slug] = d
+  return { enabled: true, list, bySlug }
+}
+
+/**
  * Whether a URL host is a literal loopback / private / link-local / cloud-metadata
  * address that an outbound webhook must NOT reach by default (SSRF egress guard). Covers
  * the common literal-IP and localhost cases; DNS-rebind (a public name resolving to a
@@ -1430,6 +1481,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     audiences,
     experiments,
     experimentsBySlug,
+    decisions: sanitizeDecisions(config.decisions, collectionsBySlug, audiences, SYSTEM_SLUGS),
     routes: { api: config.routes?.api ?? '/api' },
     admin: { user: adminUser },
     secret,

@@ -66,6 +66,20 @@ export function resolvePersonalized(raw: unknown, opts: ResolvePersonalizedOptio
   return raw ?? null
 }
 
+/** Resolve an untrusted audience value to a KNOWN, safe segment id. Anything not configured
+ *  (absent, unknown, or a prototype-pollution key) collapses to the default segment, so a
+ *  hostile `audience` can never inject a map key or read another segment's content. Returns
+ *  `''` when audiences are disabled. (The pure twin of operations' internal `resolveSegment`,
+ *  exported so the decision engine and tests share one definition.) */
+export function resolveAudienceSegment(
+  audiences: { enabled: boolean; segments: string[]; default: string },
+  raw: unknown,
+): string {
+  if (!audiences.enabled) return ''
+  if (typeof raw === 'string' && isSafeSegmentKey(raw) && audiences.segments.includes(raw)) return raw
+  return audiences.default
+}
+
 /** A defensive copy of a stored per-segment map (so callers can't mutate storage). */
 export function segmentMapCopy(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {

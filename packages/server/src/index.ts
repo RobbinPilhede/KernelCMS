@@ -598,6 +598,29 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return json(kernel.assignVariant({ experiment: slug, key }))
   }
 
+  // GET /_decide/:slug -> resolve a content DECISION: the best PUBLISHED document for the
+  // caller's audience (`?audience=`) + a sticky per-viewer choice (`?viewer=`). PUBLIC and
+  // published-only — the read is access-checked, so a non-public collection yields no decision
+  // (404). The response is PER-VIEWER, so it is never handed to a shared cache.
+  if (segments[0] === '_decide' && segments.length === 2 && segments[1]) {
+    if (method !== 'GET') return methodNotAllowed()
+    if (!kernel.config.decisions.enabled) {
+      return json({ error: { code: 'NOT_FOUND', message: 'Content decisions are not enabled.' } }, 404)
+    }
+    const slug = decodeURIComponent(segments[1])
+    const viewer = url.searchParams.get('viewer') ?? undefined
+    const result = await kernel.decide({
+      slug,
+      ...(viewer ? { viewerKey: viewer } : {}),
+      req: { user, ...(audience ? { audience } : {}) },
+    })
+    if (!result) return json({ error: { code: 'NOT_FOUND', message: 'No decision matched.' } }, 404)
+    const res = json(result)
+    // Personalized per viewer: never cache in a shared cache.
+    res.headers.set('cache-control', 'private, no-store')
+    return res
+  }
+
   // POST /_analytics/track -> capture ONE content-usage event into the bounded
   // `_analytics` table. NO PII is ever stored: the request principal is NEVER recorded,
   // and a client `meta` is sanitized (PII-ish + proto keys stripped). `track` can ONLY

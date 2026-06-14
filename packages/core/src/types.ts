@@ -700,6 +700,76 @@ export interface AssignVariantResult {
   segment: string
 }
 
+/** A content DECISION: a named delivery slot that, at request time, picks the single best
+ *  PUBLISHED document from `collection` for the caller's audience + a sticky per-viewer choice.
+ *  Stateless — no table; the pick is computed from live published content. */
+export interface DecisionConfig {
+  /** Unique slug for the decision slot (snake_case). Addressed as `GET /api/_decide/:slug`. */
+  slug: string
+  /** The collection to pick a document from. Must be a real, non-system collection. */
+  collection: string
+  /** Optional candidate filter (e.g. `{ promo: { equals: true } }`). Config-authored
+   *  (trusted); AND-ed onto the access-checked, published-only read. */
+  where?: Where
+  /** Optional candidate sort (e.g. `'-priority'`). The pick is sticky regardless; sort only
+   *  shapes which candidates are considered when a `limit`-bounded pool is fetched. */
+  sort?: string
+  /** Optional document field naming the audience segment a candidate targets. When set, the
+   *  pool is narrowed to candidates whose `audienceField` equals the caller's segment.
+   *  Requires `audiences` to be configured. */
+  audienceField?: string
+  /** What to do when `audienceField` is set but no candidate targets the caller's segment:
+   *  `'default'` falls back to candidates targeting the default segment, `'any'` (the
+   *  default) considers all candidates, `'none'` returns no decision (a 404). */
+  fallback?: 'default' | 'any' | 'none'
+}
+
+/** Resolved decision (after sanitize): `fallback` defaulted, collection/audienceField validated. */
+export interface SanitizedDecision {
+  slug: string
+  collection: string
+  where?: Where
+  sort?: string
+  audienceField?: string
+  fallback: 'default' | 'any' | 'none'
+}
+
+/** Resolved decisions config. `enabled:false` when none are declared. */
+export interface SanitizedDecisions {
+  enabled: boolean
+  list: SanitizedDecision[]
+  bySlug: Record<string, SanitizedDecision>
+}
+
+export interface DecideOptions {
+  /** The decision slug (must be configured). */
+  slug: string
+  /** A caller-supplied visitor/session id making the pick STICKY (the same viewer always
+   *  gets the same document). Only its HASH is ever used — the raw key is never stored. */
+  viewerKey?: string
+  /** The request principal. The read is access-checked + published-only, so a non-public
+   *  collection yields no decision. `req.audience` selects the segment. */
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+/** The outcome of a decision: the chosen published document plus a transparent record of how
+ *  it was picked (the candidate pool, the resolved audience, and the reason). */
+export interface DecisionResult {
+  slug: string
+  collection: string
+  /** The resolved audience segment (`''` when personalization is off). */
+  audience: string
+  /** The ids the pick was made from (after any audience narrowing). */
+  candidateIds: string[]
+  /** The id of the chosen document. */
+  chosenId: string
+  /** Why this pool was chosen. */
+  reason: 'single' | 'audience-match' | 'audience-fallback' | 'rotation'
+  /** The chosen document (access-checked, published, field-read-access applied). */
+  document: Doc
+}
+
 export type WebhookEvent = 'create' | 'update' | 'delete'
 
 export interface WebhookConfig {
@@ -1339,6 +1409,11 @@ export interface KernelConfig {
    *  variant deterministically; the variant is an audience segment, so feeding it back as
    *  `req.audience` reads that variant's personalized content. Requires `audiences`. */
   experiments?: ExperimentConfig[]
+  /** Content decisions: named delivery slots that pick the best PUBLISHED document for the
+   *  caller's audience + a sticky per-viewer choice, served at `GET /api/_decide/:slug`.
+   *  Stateless — composes the existing published read, audience resolution, and deterministic
+   *  bucketing into one request-time delivery surface. Omit to disable. */
+  decisions?: DecisionConfig[]
   routes?: { api?: string }
   admin?: { user?: string; meta?: { titleSuffix?: string } }
   /** Secret used to sign auth tokens. Never hardcode; read from env. */
@@ -1721,6 +1796,8 @@ export interface SanitizedConfig {
   /** Resolved A/B experiments, keyed lookup via `experimentsBySlug`. Empty when unset. */
   experiments: SanitizedExperiment[]
   experimentsBySlug: Record<string, SanitizedExperiment>
+  /** Resolved content-decision slots. `enabled:false` when none are declared. */
+  decisions: SanitizedDecisions
   routes: { api: string }
   admin: { user: string }
   secret: string
@@ -3677,6 +3754,12 @@ export interface Kernel {
    *  it to read that variant's personalized content. Throws when experiments are not
    *  configured or the slug is unknown. */
   assignVariant(opts: AssignVariantOptions): AssignVariantResult
+  /** Resolve a content DECISION: pick the single best PUBLISHED document for the caller's
+   *  audience + a sticky per-viewer choice. The read is access-checked and published-only (a
+   *  non-public collection yields no decision), and the impression is auto-captured (no PII).
+   *  Returns `null` when the slug is unknown or no candidate qualifies (the route answers 404).
+   *  Only the hash of `viewerKey` is used — the raw key is never stored. */
+  decide(opts: DecideOptions): Promise<DecisionResult | null>
   /** Capture one content-usage event into the bounded `_analytics` table. Privacy-first:
    *  NO PII is stored (no user id/IP/visitor key/email/token) — a `meta` is sanitized to
    *  non-PII scalar dimensions. Resilient: a tracking failure logs + NEVER throws into the

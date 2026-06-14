@@ -51,6 +51,7 @@ import {
 import { CHANGES_TABLE, WEBHOOK_DELIVERIES_TABLE } from './schema'
 import { appendAnalytics, buildAnalyticsRow, computeInsights, createAnalyticsSeq, type AnalyticsCtx } from './analytics'
 import { cacheTags as computeCacheTags, computePurge, purgeTagsForEvent } from './edge'
+import { fnv1a32, resolveAudienceSegment } from './personalization'
 import { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
 import { WORKFLOW_JOB_TASK } from './config'
 import { attachSearch } from './search'
@@ -649,6 +650,10 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     return computeInsights(sanitized.analytics, sanitized.db, readable, opts)
   }
 
+  // Upper bound on candidates a single decision considers (sticky pick + audience narrowing
+  // happen in memory over this pool). Keeps a decision O(1)-ish regardless of collection size.
+  const DECISION_CANDIDATE_CAP = 100
+
   const kernel: Kernel = {
     config: sanitized,
     db: sanitized.db,
@@ -970,6 +975,77 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
       // experiment + variant are recorded — never the raw visitor `key` (no PII).
       autoEmit({ type: 'variant_impression', experiment: result.experiment, variant: result.variant })
       return result
+    },
+    async decide(opts) {
+      // hasOwnProperty guard so a `__proto__`/`constructor` slug can't resolve to an inherited
+      // prototype object instead of a real decision.
+      const decision = Object.prototype.hasOwnProperty.call(sanitized.decisions.bySlug, opts.slug)
+        ? sanitized.decisions.bySlug[opts.slug]
+        : undefined
+      if (!decision) return null
+      const audience = resolveAudienceSegment(sanitized.audiences, opts.req?.audience)
+      // Pull a bounded pool of PUBLISHED, access-checked candidates. `ops.find` applies the
+      // collection read rule + the published-only filter + field read-access, so a decision
+      // can NEVER surface a draft, a private doc, or a field the caller can't read.
+      const { docs } = await ops.find<Doc>({
+        collection: decision.collection,
+        ...(decision.where !== undefined ? { where: decision.where } : {}),
+        ...(decision.sort !== undefined ? { sort: decision.sort } : {}),
+        ...(opts.req !== undefined ? { req: opts.req } : {}),
+        ...(opts.overrideAccess !== undefined ? { overrideAccess: opts.overrideAccess } : {}),
+        limit: DECISION_CANDIDATE_CAP,
+      })
+      if (docs.length === 0) return null
+      // The segment(s) a candidate targets (a text or hasMany-select audience field).
+      const segmentsOf = (doc: Doc, field: string): string[] => {
+        const v = (doc as Record<string, unknown>)[field]
+        if (typeof v === 'string') return [v]
+        if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string')
+        return []
+      }
+      // Audience narrowing.
+      let pool = docs
+      let reason: 'single' | 'audience-match' | 'audience-fallback' | 'rotation' =
+        docs.length === 1 ? 'single' : 'rotation'
+      if (decision.audienceField) {
+        const field = decision.audienceField
+        const matched = docs.filter((d) => segmentsOf(d, field).includes(audience))
+        if (matched.length > 0) {
+          pool = matched
+          reason = 'audience-match'
+        } else if (decision.fallback === 'default') {
+          pool = docs.filter((d) => segmentsOf(d, field).includes(sanitized.audiences.default))
+          reason = 'audience-fallback'
+        } else if (decision.fallback === 'any') {
+          pool = docs
+          reason = 'audience-fallback'
+        } else {
+          pool = []
+        }
+      }
+      if (pool.length === 0) return null
+      // Sticky, deterministic pick: the SAME viewerKey always lands on the SAME document for
+      // this decision. Only the hash of the key is used — the raw key is never stored.
+      const viewerKey = opts.viewerKey || (opts.req?.user?.id != null ? String(opts.req.user.id) : 'anonymous')
+      const idx = pool.length === 1 ? 0 : fnv1a32(`${decision.slug}:${viewerKey}`) % pool.length
+      const chosen = pool[idx]!
+      // Impression — fire-and-forget, NO PII (collection/doc/decision/segment only).
+      autoEmit({
+        type: 'variant_impression',
+        collection: decision.collection,
+        documentId: String(chosen.id),
+        experiment: decision.slug,
+        variant: audience || 'default',
+      })
+      return {
+        slug: decision.slug,
+        collection: decision.collection,
+        audience,
+        candidateIds: pool.map((d) => String(d.id)),
+        chosenId: String(chosen.id),
+        reason,
+        document: chosen,
+      }
     },
     async migrate(opts?: MigrateRunOptions): Promise<MigrationReport> {
       const dryRun = opts?.dryRun === true
