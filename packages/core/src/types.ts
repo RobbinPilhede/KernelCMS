@@ -364,6 +364,19 @@ export interface RelationshipField extends FieldBase {
   onDelete?: OnDeleteAction
 }
 
+/** A snippet reference: transcludes a reusable content fragment from a `snippet: true`
+ *  collection. On read the referenced fragment's live, access-checked content is inlined
+ *  (edit the fragment once → every referencing document reflects it). Stored as the
+ *  fragment's id; populated like a single-target relationship, depth-bounded. */
+export interface SnippetField extends FieldBase {
+  type: 'snippet'
+  /** The slug of the `snippet: true` collection this references. */
+  snippet: string
+  /** Reference several fragments (an ordered list) instead of one. */
+  hasMany?: boolean
+  onDelete?: OnDeleteAction
+}
+
 /** A resolved polymorphic relationship reference. */
 export interface PolymorphicRef {
   relationTo: string
@@ -417,6 +430,7 @@ export type AnyField =
   | PointField
   | SelectField
   | RelationshipField
+  | SnippetField
   | ArrayField
   | GroupField
   | BlocksField
@@ -545,6 +559,11 @@ export interface CollectionConfig {
   /** Make this an upload collection. System fields (filename, mime_type, filesize,
    *  checksum, url, …) are injected and bytes are stored via the configured adapter. */
   upload?: boolean | UploadConfig
+  /** Mark this collection as a SNIPPET library: its documents are reusable content
+   *  fragments meant to be referenced (and transcluded on read) by `snippet`-typed fields on
+   *  other collections — "edit the fragment once, every referencing document reflects it". A
+   *  `snippet` field may only point at a collection flagged `snippet: true`. */
+  snippet?: boolean
   /** Read-through caching for this collection (requires `config.cache`). `true`
    *  uses the default TTL; pass `{ ttl }` (ms) to override. Reads are memoized at
    *  the database layer and invalidated on any write to this collection. */

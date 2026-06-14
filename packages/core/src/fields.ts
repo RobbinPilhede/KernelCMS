@@ -133,6 +133,9 @@ export function storageTypeForField(field: AnyField): StorageType {
     case 'upload':
       // Polymorphic refs ({ relationTo, value }) and hasMany lists need JSON.
       return field.hasMany || Array.isArray(field.relationTo) ? 'json' : 'text'
+    case 'snippet':
+      // A single snippet ref is a text FK; a hasMany list of ids is JSON.
+      return field.hasMany ? 'json' : 'text'
     default:
       return 'text'
   }
@@ -142,7 +145,7 @@ export function columnForField(field: AnyField): ColumnSchema {
   // FK/relationship columns are auto-indexed: relationship lookups are the hot
   // path, and an unindexed FK forces a full scan. Explicit `index: false` opts
   // out; explicit `index`/`unique` still win.
-  const isRelation = field.type === 'relationship' || field.type === 'upload'
+  const isRelation = field.type === 'relationship' || field.type === 'upload' || field.type === 'snippet'
   const column: ColumnSchema = {
     name: field.name,
     type: storageTypeForField(field),
@@ -158,6 +161,10 @@ export function columnForField(field: AnyField): ColumnSchema {
     typeof field.relationTo === 'string'
   ) {
     column.relationTo = field.relationTo
+  }
+  // A single snippet ref is a single-target FK to the snippet collection.
+  if (field.type === 'snippet' && !field.hasMany && typeof field.snippet === 'string') {
+    column.relationTo = field.snippet
   }
   return column
 }
@@ -367,6 +374,14 @@ function validateFieldType(field: AnyField, value: unknown, label: string): stri
       if (isRef(value)) return null
       return polymorphic ? `${label} must be a { relationTo, value } reference.` : `${label} must be a reference id.`
     }
+    case 'snippet': {
+      const isId = (v: unknown): boolean => typeof v === 'string' || typeof v === 'number'
+      if (field.hasMany) {
+        if (!Array.isArray(value)) return `${label} must be a list of snippet ids.`
+        return value.every(isId) ? null : `${label} contains an invalid snippet id.`
+      }
+      return isId(value) ? null : `${label} must be a snippet id.`
+    }
     case 'array':
       return Array.isArray(value) ? null : `${label} must be a list.`
     case 'blocks':
@@ -558,6 +573,17 @@ export function relationshipFields(fieldsIn: ConfigField[]): RelationshipFieldIn
         relationTo: field.relationTo,
         hasMany: Boolean(field.hasMany),
         polymorphic: Array.isArray(field.relationTo),
+        onDelete: field.onDelete,
+      })
+    } else if (field.type === 'snippet') {
+      // A snippet field transcludes a reusable fragment — it populates exactly like a
+      // single-target relationship (its `snippet` slug IS the relationTo), so the read
+      // pipeline inlines the live, access-checked snippet doc and is depth-bounded.
+      out.push({
+        name: field.name,
+        relationTo: field.snippet,
+        hasMany: Boolean(field.hasMany),
+        polymorphic: false,
         onDelete: field.onDelete,
       })
     }

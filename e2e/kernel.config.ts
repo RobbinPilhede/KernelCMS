@@ -216,6 +216,16 @@ export default defineConfig({
       ],
     },
     {
+      // Snippet library: reusable content fragments transcluded by `snippet` fields.
+      slug: 'snippets',
+      snippet: true,
+      access: { read: () => true, create: ({ req }) => Boolean(req.user), update: ({ req }) => Boolean(req.user) },
+      fields: [
+        { name: 'label', type: 'text', required: true },
+        { name: 'body', type: 'text' },
+      ],
+    },
+    {
       slug: 'articles',
       labels: { singular: 'Article', plural: 'Articles' },
       admin: { useAsTitle: 'title', defaultColumns: ['title'] },
@@ -230,6 +240,8 @@ export default defineConfig({
         { name: 'body', type: 'richText', preset: 'standard' },
         // Self-relationship so the knowledge graph has edges to traverse.
         { name: 'related', type: 'relationship', relationTo: 'articles', hasMany: true },
+        // Content snippet: transclude a reusable fragment (edit once, reflected everywhere).
+        { name: 'cta', type: 'snippet', snippet: 'snippets' },
         // Lifecycle: when this passes, the article auto-archives on the next cron drain.
         { name: 'expire_at', type: 'date' },
       ],

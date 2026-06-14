@@ -1195,6 +1195,36 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     collectionsBySlug[collection.slug] = collection
   }
 
+  // Validate every `snippet` field (at any depth — group/array/blocks/tabs included) points
+  // at a real collection flagged `snippet: true`. A snippet field transcludes a reusable
+  // fragment, so its target must be a snippet library; a bad target fails fast at load.
+  const checkSnippetFields = (where: string, fields: ConfigField[] | undefined): void => {
+    for (const field of fields ?? []) {
+      const f = field as AnyField & {
+        fields?: ConfigField[]
+        blocks?: { slug: string; fields: ConfigField[] }[]
+        tabs?: { fields?: ConfigField[] }[]
+      }
+      if (f.type === 'snippet') {
+        const slug = (f as { snippet?: string }).snippet ?? ''
+        const target = collectionsBySlug[slug]
+        assert(
+          target !== undefined,
+          `snippet field "${where}.${(f as AnyField).name}" references unknown collection "${slug}"`,
+        )
+        assert(
+          target.snippet === true,
+          `snippet field "${where}.${(f as AnyField).name}" must reference a \`snippet: true\` collection (got "${slug}")`,
+        )
+      }
+      const name = (f as AnyField).name ?? f.type
+      if (Array.isArray(f.fields)) checkSnippetFields(`${where}.${name}`, f.fields)
+      if (Array.isArray(f.blocks)) for (const b of f.blocks) checkSnippetFields(`${where}.${name}.${b.slug}`, b.fields)
+      if (Array.isArray(f.tabs)) for (const t of f.tabs) checkSnippetFields(`${where}.${name}`, t.fields)
+    }
+  }
+  for (const collection of collections) checkSnippetFields(collection.slug, collection.fields)
+
   const globalsBySlug: Record<string, GlobalConfig> = {}
   for (const global of globals) {
     assert(!globalsBySlug[global.slug], `duplicate global slug "${global.slug}"`)

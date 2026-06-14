@@ -480,6 +480,48 @@ instantiation can't change the next), and a template only ever creates into its 
 collection. Red-teamed to Risk LOW. See the
 [content templates guide](docs/content-templates.md).
 
+### Content snippets (reusable fragments)
+
+Flag a collection `snippet: true` and it becomes a **library of reusable content fragments**
+— a CTA, a promo banner, a block of legal text — that you define once and reference from
+anywhere with a `snippet`-typed field. A reference stores only the fragment's **id**; on read
+it **transcludes** the live fragment, so editing the fragment once updates every document that
+points at it. A single field references one fragment; `hasMany: true` references an ordered
+list.
+
+```ts
+export default defineConfig({
+  collections: [
+    { slug: 'snippets', snippet: true, fields: [
+      { name: 'label', type: 'text' },
+      { name: 'body', type: 'richText' },
+    ] },
+    { slug: 'pages', fields: [
+      { name: 'title', type: 'text' },
+      { name: 'cta', type: 'snippet', snippet: 'snippets' },             // one fragment
+      { name: 'banners', type: 'snippet', snippet: 'snippets', hasMany: true }, // an ordered list
+    ] },
+  ],
+})
+```
+
+- **Transclusion on read.** Populated like a relationship: pass `depth` (REST `?depth=1`,
+  Local API `{ depth: 1 }`) and the stored id is replaced by the **live** snippet document.
+  At `depth: 0` the field stays the raw id.
+- **Access-checked.** Each fragment resolves through the normal access-checked read path; a
+  fragment the reader can't read falls back to its **raw id**, never its content — exactly
+  like a relationship to an unreadable target.
+- **Cycle-safe.** Snippet→snippet references are bounded by the populate **depth cap (10)**,
+  so a cyclic reference can never infinite-loop.
+- **Config-validated.** A `snippet` field may only target a collection flagged `snippet:
+  true`; a bad target throws at config load.
+
+**The edit-once guarantee:** a snippet field is a relationship to a snippet library, resolved
+**live** on read — the content is transcluded, never copied. There is one source of truth, so
+fixing a typo in a fragment fixes it everywhere on the next read, with no document to chase and
+no snapshot to go stale. Red-teamed to Risk LOW. See the
+[content snippets guide](docs/content-snippets.md).
+
 ### Editorial comments (threaded review annotations)
 
 Set `comments: true` and editors can leave **threaded review comments** on a document —
