@@ -1,5 +1,11 @@
 # kernelcms
 
+## 0.33.0
+
+### Minor Changes
+
+- 938f413: Saved views / smart collections — named, reusable query presets. Opt in with `views: true` and editors can save a `where` + `sort` + display `columns` for a collection ("Published this month", "My drafts", "Out of stock") and re-apply it in one click. Adds `kernel.saveView`, `listViews`, `getView`, `updateView`, `deleteView`, `applyView`, the `_views` system table (unreachable via generic CRUD), and REST routes (`/api/_admin/views`, `/api/_admin/views/:id`, `/api/_admin/views/:id/apply`). A view is owned by its creator (owner recorded from the authenticated principal, never client input) and private unless `shared`; a shared view is visible only to those who can read its collection. Applying a view runs the normal access-checked `find` and the stored `where`/`sort` are re-validated on save and apply — so a saved view can only ever narrow results within the caller's access, never widen or bypass it. Owner-or-admin only for update/delete; create/update/delete are audited. Also hardens the shared `where` validator with a recursion-depth cap.
+
 ## 0.32.0
 
 ### Minor Changes
