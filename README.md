@@ -131,6 +131,17 @@ as a direct publish (a caller can only publish a release whose every member they
 publish directly; an agent can never publish one), so coordinated launches stay as safe
 as a single edit. This is the practical heart of *content environments*.
 
+And content has a **lifecycle**. The inverse of scheduled publish: opt into `lifecycle`,
+put an expiry date on a published document, and when it passes the next cron drain
+automatically retires it — `unpublish` back to draft, `archive` (draft + a server-managed
+`_archived_at` that hides it from public reads and marks it as archived, not merely
+unpublished), or `delete`. Embargoes, time-limited campaigns, retention/compliance, and
+stale-content cleanup, on autopilot. The drain (`kernel.processContentLifecycle(...)`) is a
+**trusted, cron-only** maintenance op like `processScheduledPublishes` — there is no HTTP
+trigger, so it runs safely under override — and `_archived_at` is **client-immutable**: a
+normal caller can never set it (fake-archive) or clear it (un-archive); only the drain
+writes it. Each retire is audited (`content.expire`).
+
 And content can **personalize**. Opt into `audiences` and any field becomes
 `personalized: true` — it stores audience variants the way `localized` stores locales,
 resolving per request (`?audience=vip` or `req.audience`) to that segment, then the default,
@@ -489,6 +500,61 @@ apply. Member management is access-checked (you can't pull a doc you can't read 
 release), and scheduled releases are gate-checked at schedule time and re-checked on the
 drain. Best-effort atomic on a mid-publish fault; red-teamed to Risk LOW. See the
 [content releases guide](docs/releases.md).
+
+### Content lifecycle (auto-expire, archive & delete)
+
+Scheduled publish makes a draft go live at a future instant; **content lifecycle** is the
+inverse — give a published document an expiry and KernelCMS retires it automatically when
+that date passes. Opt into `lifecycle` per collection for embargoes, time-limited
+campaigns, retention/compliance, and stale-content cleanup. Each `slug` must be a real,
+**drafts-enabled** collection, and the `expireField` must already be a declared `date`
+field on it — you own the schema; KernelCMS never adds the column for you.
+
+```ts
+export default defineConfig({
+  lifecycle: {
+    collections: [
+      { slug: 'promos', expireField: 'expire_at', onExpire: 'unpublish' }, // back to draft
+      { slug: 'press',  expireField: 'embargo_until', onExpire: 'archive' }, // draft + _archived_at
+      { slug: 'tmp',    onExpire: 'delete' }, // expireField defaults to 'expire_at'
+    ],
+  },
+  collections: [
+    { slug: 'promos', versions: { drafts: true },
+      fields: [/* … */ { name: 'expire_at', type: 'date' }] }, // YOU declare the date field
+    // …
+  ],
+})
+
+// the drain (cron-driven; runs under override like processScheduledPublishes):
+const { processed } = await kernel.processContentLifecycle({ now, limit })
+// processed: Array<{ collection, id, action }>
+```
+
+`expireField` defaults to `'expire_at'` and `onExpire` to `'unpublish'`. When a published
+document's `expireField` date has passed, the next drain retires it: **`unpublish`** →
+back to draft; **`archive`** → draft plus a server-managed `_archived_at` timestamp
+(hidden from public reads, and distinguishable from a plain draft); **`delete`** → removed.
+The `expireField` is an ordinary editor field, so you can only set an expiry on content you
+can write.
+
+Run the drain from a cron — either the dedicated `kernel lifecycle:run`, or `kernel
+jobs:run`, which now also drains scheduled publishes and releases. There is **no HTTP
+trigger**: the drain is a trusted, operator-only maintenance operation, which is exactly
+why it can run under `overrideAccess` safely. It is bounded by `limit`, resilient
+per-document, and **only ever touches the configured lifecycle collections**; `now`/`limit`
+are validated and clamped, and each action is audited (`content.expire`).
+
+```bash
+* * * * * cd /app && npx kernel lifecycle:run   # or: kernel jobs:run (drains everything due)
+```
+
+**The trusted-drain, client-immutable guarantee:** the lifecycle drain is cron/operator-only
+and never exposed to untrusted callers, so running it under override is safe. The
+server-managed `_archived_at` is **client-immutable** — a normal user can never set it (to
+fake an archive) or clear it (to un-archive) through the API; only the trusted drain writes
+it. The `expireField` itself is a plain field gated by normal write access. See the
+[content lifecycle guide](docs/content-lifecycle.md).
 
 ### Personalization & A/B experiments
 

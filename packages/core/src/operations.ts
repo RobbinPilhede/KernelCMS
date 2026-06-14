@@ -55,8 +55,11 @@ import type {
   PresenceKind,
   BulkResult,
   CreateAPIKeyOptions,
+  ContentLifecycleAction,
   DeleteManyOptions,
   EnqueueOptions,
+  ProcessContentLifecycleOptions,
+  ProcessContentLifecycleResult,
   ProcessScheduledOptions,
   ProcessScheduledResult,
   RunJobsOptions,
@@ -595,6 +598,10 @@ export function createOperations(ctx: OperationCtx) {
     if (row.createdAt !== undefined) doc.createdAt = row.createdAt
     if (row.updatedAt !== undefined) doc.updatedAt = row.updatedAt
     if (row._status !== undefined) doc._status = row._status
+    // Surface the content-lifecycle archive marker so an archived doc is distinguishable
+    // from a plain draft on read (both are `_status:'draft'`; an archived one carries a
+    // non-null `_archived_at`). Server-managed — it is only ever WRITTEN by the drain.
+    if (row._archived_at !== undefined) doc._archived_at = row._archived_at
     if (collection.auth) {
       delete doc.hash
       delete doc.api_key
@@ -1159,7 +1166,7 @@ export function createOperations(ctx: OperationCtx) {
 
   // System keys excluded from the recorded `fields` list — they are server-owned,
   // not user-meaningful change attribution.
-  const AUDIT_FIELD_SKIP = new Set(['id', '_status', '_scheduled_at', 'createdAt', 'updatedAt'])
+  const AUDIT_FIELD_SKIP = new Set(['id', '_status', '_scheduled_at', '_archived_at', 'createdAt', 'updatedAt'])
 
   /** The user-meaningful field names written in a create/update, for the audit row. */
   function auditedFields(data: Row): string[] {
@@ -2438,6 +2445,98 @@ export function createOperations(ctx: OperationCtx) {
     return skipped.length > 0 ? { published, skipped } : { published }
   }
 
+  /**
+   * Retire expired content — the INVERSE of `processScheduledPublishes`. For each
+   * `config.lifecycle` collection, find every PUBLISHED document whose expiry date
+   * (`expireField`) is at or before `now` and apply the collection's `onExpire` action:
+   *   - 'unpublish' → set `_status:'draft'` (via the unpublish path)
+   *   - 'archive'   → set `_status:'draft'` AND stamp `_archived_at = now`
+   *   - 'delete'    → remove the document
+   * A TRUSTED system/cron maintenance op: every action runs under `overrideAccess:true`,
+   * exactly like `processScheduledPublishes` (the expiry date itself was set by an editor
+   * through normal field access). Confined to the configured collections; bounded by
+   * `limit` per collection; resilient per-doc (one failure is logged and the loop
+   * continues, so a single bad row never aborts the drain). Each retirement is audited
+   * (`content.expire`, with the action + expiry in meta). Drive from a cron/job.
+   */
+  async function processContentLifecycle(
+    opts: ProcessContentLifecycleOptions = {},
+  ): Promise<ProcessContentLifecycleResult> {
+    const processed: ContentLifecycleAction[] = []
+    if (!config.lifecycle.enabled) return { processed }
+    const now = opts.now ? new Date(opts.now) : new Date()
+    // An invalid `now` would make `<= NaN` match nothing AND poison an archive stamp —
+    // fail closed to the current time rather than silently no-op / write a bad timestamp.
+    const nowMs = now.getTime()
+    const nowIso = (Number.isFinite(nowMs) ? now : new Date()).toISOString()
+    const limit = Math.min(Math.max(opts.limit ?? MAX_LIMIT, 1), MAX_LIMIT)
+
+    for (const entry of config.lifecycle.collections) {
+      const collection = config.collectionsBySlug[entry.slug]
+      // Defensive: sanitize already validated the slug + drafts; skip if somehow absent.
+      if (!collection || !draftsOn(collection)) continue
+      // Only PUBLISHED docs are due, and only when their expiry has passed. For 'archive'
+      // also require `_archived_at` to be unset, so a doc is never re-archived (idempotent).
+      const conditions: Where[] = [
+        { _status: { equals: 'published' } },
+        { [entry.expireField]: { less_than_equal: nowIso } },
+        { [entry.expireField]: { exists: true } },
+      ]
+      if (entry.onExpire === 'archive') conditions.push({ _archived_at: { exists: false } })
+      const due = await db.find({
+        collection: collection.slug,
+        where: { and: conditions },
+        limit,
+        page: 1,
+      })
+      for (const row of due.docs) {
+        const id = String(row.id)
+        try {
+          if (entry.onExpire === 'delete') {
+            await deleteOne({ collection: collection.slug, id, overrideAccess: true })
+          } else if (entry.onExpire === 'archive') {
+            await update(
+              {
+                collection: collection.slug,
+                id,
+                data: { _status: 'draft', _archived_at: nowIso } as Row,
+                overrideAccess: true,
+              },
+              'unpublish',
+            )
+          } else {
+            await update(
+              {
+                collection: collection.slug,
+                id,
+                data: { _status: 'draft' } as Row,
+                overrideAccess: true,
+              },
+              'unpublish',
+            )
+          }
+          await recordAudit({
+            action: 'content.expire',
+            collection: collection.slug,
+            documentId: id,
+            overrideAccess: true,
+            meta: { action: entry.onExpire, expireField: entry.expireField, expiredAt: nowIso },
+          })
+          processed.push({ collection: collection.slug, id, action: entry.onExpire })
+        } catch (err) {
+          // Resilient drain: a single doc failing (a hook throwing, a referential restrict
+          // on delete, …) is logged and skipped so the rest of the queue still drains. The
+          // underlying op is transactional per-doc, so a failure never leaves a half-write.
+          logger?.warn(
+            `Content lifecycle skipped (${entry.onExpire}): ${collection.slug}/${id}`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
+    }
+    return { processed }
+  }
+
   async function unpublish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
     if (!draftsOn(collection))
@@ -2765,6 +2864,14 @@ export function createOperations(ctx: OperationCtx) {
         // schedule one. Clearing it to null is harmless and stays allowed.
         if (!override && at != null && req.user?.principalType === 'agent') throw new ForbiddenError()
         row._scheduled_at = at == null ? null : new Date(String(at)).toISOString()
+      }
+      // Content-lifecycle archive marker. `_archived_at` is a SERVER-MANAGED system column:
+      // it is written ONLY by the trusted (overrideAccess) expiry drain, never by a client.
+      // A non-override caller can never set or clear it — any incoming value is ignored, so
+      // the column is field-locked (a client can't fake "archived", nor un-archive a doc).
+      if (override && Object.prototype.hasOwnProperty.call(opts.data, '_archived_at')) {
+        const archivedAt = (opts.data as Row)._archived_at
+        row._archived_at = archivedAt == null ? null : new Date(String(archivedAt)).toISOString()
       }
     }
     const updated = await db.update({ collection: collection.slug, id: opts.id, data: row })
@@ -4712,6 +4819,7 @@ export function createOperations(ctx: OperationCtx) {
     publish,
     unpublish,
     processScheduledPublishes,
+    processContentLifecycle,
     findAuditLog,
     recordAudit,
     enqueue,

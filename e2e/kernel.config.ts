@@ -59,6 +59,8 @@ export default defineConfig({
   tenancy: { field: 'tenant', collections: ['notes'] },
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
+  // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).
+  lifecycle: { collections: [{ slug: 'articles', expireField: 'expire_at', onExpire: 'archive' }] },
   // Content analytics: capture views/searches/AI-retrievals → aggregate insights (no PII).
   analytics: { enabled: true, autoCapture: true },
   // Real-time: a durable change feed (CDC) + live SSE stream for reactive UIs/agents.
@@ -169,6 +171,8 @@ export default defineConfig({
         { name: 'body', type: 'richText', preset: 'standard' },
         // Self-relationship so the knowledge graph has edges to traverse.
         { name: 'related', type: 'relationship', relationTo: 'articles', hasMany: true },
+        // Lifecycle: when this passes, the article auto-archives on the next cron drain.
+        { name: 'expire_at', type: 'date' },
       ],
     },
   ],

@@ -872,6 +872,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     publish: ops.publish,
     unpublish: ops.unpublish,
     processScheduledPublishes: ops.processScheduledPublishes,
+    processContentLifecycle: ops.processContentLifecycle,
     findAuditLog: ops.findAuditLog,
     enqueue: ops.enqueue,
     runDueJobs: ops.runDueJobs,

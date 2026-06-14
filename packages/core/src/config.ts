@@ -9,8 +9,11 @@ import type {
   EvalRule,
   GlobalConfig,
   KernelConfig,
+  OnExpireAction,
   SanitizedAudiences,
   SanitizedConfig,
+  SanitizedLifecycle,
+  SanitizedLifecycleCollection,
   SanitizedDiscoverability,
   SanitizedEdge,
   SanitizedExperiment,
@@ -545,6 +548,70 @@ function sanitizeReview(review: KernelConfig['review'], hasAgents: boolean): { e
  */
 function sanitizeReleases(releases: KernelConfig['releases']): { enabled: boolean } {
   return { enabled: releases === true }
+}
+
+/** Default expiry date field for a lifecycle-managed collection. */
+const DEFAULT_LIFECYCLE_EXPIRE_FIELD = 'expire_at'
+
+/**
+ * Resolve the opt-in content-lifecycle setting (automatic expiry). OFF by default — when
+ * omitted nothing changes (no `_archived_at` column, the drain is a no-op). When set, each
+ * listed collection is validated FAIL-FAST:
+ *  - the slug must be a real, non-system collection;
+ *  - it must have DRAFTS enabled — every `onExpire` action (`unpublish`/`archive` move the
+ *    draft|published state machine, `delete` removes the doc) is only meaningful with the
+ *    draft lifecycle, and `_status` only exists on a drafts collection;
+ *  - the declared `expireField` (default `expire_at`) must already be declared on the
+ *    collection as a `date` field (the developer owns the schema — we never auto-add it,
+ *    so the field flows through normal field access, validation, and types).
+ * Each entry is fully defaulted; `archiveSlugs` lists the collections that take the
+ * `archive` action (the schema injects a server-managed `_archived_at` column for them).
+ */
+function sanitizeLifecycle(
+  lifecycle: KernelConfig['lifecycle'],
+  collectionsBySlug: Record<string, CollectionConfig>,
+  systemSlugs: Set<string>,
+): SanitizedLifecycle {
+  if (!lifecycle || !Array.isArray(lifecycle.collections) || lifecycle.collections.length === 0) {
+    return { enabled: false, collections: [], archiveSlugs: [] }
+  }
+  const seen = new Set<string>()
+  const resolved: SanitizedLifecycleCollection[] = []
+  const archiveSlugs: string[] = []
+  for (const entry of lifecycle.collections) {
+    const slug = entry.slug
+    assert(typeof slug === 'string' && slug.length > 0, 'every lifecycle collection needs a `slug`')
+    assert(!seen.has(slug), `duplicate lifecycle collection "${slug}"`)
+    seen.add(slug)
+    const collection = collectionsBySlug[slug]
+    assert(Boolean(collection) && !systemSlugs.has(slug), `lifecycle references unknown collection "${slug}"`)
+    assert(
+      resolveVersions(collection!.versions).drafts,
+      `lifecycle collection "${slug}" must have drafts enabled (versions: { drafts: true })`,
+    )
+    const onExpire: OnExpireAction = entry.onExpire ?? 'unpublish'
+    assert(
+      onExpire === 'unpublish' || onExpire === 'archive' || onExpire === 'delete',
+      `lifecycle collection "${slug}" has invalid onExpire "${onExpire}" (use 'unpublish' | 'archive' | 'delete')`,
+    )
+    const expireField = entry.expireField ?? DEFAULT_LIFECYCLE_EXPIRE_FIELD
+    assert(
+      typeof expireField === 'string' && expireField.length > 0,
+      `lifecycle collection "${slug}" has an invalid \`expireField\``,
+    )
+    const field = effectiveFields(collection!.fields).find((f) => 'name' in f && f.name === expireField)
+    assert(
+      Boolean(field),
+      `lifecycle collection "${slug}" has no field "${expireField}" — declare it as a \`date\` field (or set \`expireField\`)`,
+    )
+    assert(
+      field!.type === 'date',
+      `lifecycle collection "${slug}" field "${expireField}" must be a \`date\` field (got "${field!.type}")`,
+    )
+    resolved.push({ slug, expireField, onExpire })
+    if (onExpire === 'archive') archiveSlugs.push(slug)
+  }
+  return { enabled: true, collections: resolved, archiveSlugs }
 }
 
 /**
@@ -1118,6 +1185,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     tenancy,
     review: sanitizeReview(config.review, agents.length > 0),
     releases: sanitizeReleases(config.releases),
+    lifecycle: sanitizeLifecycle(config.lifecycle, collectionsBySlug, SYSTEM_SLUGS),
     signing: sanitizeSigning(config.signing),
     evals: sanitizeEvals(config.evals),
     workflows,

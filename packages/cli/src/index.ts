@@ -118,7 +118,8 @@ Commands:
   import             Import content OUT of another CMS — --from <source> (dry-run by default)
   import:json        Import a portable KernelCMS JSON export (--file)
   seed               Run the exported seed() function
-  jobs:run           Run all due background jobs once (drive from a cron)
+  jobs:run           Run due background jobs + drain scheduled publishes/releases + expire content (cron)
+  lifecycle:run      Retire expired content once — unpublish/archive/delete past-expiry docs (drive from a cron)
   generate:types     Write generated TypeScript types for the content model
   generate:module    Scaffold a new module (collection + endpoint) — <name> [--out path]
   dev                Migrate, then start the REST API server (development)
@@ -472,7 +473,32 @@ export async function run(argv: string[]): Promise<void> {
       const { config } = await loadConfig(flags)
       const kernel = await initKernel(config)
       const { ran, failed } = await kernel.runDueJobs()
-      console.log(`✓ Jobs: ${ran.length} ran, ${failed.length} failed.`)
+      // Drain the cron-driven content maintenance alongside background jobs: due scheduled
+      // publishes, due scheduled releases, and expired content (the lifecycle drain). Each
+      // is a no-op when its feature is disabled, so this stays cheap on a plain config.
+      const { published } = await kernel.processScheduledPublishes()
+      const releases = await kernel.processScheduledReleases()
+      const { processed } = await kernel.processContentLifecycle()
+      console.log(
+        `✓ Jobs: ${ran.length} ran, ${failed.length} failed; ` +
+          `${published.length} published, ${releases.published.length} releases, ${processed.length} expired.`,
+      )
+      await kernel.destroy()
+      break
+    }
+
+    case 'lifecycle:run': {
+      const { config } = await loadConfig(flags)
+      const kernel = await initKernel(config)
+      const { processed } = await kernel.processContentLifecycle()
+      const byAction = processed.reduce<Record<string, number>>((acc, p) => {
+        acc[p.action] = (acc[p.action] ?? 0) + 1
+        return acc
+      }, {})
+      const summary = Object.entries(byAction)
+        .map(([action, count]) => `${count} ${action}`)
+        .join(', ')
+      console.log(`✓ Lifecycle: ${processed.length} expired${summary ? ` (${summary})` : ''}.`)
       await kernel.destroy()
       break
     }

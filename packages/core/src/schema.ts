@@ -108,6 +108,21 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         localized: false,
       })
     }
+    // Content lifecycle (archive action): a server-managed timestamp stamped when the
+    // expiry drain archives a doc. An archived doc is `_status:'draft'` (hidden from
+    // public reads) AND carries a non-null `_archived_at` (distinguishable from a plain
+    // draft). Client writes can never set/clear it (it is not a schema field, so
+    // `serializeDoc` drops it; the engine writes it only via the trusted drain).
+    if (config.lifecycle.archiveSlugs.includes(collection.slug)) {
+      columns.push({
+        name: '_archived_at',
+        type: 'timestamp',
+        required: false,
+        unique: false,
+        indexed: true,
+        localized: false,
+      })
+    }
     tables.push({
       table: tableForCollection(collection.slug),
       slug: collection.slug,

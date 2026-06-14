@@ -1133,6 +1133,15 @@ export interface KernelConfig {
    *  (`assertCanPublish`: publish access + the agent draft-only brake + the eval gate),
    *  so a release can never bypass publish authorization. */
   releases?: boolean
+  /** Content lifecycle: automatic expiry — the inverse of scheduled publish. Each listed
+   *  collection declares a DATE field that holds when a document expires; a cron-driven
+   *  drain (`kernel.processContentLifecycle`, wired into `kernel jobs:run` / `lifecycle:run`)
+   *  retires every PUBLISHED doc whose expiry has passed by `unpublish` (default),
+   *  `archive` (draft + a server-managed `_archived_at` stamp), or `delete`. OPT-IN and
+   *  disabled by default — nothing changes when omitted. The drain runs under override (a
+   *  TRUSTED system/cron op, like scheduled publish), is resilient per-doc + bounded, and
+   *  only ever touches the configured collections. See {@link LifecycleConfig}. */
+  lifecycle?: LifecycleConfig
   /** Content credentials (C2PA-style). When set, every publish signs a tamper-evident
    *  manifest of the document into the `_credentials` table; verify re-checks the
    *  signature + content hash. A shared HMAC `secret`, or an asymmetric key pair.
@@ -1404,6 +1413,10 @@ export interface SanitizedConfig {
   /** Resolved content-releases setting. `enabled` provisions the `_releases` +
    *  `_release_items` tables and the release ops; disabled by default (opt-in). */
   releases: { enabled: boolean }
+  /** Resolved content-lifecycle setting. `enabled` activates the expiry drain and injects
+   *  the server-managed `_archived_at` column on archive-action collections; disabled by
+   *  default (opt-in), in which case the drain is a no-op. */
+  lifecycle: SanitizedLifecycle
   /** The mutable runtime role store. Seeded from `config.rbac.roles`, merged from the
    *  `_roles` table at boot, and captured by reference by the injected access rules.
    *  Empty (`{ roles: {} }`) and unused when RBAC is disabled. */
@@ -1508,6 +1521,85 @@ export interface ProcessScheduledOptions {
   /** "Now" reference for which scheduled publishes are due. Defaults to current time. */
   now?: string | Date | number
   limit?: number
+}
+
+// ---------------------------------------------------------------------------
+// Content lifecycle — automatic expiry (the inverse of scheduled publish)
+//
+// A drafts/versioned collection declares a DATE field that holds when a document
+// expires; a cron-driven drain (`processContentLifecycle`) retires every PUBLISHED
+// doc whose expiry has passed by applying the configured `onExpire` action:
+//   - 'unpublish' → set `_status:'draft'` (the inverse of publish)
+//   - 'archive'   → set `_status:'draft'` AND stamp the server-managed `_archived_at`
+//                   timestamp (hidden from public reads, AND distinguishable from a
+//                   plain draft — an archived doc has a non-null `_archived_at`)
+//   - 'delete'    → remove the document
+// The drain runs under `overrideAccess:true` (a TRUSTED system/cron maintenance op,
+// exactly like `processScheduledPublishes`); it is resilient per-doc, bounded by
+// `limit`, and only ever touches the configured collections. The expiry date is set
+// by an editor through NORMAL field access (you can only set the expiry on content
+// you can already write); `_archived_at` is server-managed and field-locked (a client
+// can never set or clear it via a normal write).
+// ---------------------------------------------------------------------------
+
+/** What happens to a PUBLISHED document when its expiry passes. */
+export type OnExpireAction = 'unpublish' | 'archive' | 'delete'
+
+/** One lifecycle-managed collection: the date field that holds the expiry, and the
+ *  action to apply once it passes. */
+export interface LifecycleCollectionConfig {
+  /** The collection slug. Must be a real, drafts-enabled collection (the retire actions
+   *  operate on the draft|published state machine). */
+  slug: string
+  /** The `date` field on the collection that holds when a document expires. Default
+   *  `'expire_at'`. Must already be declared on the collection as a `date` field. */
+  expireField?: string
+  /** Action applied to a published doc once `expireField <= now`. Default `'unpublish'`. */
+  onExpire?: OnExpireAction
+}
+
+/** Opt-in content lifecycle. When omitted, NOTHING changes (no `_archived_at` column,
+ *  no drain behaviour). When set, each listed collection is validated (real, drafts-
+ *  enabled, with the declared date field) and `processContentLifecycle` retires its
+ *  expired published documents. See {@link KernelConfig.lifecycle}. */
+export interface LifecycleConfig {
+  collections: LifecycleCollectionConfig[]
+}
+
+/** One resolved lifecycle-managed collection (after sanitize) — fully defaulted. */
+export interface SanitizedLifecycleCollection {
+  slug: string
+  expireField: string
+  onExpire: OnExpireAction
+}
+
+/** Resolved content-lifecycle settings (after sanitize). `enabled:false` when
+ *  unconfigured (no `_archived_at` columns, the drain is a no-op). */
+export interface SanitizedLifecycle {
+  enabled: boolean
+  collections: SanitizedLifecycleCollection[]
+  /** Slugs that take the `archive` action — these get a server-managed `_archived_at`
+   *  column injected by the schema. */
+  archiveSlugs: string[]
+}
+
+export interface ProcessContentLifecycleOptions {
+  /** "Now" reference for which documents have expired. Defaults to the current time. */
+  now?: string | Date | number
+  /** Max documents to retire per collection in one drain. Default 1000; clamped. */
+  limit?: number
+}
+
+/** One retired document in a {@link ProcessContentLifecycleResult}. */
+export interface ContentLifecycleAction {
+  collection: string
+  id: string
+  action: OnExpireAction
+}
+
+export interface ProcessContentLifecycleResult {
+  /** Every document that was retired this drain, with the action applied. */
+  processed: ContentLifecycleAction[]
 }
 
 export interface ProcessScheduledResult {
@@ -1793,6 +1885,7 @@ export type AuditAction =
   | 'workflow.failed'
   | 'workflow.awaiting_review'
   | 'experiment.assign'
+  | 'content.expire'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -2685,6 +2778,14 @@ export interface Kernel {
    *  published under override — they were gate-checked at schedule time. Drive from a
    *  cron/job alongside `processScheduledPublishes`. */
   processScheduledReleases(opts?: ProcessScheduledReleasesOptions): Promise<ProcessScheduledReleasesResult>
+  /** Retire expired content (the inverse of `processScheduledPublishes`). For each
+   *  `config.lifecycle` collection, every PUBLISHED document whose `expireField <= now`
+   *  is retired by its `onExpire` action — `unpublish` (→ draft), `archive` (→ draft +
+   *  `_archived_at` stamp), or `delete`. Runs under override (a TRUSTED system/cron op),
+   *  resilient per-doc, bounded by `limit`, and confined to the configured collections.
+   *  A no-op (`{ processed: [] }`) when lifecycle is disabled. Drive from a cron/job
+   *  alongside `processScheduledPublishes` (`kernel jobs:run` / `kernel lifecycle:run`). */
+  processContentLifecycle(opts?: ProcessContentLifecycleOptions): Promise<ProcessContentLifecycleResult>
   /** Assemble a `blocks` page layout from a validated spec and create it through the
    *  normal `create()` path (agent draft-only brake + field scope + access all apply),
    *  so it lands in the review queue. Rejects unknown block types / fields. */
