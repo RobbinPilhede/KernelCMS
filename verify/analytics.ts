@@ -177,7 +177,7 @@ async function main() {
   )
   check(
     'Object.prototype is not polluted',
-    ({} as any).polluted === undefined && !Object.prototype.hasOwnProperty('polluted'),
+    ({} as any).polluted === undefined && !Object.prototype.hasOwnProperty.call(Object.prototype, 'polluted'),
   )
 
   // -------------------------------------------------------------------------

@@ -195,12 +195,12 @@ const MARK_MD: Record<Mark['type'], [open: string, close: string]> = {
  *  text run. Conservative on purpose: only the structural metacharacters, so
  *  ordinary prose stays readable. */
 function escapeMarkdown(s: string): string {
-  return s.replace(/([\\`*_{}\[\]()#+\-!>])/g, '\\$1')
+  return s.replace(/([\\`*_{}[\]()#+\-!>])/g, '\\$1')
 }
 
 /** Escape link/image label text: only `[` and `]` can break the `[label]` span. */
 function escapeMarkdownLabel(s: string): string {
-  return s.replace(/([\\\[\]])/g, '\\$1')
+  return s.replace(/([\\[\]])/g, '\\$1')
 }
 
 /** Escape a URL placed inside `(...)`: parentheses and whitespace would break the
