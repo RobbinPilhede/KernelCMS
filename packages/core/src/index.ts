@@ -18,6 +18,7 @@ export {
   CREDENTIALS_TABLE,
   WORKFLOW_RUNS_TABLE,
   CHANGES_TABLE,
+  ANALYTICS_TABLE,
 } from './schema'
 export { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
 export type { WorkflowEngine, WorkflowEngineCtx } from './workflows'
@@ -89,6 +90,25 @@ export {
   MAX_CHANGES_LIMIT,
 } from './realtime'
 export type { ChangeBus, SeqCounter, ChangeFeedCtx } from './realtime'
+export {
+  appendAnalytics,
+  buildAnalyticsRow,
+  computeInsights,
+  createAnalyticsSeq,
+  sanitizeMeta,
+  isAnalyticsEventType,
+  clampAnalyticsRetain,
+  clampInsightsLimit,
+  ANALYTICS_EVENT_TYPES,
+  DEFAULT_ANALYTICS_RETAIN,
+  MAX_ANALYTICS_RETAIN,
+  MIN_ANALYTICS_RETAIN,
+  DEFAULT_INSIGHTS_SCAN,
+  MAX_INSIGHTS_SCAN,
+  DEFAULT_INSIGHTS_LIMIT,
+  MAX_INSIGHTS_LIMIT,
+} from './analytics'
+export type { AnalyticsCtx, SanitizedAnalyticsEvent } from './analytics'
 export { memorySearch, attachSearch, extractSearchText } from './search'
 export {
   memoryVector,

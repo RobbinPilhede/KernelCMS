@@ -74,6 +74,15 @@ export const CREDENTIALS_TABLE = '_credentials'
  *  `seq` is indexed (the cursor scan + trim both order by it). */
 export const CHANGES_TABLE = '_changes'
 
+/** Storage table holding content-analytics events — one metadata-only row per captured
+ *  content-usage event (view / search / ai_retrieval / citation / variant_impression /
+ *  conversion / custom). Provisioned only when `config.analytics` is enabled. NO PII is
+ *  ever stored: no principal id/IP/visitor key/email/token — only content/event metadata.
+ *  `seq` (the monotonic cursor + trim order), `at`, `type`, `collection`, `documentId`,
+ *  `experiment`, and `variant` are indexed so the bounded insight scans filter efficiently.
+ *  Never reachable via generic CRUD (like `_audit`/`_changes`). */
+export const ANALYTICS_TABLE = '_analytics'
+
 /** Storage table holding the durable workflow run log — one row per workflow run,
  *  recording its status, trigger, and per-step status/log. Provisioned only when
  *  `config.workflows` is set. The engine reads/writes it via the trusted (overrideAccess)
@@ -342,6 +351,32 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'event', type: 'text', required: true, unique: false, indexed: true, localized: false },
         { name: 'principalId', type: 'text', required: false, unique: false, indexed: false, localized: false },
         { name: 'principalType', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Content-analytics events (CDC-style metadata outbox), provisioned only when
+  // analytics is enabled. A flat metadata row: `seq` (monotonic cursor + trim order),
+  // `at`, the event `type`, the target collection/documentId, the search `query` TERMS,
+  // the experiment+variant, a numeric `value`, and a non-PII `meta` JSON. NO principal,
+  // IP, visitor key, email, or token column exists — there is nowhere to store PII.
+  if (config.analytics.enabled) {
+    tables.push({
+      table: ANALYTICS_TABLE,
+      slug: ANALYTICS_TABLE,
+      columns: [
+        { name: 'seq', type: 'integer', required: true, unique: true, indexed: true, localized: false },
+        { name: 'at', type: 'timestamp', required: true, unique: false, indexed: true, localized: false },
+        { name: 'type', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'collection', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'documentId', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'query', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'experiment', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'variant', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'value', type: 'real', required: false, unique: false, indexed: false, localized: false },
+        { name: 'meta', type: 'json', required: false, unique: false, indexed: false, localized: false },
       ],
       timestamps: true,
       singleton: false,

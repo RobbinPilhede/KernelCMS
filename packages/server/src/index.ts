@@ -65,6 +65,11 @@ export interface HandlerOptions {
    * when omitted.
    */
   admin?: boolean | { path?: string; scripts?: string[] }
+  /** Allow UNAUTHENTICATED `POST /api/_analytics/track` calls (e.g. a public site tracking
+   *  page views). Default false: tracking then requires an authenticated principal. Even
+   *  when true, `track` can ONLY ever write the `_analytics` table (never a content
+   *  collection) and NO PII is stored — the request principal is never recorded. */
+  publicTrack?: boolean
   /** Expose a generated GraphQL endpoint at `<api>/graphql` (POST). */
   graphql?: boolean
   /** Serve an OpenAPI spec at `<api>/openapi` and a Scalar API reference at
@@ -577,6 +582,38 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     return json(kernel.assignVariant({ experiment: slug, key }))
   }
 
+  // POST /_analytics/track -> capture ONE content-usage event into the bounded
+  // `_analytics` table. NO PII is ever stored: the request principal is NEVER recorded,
+  // and a client `meta` is sanitized (PII-ish + proto keys stripped). `track` can ONLY
+  // write `_analytics` — a `type`/`collection` value can never redirect the write to a
+  // content collection. Gating: by default requires an authenticated principal; set
+  // `publicTrack: true` to allow anonymous tracking (a public site recording views).
+  // Resilient: a tracking failure never surfaces — the response is always 202 Accepted.
+  if (segments[0] === '_analytics' && segments[1] === 'track' && segments.length === 2) {
+    if (method !== 'POST') return methodNotAllowed()
+    if (!kernel.config.analytics.enabled) {
+      return json({ error: { code: 'NOT_FOUND', message: 'Analytics is not enabled.' } }, 404)
+    }
+    if (!user && options.publicTrack !== true) throw new UnauthorizedError()
+    const body = await readBody(request)
+    const type = String(body.type ?? '')
+    // The body is fully untrusted: only the allowed scalar dimensions are forwarded, and
+    // NO principal/identity field is ever passed through (core also never reads one).
+    await kernel.track({
+      type: type as never,
+      ...(typeof body.collection === 'string' ? { collection: body.collection } : {}),
+      ...(typeof body.documentId === 'string' ? { documentId: body.documentId } : {}),
+      ...(typeof body.query === 'string' ? { query: body.query } : {}),
+      ...(typeof body.experiment === 'string' ? { experiment: body.experiment } : {}),
+      ...(typeof body.variant === 'string' ? { variant: body.variant } : {}),
+      ...(typeof body.value === 'number' ? { value: body.value } : {}),
+      ...(body.meta && typeof body.meta === 'object' && !Array.isArray(body.meta)
+        ? { meta: body.meta as Record<string, unknown> }
+        : {}),
+    })
+    return json({ accepted: true }, 202)
+  }
+
   // /openapi -> machine-readable contract; /docs -> Scalar API reference UI.
   // The path stays reserved whether or not the feature is on: when disabled it
   // 404s (rather than disclosing the spec) instead of falling through to a
@@ -683,6 +720,30 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
         page: toNum(q.get('page')) ?? 1,
       })
       if (q.get('format') === 'csv') return auditCsvResponse(result.docs)
+      return json(result)
+    }
+
+    // GET /_admin/insights -> aggregate content insights (top content, top queries,
+    // variant performance, activity over time, the AI-retrieval leaderboard). REVIEWER-
+    // gated (admin OR editor; never an agent). Every result is an AGGREGATE over content
+    // events — there is no per-user data to leak (none is stored). Core additionally
+    // filters insight rows to the collections THIS reviewer can read (the request `user`
+    // is passed, never overrideAccess), so an editor never sees a hidden collection's
+    // counts. Returns an empty result when analytics is disabled.
+    if (segments[1] === 'insights' && segments.length === 2 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Insights access requires an admin or editor role.')
+      const q = url.searchParams
+      const metric = String(q.get('metric') ?? 'top_content')
+      const result = await kernel.insights({
+        metric: metric as never,
+        ...(q.get('collection') ? { collection: q.get('collection')! } : {}),
+        ...(q.get('type') ? { type: q.get('type')! as never } : {}),
+        ...(q.get('from') ? { from: q.get('from')! } : {}),
+        ...(q.get('to') ? { to: q.get('to')! } : {}),
+        ...(toNum(q.get('limit')) !== undefined ? { limit: toNum(q.get('limit')) } : {}),
+        req: { user },
+      })
       return json(result)
     }
 

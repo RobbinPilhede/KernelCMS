@@ -721,6 +721,144 @@ export interface ChangesResult {
   cursor: number
 }
 
+// ---------------------------------------------------------------------------
+// Content analytics & insights — privacy-first capture + aggregate
+//
+// Content EVENTS (view / search / ai_retrieval / citation / variant_impression /
+// conversion / custom) are appended to a single `_analytics` system table as
+// METADATA-ONLY rows, then answered with AGGREGATE insights. NO PII is ever stored:
+// no user id, IP, raw visitor key, email, or token — only content/event metadata.
+// `query` is the search TERMS, not a user identity. `autoCapture` (opt-in) auto-emits
+// an `ai_retrieval` per doc a semantic/hybrid/graph search returns and a
+// `variant_impression` when `assignVariant` runs.
+// ---------------------------------------------------------------------------
+
+/** The kind of content-usage event recorded in `_analytics`. */
+export type AnalyticsEventType =
+  | 'view'
+  | 'search'
+  | 'ai_retrieval'
+  | 'citation'
+  | 'variant_impression'
+  | 'conversion'
+  | 'custom'
+
+/** Content analytics config. OPT-IN: when omitted, nothing changes (no `_analytics`
+ *  table, no capture, no auto-capture). When enabled, content events are appended to
+ *  the bounded `_analytics` table and answered with aggregate `insights`. */
+export interface AnalyticsConfig {
+  enabled?: boolean
+  /** Max rows kept in `_analytics` (oldest `seq` trimmed first, like the change feed).
+   *  Default 100000; clamped to a sane bound. */
+  retain?: number
+  /** Auto-emit `ai_retrieval` events (one per returned doc) from semantic / hybrid /
+   *  graph search, and a `variant_impression` from `assignVariant`. OFF by default, so
+   *  capture adds zero overhead unless explicitly turned on. */
+  autoCapture?: boolean
+}
+
+/** Resolved analytics settings (after sanitize). `enabled:false` when unconfigured. */
+export interface SanitizedAnalytics {
+  enabled: boolean
+  /** Bounded `_analytics` retention (max rows). */
+  retain: number
+  /** Whether search / assignVariant auto-emit analytics events. */
+  autoCapture: boolean
+}
+
+/** Capture one content-usage event. NO PII: never pass (and the engine never stores) a
+ *  user id, IP, raw visitor key, email, or token. `query` is the search TERMS only;
+ *  `meta` is for NON-PII aggregate dimensions only (PII-ish + proto keys are stripped). */
+export interface TrackOptions {
+  type: AnalyticsEventType
+  /** The content collection the event is about (nullable — e.g. a bare `search`). */
+  collection?: string
+  /** The document the event is about (nullable). */
+  documentId?: string
+  /** Search / retrieval TERMS (NOT user identity); nullable. */
+  query?: string
+  /** Experiment slug, for variant impressions/conversions; nullable. */
+  experiment?: string
+  /** Variant / segment id, for variant impressions/conversions; nullable. */
+  variant?: string
+  /** A numeric measure (e.g. a conversion amount or count); nullable. */
+  value?: number
+  /** Non-PII aggregate dimensions only. Sanitized on write: prototype-pollution AND
+   *  PII-ish keys are stripped, values coerced to primitives + size-bounded. */
+  meta?: Record<string, unknown>
+  /** Request context. Used ONLY for HTTP-layer gating — NO field of it (no user id /
+   *  token) is ever copied onto the stored row. */
+  req?: Partial<RequestContext>
+  /** Trusted server call marker (carried for symmetry; never relaxes the no-PII rule). */
+  overrideAccess?: boolean
+}
+
+/** The aggregate insight to compute. All are AGGREGATES over content events (no per-user
+ *  data exists to leak). `ai_retrieval_leaderboard` is the headline "how AI uses your
+ *  content" view (top content among `ai_retrieval` events). */
+export type InsightsMetric =
+  | 'top_content'
+  | 'top_queries'
+  | 'variant_performance'
+  | 'activity'
+  | 'ai_retrieval_leaderboard'
+
+export interface InsightsOptions {
+  metric: InsightsMetric
+  /** Narrow to one collection. */
+  collection?: string
+  /** Narrow to one event type (e.g. `view` vs `ai_retrieval` for `top_content`). */
+  type?: AnalyticsEventType
+  /** ISO inclusive lower bound on the event time. */
+  from?: string
+  /** ISO inclusive upper bound on the event time. */
+  to?: string
+  /** Max result rows. Clamped. Default 20. */
+  limit?: number
+  /** Reviewer request context — its read access scopes which collections' counts are
+   *  returned (the HTTP layer is also admin/editor-gated). */
+  req?: Partial<RequestContext>
+  /** Trusted server call: bypass the per-collection read filter. Never set from an
+   *  untrusted boundary — the REST route always passes the request principal. */
+  overrideAccess?: boolean
+}
+
+/** One row in a `top_content` / `ai_retrieval_leaderboard` insight. */
+export interface ContentInsightRow {
+  collection: string
+  documentId: string
+  count: number
+}
+
+/** One row in a `top_queries` insight. */
+export interface QueryInsightRow {
+  query: string
+  count: number
+}
+
+/** One row in a `variant_performance` insight. `rate` is present only when impressions > 0. */
+export interface VariantInsightRow {
+  experiment: string
+  variant: string
+  impressions: number
+  conversions: number
+  rate?: number
+}
+
+/** One row in an `activity` insight: a UTC day bucket with total + per-type counts. */
+export interface ActivityInsightRow {
+  bucket: string
+  count: number
+  byType: Record<string, number>
+}
+
+export type InsightRow = ContentInsightRow | QueryInsightRow | VariantInsightRow | ActivityInsightRow
+
+export interface InsightsResult {
+  metric: InsightsMetric
+  rows: InsightRow[]
+}
+
 /** A pluggable embeddings provider: maps N input strings to N equal-dimension
  *  vectors. Provider-agnostic (OpenAI/Cohere/local/etc.) — the user supplies it. */
 export type EmbedFn = (texts: string[]) => Promise<number[][]>
@@ -792,6 +930,13 @@ export interface KernelConfig {
    *  a live SSE stream, so UIs update live and agents react to changes. OPT-IN; events
    *  are metadata-only and access-filtered per subscriber. See {@link RealtimeConfig}. */
   realtime?: RealtimeConfig
+  /** Content analytics & insights: capture content-usage events (views, searches,
+   *  AI/RAG retrievals, variant impressions, conversions) into a bounded `_analytics`
+   *  system table and answer them with privacy-first AGGREGATE insights. OPT-IN and
+   *  disabled by default. NO PII is ever stored. `autoCapture` (opt-in) auto-emits
+   *  `ai_retrieval` events from search and `variant_impression` from `assignVariant`.
+   *  See {@link AnalyticsConfig}. */
+  analytics?: AnalyticsConfig
   /** Search adapter (e.g. `memorySearch()`). Collections with `search` enabled
    *  are indexed on write and queried via `kernel.search`. */
   search?: SearchAdapter
@@ -1074,6 +1219,10 @@ export interface SanitizedConfig {
   /** Resolved real-time setting. `enabled` provisions the `_changes` outbox + change-feed
    *  hooks + the in-process bus; disabled by default (opt-in). */
   realtime: SanitizedRealtime
+  /** Resolved content-analytics setting. `enabled` provisions the `_analytics` table and
+   *  enables `track`/`insights`; `autoCapture` toggles search/assignVariant auto-emit.
+   *  Disabled by default (opt-in). */
+  analytics: SanitizedAnalytics
   /** Configured search adapter. */
   search?: SearchAdapter
   /** Per-collection searchable field names. */
@@ -2334,6 +2483,18 @@ export interface Kernel {
    *  it to read that variant's personalized content. Throws when experiments are not
    *  configured or the slug is unknown. */
   assignVariant(opts: AssignVariantOptions): AssignVariantResult
+  /** Capture one content-usage event into the bounded `_analytics` table. Privacy-first:
+   *  NO PII is stored (no user id/IP/visitor key/email/token) — a `meta` is sanitized to
+   *  non-PII scalar dimensions. Resilient: a tracking failure logs + NEVER throws into the
+   *  caller. `track` can only ever write `_analytics`, never another collection. No-op when
+   *  analytics is disabled or the `type` is invalid. */
+  track(opts: TrackOptions): Promise<void>
+  /** Aggregate content insights (top content, top queries, variant performance, activity
+   *  over time, the AI-retrieval leaderboard). Every result is an AGGREGATE over content
+   *  events — no per-user data exists to leak. The scan + result size are bounded (DoS
+   *  guard); rows are filtered to collections the caller can read. Returns an empty result
+   *  when analytics is disabled. Admin/editor-gated at the HTTP layer. */
+  insights(opts: InsightsOptions): Promise<InsightsResult>
   /** Apply the schema to the database (create tables / add columns / build indexes),
    *  recording a `_migrations` journal row when anything is applied. Pass
    *  `{ dryRun: true }` to compute the exact SQL it WOULD run and return the report

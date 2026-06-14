@@ -13,8 +13,11 @@ import type {
   GraphResult,
   GraphSearchOptions,
   GraphSearchResult,
+  InsightsOptions,
+  InsightsResult,
   Kernel,
   KernelConfig,
+  TrackOptions,
   MigrateRunOptions,
   RequestContext,
   RollbackOptions,
@@ -39,11 +42,13 @@ import {
   type ChangeFeedCtx,
 } from './realtime'
 import { CHANGES_TABLE } from './schema'
+import { appendAnalytics, buildAnalyticsRow, computeInsights, createAnalyticsSeq, type AnalyticsCtx } from './analytics'
 import { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
 import { WORKFLOW_JOB_TASK } from './config'
 import { attachSearch } from './search'
 import { attachSemantic, reciprocalRankFusion } from './vector'
 import { applyPlugins } from './plugins'
+import { evalAccess } from './access'
 import { ROLES_TABLE, cloneRoleDef } from './rbac'
 import { storageFields } from './fields'
 import {
@@ -438,6 +443,20 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   // exists; a missing table degrades gracefully (counter starts at 0).
   if (changeFeedCtx) changeFeedCtx.seq = await createSeqCounter(sanitized.db)
 
+  // Content analytics: a per-kernel capture ctx whose monotonic seq is seeded from the
+  // highest `seq` already in `_analytics` (so ordering + trim survive restarts). Built
+  // only when analytics is enabled; writes go to the RAW db (a system table), never
+  // through the content ops, so `track` can NEVER touch a content collection.
+  let analyticsCtx: AnalyticsCtx | null = null
+  if (sanitized.analytics.enabled) {
+    analyticsCtx = {
+      db: sanitized.db,
+      retain: sanitized.analytics.retain,
+      seq: await createAnalyticsSeq(sanitized.db),
+      logger,
+    }
+  }
+
   // Optional read-through cache. The operation core runs against `opDb`; when a
   // cache adapter is configured and collections opt in, that is a cache-wrapping
   // adapter, otherwise the raw db. Access control still runs on every call.
@@ -537,9 +556,68 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Content analytics: capture + insights + (opt-in) auto-capture
+  // -------------------------------------------------------------------------
+
+  /** Append a sanitized analytics event. No-op when analytics is off or the `type` is
+   *  invalid; resilient (never throws into the caller). NO PII is ever read off `opts`. */
+  const track = async (opts: TrackOptions): Promise<void> => {
+    if (!analyticsCtx) return
+    const event = buildAnalyticsRow(opts)
+    if (!event) {
+      logger.warn(`Ignoring analytics event with invalid type "${String(opts?.type)}"`)
+      return
+    }
+    await appendAnalytics(analyticsCtx, event)
+  }
+
+  /** Fire an analytics event WITHOUT awaiting it, swallowing any rejection — the
+   *  best-effort auto-capture path inside search / assignVariant must add no latency and
+   *  never affect the operation's result. No-op unless `autoCapture` is on. */
+  const autoEmit = (opts: TrackOptions): void => {
+    if (!analyticsCtx || !sanitized.analytics.autoCapture) return
+    void track(opts).catch(() => {})
+  }
+
+  /** Auto-emit an `ai_retrieval` event per access-checked doc a search returned — the
+   *  "AI retrieved this content" signal. Off unless `autoCapture` is on. */
+  const emitRetrieval = (collection: string, query: string, docs: Doc[]): void => {
+    if (!analyticsCtx || !sanitized.analytics.autoCapture) return
+    const terms = String(query ?? '')
+    for (const doc of docs) {
+      autoEmit({ type: 'ai_retrieval', collection, documentId: String(doc.id), query: terms })
+    }
+  }
+
+  const insights = async (opts: InsightsOptions): Promise<InsightsResult> => {
+    if (!sanitized.analytics.enabled) {
+      return computeInsights(sanitized.analytics, sanitized.db, () => true, opts)
+    }
+    const override = opts.overrideAccess === true
+    // Restrict insight rows to collections the caller can READ. A trusted (override)
+    // call sees everything; otherwise a collection passes only when its read access
+    // evaluates to a global `true` for this principal (a row-scoped `Where` can't gate
+    // an aggregate count, so it fails closed — the editor never learns its counts).
+    let readable: (collection: string) => boolean = () => true
+    if (!override) {
+      const allowed = new Set<string>()
+      const req = buildChangeReq(opts.req)
+      for (const collection of sanitized.collections) {
+        // System / hidden collections are never analytics subjects worth leaking.
+        const decision = await evalAccess(collection.access?.read, { req, id: undefined as never })
+        if (decision === true) allowed.add(collection.slug)
+      }
+      readable = (collection: string) => allowed.has(collection)
+    }
+    return computeInsights(sanitized.analytics, sanitized.db, readable, opts)
+  }
+
   const kernel: Kernel = {
     config: sanitized,
     db: sanitized.db,
+    track,
+    insights,
     async changes(opts: ChangesOptions = {}): Promise<ChangesResult> {
       return readChanges(sanitized, sanitized.db, changeFilter, buildChangeReq, opts)
     },
@@ -609,6 +687,10 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
         limit,
         opts,
       )
+      // Auto-capture (opt-in): one `ai_retrieval` per returned doc. The set is already
+      // access-filtered (loadAccessChecked dropped anything the caller can't read), so
+      // we never emit for content the caller couldn't see. `query` = the search terms.
+      emitRetrieval(opts.collection, query, docs)
       return { docs }
     },
     async hybridSearch<T extends Doc = Doc>(opts: import('./types').HybridSearchOptions): Promise<{ docs: T[] }> {
@@ -645,6 +727,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
         limit,
         opts,
       )
+      emitRetrieval(opts.collection, query, docs)
       return { docs }
     },
     find: ops.find,
@@ -718,7 +801,13 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     geoDocument: discoverability.geoDocument,
     jsonLd: structuredData.jsonLd,
     jsonLdScript: structuredData.jsonLdScript,
-    assignVariant: ops.assignVariant,
+    assignVariant(opts) {
+      const result = ops.assignVariant(opts)
+      // Auto-capture (opt-in): a `variant_impression` for the assignment. ONLY the
+      // experiment + variant are recorded — never the raw visitor `key` (no PII).
+      autoEmit({ type: 'variant_impression', experiment: result.experiment, variant: result.variant })
+      return result
+    },
     async migrate(opts?: MigrateRunOptions): Promise<MigrationReport> {
       const dryRun = opts?.dryRun === true
       const report = await sanitized.db.migrate(schema, { dryRun })
@@ -865,7 +954,19 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
         })
         return { docs: result.docs }
       }
-      return runGraphSearch<T>(ops, sanitized, seedSearch, opts)
+      const result = await runGraphSearch<T>(ops, sanitized, seedSearch, opts)
+      // Auto-capture (opt-in): an `ai_retrieval` per access-checked SEED doc (the content
+      // the GraphRAG answer was grounded in). Seeds carry their source collection in the
+      // node `ref` ("collection:id"); emit per seed using that collection.
+      if (analyticsCtx && sanitized.analytics.autoCapture) {
+        const query = String(opts.query ?? '')
+        for (const seed of result.seeds) {
+          const node = result.nodes.find((n) => n.id === String(seed.id))
+          const collection = node?.collection
+          if (collection) autoEmit({ type: 'ai_retrieval', collection, documentId: String(seed.id), query })
+        }
+      }
+      return result
     },
     async destroy() {
       if (sanitized.cache) await sanitized.cache.destroy()

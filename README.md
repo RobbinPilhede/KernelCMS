@@ -133,6 +133,17 @@ untrusted audience is honored only if it's a configured segment, and per-segment
 merge without clobbering each other — micro-experiences and experiments from the same typed
 model, no separate personalization platform.
 
+And content comes with **analytics**. Opt into `analytics` and KernelCMS records a
+content event for every view, search, conversion, and — uniquely — every AI retrieval,
+then rolls them up into aggregate insights (`top_content`, `top_queries`,
+`variant_performance`, `activity`, and an `ai_retrieval_leaderboard`). With
+`autoCapture`, semantic/hybrid/graph search and `assignVariant` emit those signals
+themselves, so you see not just how your content performs but **how AI answer engines
+retrieve it**, from the same model. It is **privacy-first**: no third-party analytics and
+**no PII** — the event row has no user/IP/visitor/email column at all, the principal is
+never recorded, and `track` strips PII-ish keys from `meta`. Insights are aggregates only,
+filtered to collections the caller can read. Red-teamed to Risk LOW.
+
 ---
 
 ## Quickstart
@@ -225,6 +236,7 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Semantic & hybrid search (RAG-native):** set a pluggable `embeddings: { embed }` (your OpenAI/Cohere/local model — no embedding dependency baked in) and mark a collection's search `semantic: true`. Fields are embedded on every write into a vector store, and `kernel.semanticSearch(...)` / `kernel.hybridSearch(...)` (Reciprocal Rank Fusion of full-text + vector) plus `GET /api/:collection/semantic` and `/hybrid` are served through the same access-checked read path. Your CMS becomes your RAG knowledge base — see the [semantic search guide](docs/semantic-search.md).
 - **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change; the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
 - **Real-time change feed:** `realtime: { enabled: true }` turns on an access-filtered change feed — a durable pull feed for CDC and a live SSE push stream. See [Real-time](#real-time-change-feed-cdc--sse) below.
+- **Content analytics:** `analytics: { enabled: true, autoCapture: true }` records a content event per interaction (`kernel.track(...)`) and rolls them up (`kernel.insights(...)`) — including an `ai_retrieval_leaderboard` of what AI answer engines retrieve. Privacy-first: no third-party analytics, no PII at rest. See [Content analytics](#content-analytics--insights-incl-ai-retrieval-privacy-first) below.
 - **Payments & orders:** add the `commerce({ payment: stripePayment({ ... }) })` plugin and you get `products` + `orders` collections, a `POST /commerce/checkout` (totals recomputed server-side from real prices), and a signature-verified `POST /commerce/webhook` that transitions orders to paid/refunded. Stripe and a deterministic `testPayment()` adapter included.
 - **AI agents (MCP):** register `agents: [{ id, token, roles, fieldScope }]` and serve your kernel over the Model Context Protocol — `npx kernel mcp` (stdio, for Claude Desktop / Cursor) or `kernel mcp --http` (multi-agent, per-request scoped tokens). Tools are auto-generated from the same model that builds the OpenAPI spec (CRUD, count, version history, your opt-in `defineEndpoint` business logic, plus `kernel://schema` resources to introspect), and every call runs through the in-process Local API as a scoped principal — so an agent goes through the **same access pipeline as a human**: it only touches the fields you allow, **cannot publish** (drafts only, enforced by the engine), and is attributed in version history. The MCP layer enforces nothing on its own. Import from `kernelcms/mcp`; the MCP SDK is an optional peer dependency.
 - **Agentic workflows:** define `workflows: [{ slug, agent, trigger, steps }]` and an agent runs an autonomous content pipeline (draft → quality gate → human review) under the same guardrails as MCP. Triggers (`on: 'create' | 'update'`) enqueue a **durable** run via the jobs queue, so a slow agent step never blocks the content write; `runWorkflow(...)` / `POST /api/_admin/workflows/:slug/run` run a `manual` one. Content advances only through `ctx.evalGate(...)` (your content-CI evals) and `ctx.requestReview(...)` (human approval in the inbox) — the agent itself physically cannot publish. See [agentic workflows](docs/agentic-workflows.md).
@@ -614,6 +626,54 @@ failure never breaks the content write. *(Honest notes: the hook-based feed emit
 create/update/delete, so a publish currently reads as `update`; `seq` is per-node — single-node
 ordering, multi-node needs a shared sequence.)* Pairs with [workflows](docs/agentic-workflows.md)
 (react to a change) and search (live re-index). See the [real-time guide](docs/realtime.md).
+
+### Content analytics & insights (incl. AI-retrieval, privacy-first)
+
+Opt into `analytics` and KernelCMS records a content event per interaction and rolls
+them up into aggregate insights — including, uniquely, **how AI answer engines retrieve
+your content**, from the same model. It is off by default; `retain` (default ~100k,
+clamped) bounds the event table, and `autoCapture` (default `false`) turns on the
+zero-touch AI-retrieval and experiment signals.
+
+```ts
+export default defineConfig({
+  analytics: { enabled: true, retain: 100000, autoCapture: true }, // all opt-in
+  collections: [/* … */],
+})
+```
+
+- **Capture.** `kernel.track({ type, collection?, documentId?, query?, experiment?,
+  variant?, value?, meta? })` records one event; `type` is `'view' | 'search' |
+  'ai_retrieval' | 'citation' | 'variant_impression' | 'conversion' | 'custom'`. It is
+  **resilient** — a tracking failure is logged and never throws into the caller. REST:
+  `POST /api/_analytics/track` (auth required unless the server sets `publicTrack`).
+- **Auto-capture (`autoCapture: true`).** `semanticSearch` / `hybridSearch` /
+  `graphSearch` emit an `ai_retrieval` event per returned (access-checked) document with
+  the search terms as `query`, and `assignVariant` emits a `variant_impression`.
+  Fire-and-forget, **zero added latency**, a complete no-op when off.
+- **Insights.** `kernel.insights({ metric, collection?, type?, from?, to?, limit? })` →
+  `top_content`, `top_queries`, `variant_performance`, `activity`, and
+  `ai_retrieval_leaderboard`. REST: `GET /api/_admin/insights?metric=…` (admin/editor-gated).
+
+```ts
+await kernel.track({ type: 'view', collection: 'posts', documentId })           // capture
+const board = await kernel.insights({ metric: 'ai_retrieval_leaderboard', limit: 20 }) // roll-up
+```
+
+```bash
+curl -X POST http://localhost:3000/api/_analytics/track -d '{"type":"view","collection":"posts","documentId":"<id>"}'
+curl "http://localhost:3000/api/_admin/insights?metric=top_content&from=2026-06-01&limit=20"
+```
+
+**The privacy-first, no-PII guarantee:** there is **no user/IP/visitor/email/token
+column** on the event row — only content/event metadata — and the authenticated principal
+is **never recorded**; `track` strips PII-ish + prototype-pollution keys from `meta`
+(keeping only scalar non-PII dimensions). `track` can only ever write `_analytics`
+(`collection` is inert data, not a write target). Insights are **aggregates only**,
+filtered to collections the caller can read (a hidden collection's counts never leak), and
+the route is admin/editor-gated; retention, scan, and result size are bounded. No
+third-party analytics, no PII. Red-teamed to Risk LOW. See the
+[analytics guide](docs/analytics.md).
 
 ### AI discoverability (llms.txt & GEO)
 

@@ -2,6 +2,7 @@ import type {
   AccessFn,
   AgentConfig,
   AnyField,
+  SanitizedAnalytics,
   CollectionConfig,
   ConfigField,
   DiscoverabilityCollectionConfig,
@@ -20,6 +21,7 @@ import type {
   WorkflowDefinition,
 } from './types'
 import { clampRetain } from './realtime'
+import { clampAnalyticsRetain } from './analytics'
 import { effectiveFields, joinFields } from './fields'
 import { FORBIDDEN_SEGMENT_KEYS } from './personalization'
 import { consoleEmail, type EmailAdapter } from './email'
@@ -356,6 +358,20 @@ function sanitizeAgents(agents: AgentConfig[] | undefined): AgentConfig[] {
 function sanitizeRealtime(realtime: KernelConfig['realtime']): SanitizedRealtime {
   if (!realtime || realtime.enabled !== true) return { enabled: false, retain: clampRetain(undefined) }
   return { enabled: true, retain: clampRetain(realtime.retain) }
+}
+
+/** Resolve the opt-in content-analytics setting. Disabled unless explicitly turned on.
+ *  When on, `retain` (the `_analytics` row cap) is clamped to a sane bound and
+ *  `autoCapture` (search / assignVariant auto-emit) defaults OFF. */
+function sanitizeAnalytics(analytics: KernelConfig['analytics']): SanitizedAnalytics {
+  if (!analytics || analytics.enabled !== true) {
+    return { enabled: false, retain: clampAnalyticsRetain(undefined), autoCapture: false }
+  }
+  return {
+    enabled: true,
+    retain: clampAnalyticsRetain(analytics.retain),
+    autoCapture: analytics.autoCapture === true,
+  }
 }
 
 /** Normalize the opt-in audit setting. Disabled unless explicitly turned on. */
@@ -970,6 +986,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     agents,
     audit: sanitizeAudit(config.audit),
     realtime: sanitizeRealtime(config.realtime),
+    analytics: sanitizeAnalytics(config.analytics),
     rbac: { enabled: rbacEnabled },
     rbacStore,
     review: sanitizeReview(config.review, agents.length > 0),
