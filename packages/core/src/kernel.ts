@@ -3,10 +3,13 @@ import { randomUUID } from 'node:crypto'
 import type {
   BackfillOptions,
   BackfillResult,
+  CacheTagsOptions,
   ChangeEvent,
   ChangesOptions,
   ChangesResult,
   Doc,
+  PurgeFeedOptions,
+  PurgeFeedResult,
   GraphEdge,
   GraphNode,
   GraphOptions,
@@ -43,6 +46,7 @@ import {
 } from './realtime'
 import { CHANGES_TABLE } from './schema'
 import { appendAnalytics, buildAnalyticsRow, computeInsights, createAnalyticsSeq, type AnalyticsCtx } from './analytics'
+import { cacheTags as computeCacheTags, computePurge, purgeTagsForEvent } from './edge'
 import { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
 import { WORKFLOW_JOB_TASK } from './config'
 import { attachSearch } from './search'
@@ -630,6 +634,28 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     ): Promise<boolean> {
       if (!sanitized.realtime.enabled) return false
       return changeFilter(event, buildChangeReq(opts.req), opts.overrideAccess ?? false)
+    },
+    cacheTags(opts: CacheTagsOptions): string[] {
+      // Pure, access-free: the caller passes only docs it may see; tags name a
+      // (collection,id) and never a body. No-op when edge delivery is disabled.
+      if (!sanitized.edge.enabled) return []
+      return computeCacheTags(sanitized, opts)
+    },
+    async purgeFeed(opts: PurgeFeedOptions = {}): Promise<PurgeFeedResult> {
+      // Requires edge delivery; computePurge additionally no-ops without realtime
+      // (the change feed is its source of truth). Reads `_changes` (a system table)
+      // directly off the raw db — never through content ops.
+      if (!sanitized.edge.enabled) return { tags: [], cursor: opts.since ?? 0 }
+      return computePurge(sanitized, sanitized.db, opts)
+    },
+    onPurge(listener: (tags: string[]) => void): () => void {
+      // A thin push helper over the realtime bus: each live change yields its doc +
+      // collection tags. No-op (no-op unsubscribe) when edge delivery is off.
+      if (!sanitized.edge.enabled) return () => {}
+      return changeBus.subscribe((event) => {
+        const tags = purgeTagsForEvent(event)
+        if (tags.length > 0) listener(tags)
+      })
     },
     ...(sanitized.cache ? { cache: sanitized.cache } : {}),
     ...(sanitized.search ? { search: sanitized.search } : {}),

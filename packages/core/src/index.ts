@@ -109,6 +109,17 @@ export {
   MAX_INSIGHTS_LIMIT,
 } from './analytics'
 export type { AnalyticsCtx, SanitizedAnalyticsEvent } from './analytics'
+export {
+  cacheTags,
+  cacheTagsHeader,
+  computePurge,
+  purgeTagsForEvent,
+  sanitizeTag,
+  clampPurgeLimit,
+  DEFAULT_PURGE_LIMIT,
+  MAX_PURGE_LIMIT,
+  MAX_PURGE_REVERSE_LOOKUPS,
+} from './edge'
 export { memorySearch, attachSearch, extractSearchText } from './search'
 export {
   memoryVector,

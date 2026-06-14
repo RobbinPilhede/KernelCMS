@@ -25,9 +25,10 @@ import {
   setupRuntime,
   pkceVerifier,
   pkceChallenge,
+  cacheTagsHeader,
   KERNEL_VERSION,
 } from '@kernel/core'
-import type { AgentConfig, AuditDoc, EndpointConfig, RequestContext, RoleDef } from '@kernel/core'
+import type { AgentConfig, AuditDoc, Doc, EndpointConfig, RequestContext, RoleDef } from '@kernel/core'
 import { createGraphQL } from '@kernel/graphql'
 import { buildOpenApiSpec, scalarHtml } from './openapi'
 import {
@@ -1088,6 +1089,27 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
   // and access-filtered per the connection's principal (a subscriber NEVER learns that a
   // document they can't read changed). 404 when realtime is disabled (rather than falling
   // through to a `changes` collection lookup).
+  // /_edge/purge -> the CDN purge feed: cache tags to invalidate for changes since a
+  // cursor, derived from the change feed. ADMIN-ONLY (it reveals which document ids
+  // changed — the same access model as the change feed's operator surface). 404 when
+  // edge delivery is disabled.
+  if (segments[0] === '_edge') {
+    if (!kernel.config.edge.enabled) {
+      return json({ error: { code: 'NOT_FOUND', message: 'Edge delivery is not enabled.' } }, 404)
+    }
+    if (segments[1] === 'purge' && segments.length === 2 && method === 'GET') {
+      if (!user) throw new UnauthorizedError()
+      if (!isAdmin(user)) throw new ForbiddenError('Purge feed access requires an admin role.')
+      const since = toNum(url.searchParams.get('since'))
+      const result = await kernel.purgeFeed({
+        ...(since !== undefined ? { since } : {}),
+        limit: toNum(url.searchParams.get('limit')) ?? undefined,
+      })
+      return json(result)
+    }
+    return methodNotAllowed()
+  }
+
   if (segments[0] === 'changes') {
     if (!kernel.config.realtime.enabled) {
       return json({ error: { code: 'NOT_FOUND', message: 'Real-time is not enabled.' } }, 404)
@@ -1287,7 +1309,11 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
         ...(asOf !== undefined ? { asOf } : {}),
         ...base,
       })
-      return json(result)
+      // Edge delivery: cacheable only for an anonymous, non-override, published
+      // (no draft / no time-travel) list read. Tags = collection + each returned doc.
+      const listCacheable = !user && !overrideAccess && !draft && asOf === undefined
+      const listDocs = (result as { docs?: Doc[] }).docs ?? []
+      return withEdgeHeaders(json(result), kernel, { collection, docs: listDocs, cacheable: listCacheable })
     }
     if (method === 'POST') {
       const collConfig = kernel.config.collectionsBySlug[collection]
@@ -1384,7 +1410,11 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       // Hand the client a concurrency token (ETag/Last-Modified = current updatedAt) so
       // it can send it back as If-Match on its next save and get a 409 instead of a
       // silent clobber if someone else edited in the meantime.
-      return withConcurrencyHeaders(json(doc), doc)
+      // Edge delivery: a response is CACHEABLE only when produced for an ANONYMOUS,
+      // non-override, published (no draft / no time-travel) read — otherwise it gets
+      // `private, no-store` so a CDN never caches a per-user / point-in-time response.
+      const cacheable = !user && !overrideAccess && !draft && asOf === undefined
+      return withEdgeHeaders(withConcurrencyHeaders(json(doc), doc), kernel, { collection, doc, cacheable })
     }
     if (method === 'PATCH' || method === 'PUT') {
       const data = await readBody(request)
@@ -2026,6 +2056,50 @@ function withConcurrencyHeaders(res: Response, doc: unknown): Response {
     res.headers.set('etag', `"${String(updatedAt)}"`)
     res.headers.set('last-modified', String(updatedAt))
   }
+  return res
+}
+
+/**
+ * Stamp edge-delivery cache headers on a content GET response. This is the
+ * SECURITY-CRITICAL chokepoint: aggressive (`s-maxage`/public) caching is set ONLY when
+ * the response is CACHEABLE — i.e. produced for an ANONYMOUS principal (`!user`) over a
+ * publicly-readable read (`!overrideAccess`). For such a response we set the configured
+ * public `Cache-Control` plus the surrogate-key header listing the response's cache tags
+ * (derived from the RETURNED, access-checked docs only, so no hidden id leaks).
+ *
+ * For ANY authenticated or access-scoped (or trusted-override) response we instead set
+ * `Cache-Control: private, no-store` and emit NO tag header — so a CDN is never told to
+ * cache a per-user / private response at the edge (a wrong header = a content leak).
+ *
+ * No-op (returns the response untouched) when edge delivery is disabled.
+ */
+function withEdgeHeaders(
+  res: Response,
+  kernel: Kernel,
+  args: {
+    collection: string
+    /** A single-document response (its returned doc), for detail routes. */
+    doc?: Doc | null
+    /** A list response's returned docs, for collection routes. */
+    docs?: Doc[]
+    /** True only when the response was produced for an anonymous, non-override read. */
+    cacheable: boolean
+  },
+): Response {
+  if (!kernel.config.edge.enabled) return res
+  if (!args.cacheable) {
+    // Authenticated / scoped / trusted response: NEVER hand it to a shared cache.
+    res.headers.set('cache-control', 'private, no-store')
+    return res
+  }
+  res.headers.set('cache-control', kernel.config.edge.cacheControl)
+  const tags = args.docs
+    ? kernel.cacheTags({ collection: args.collection, docs: args.docs })
+    : args.doc
+      ? kernel.cacheTags({ collection: args.collection, id: String(args.doc.id), doc: args.doc })
+      : kernel.cacheTags({ collection: args.collection })
+  const header = cacheTagsHeader(tags)
+  if (header) res.headers.set(kernel.config.edge.tagHeader, header)
   return res
 }
 

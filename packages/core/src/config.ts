@@ -12,6 +12,7 @@ import type {
   SanitizedAudiences,
   SanitizedConfig,
   SanitizedDiscoverability,
+  SanitizedEdge,
   SanitizedExperiment,
   SanitizedStructuredData,
   StructuredDataCollectionConfig,
@@ -358,6 +359,64 @@ function sanitizeAgents(agents: AgentConfig[] | undefined): AgentConfig[] {
 function sanitizeRealtime(realtime: KernelConfig['realtime']): SanitizedRealtime {
   if (!realtime || realtime.enabled !== true) return { enabled: false, retain: clampRetain(undefined) }
   return { enabled: true, retain: clampRetain(realtime.retain) }
+}
+
+/** Default `Cache-Control` for a CACHEABLE (anonymous, public-read) content GET response:
+ *  the browser always revalidates (`max-age=0`) while the CDN caches for a year
+ *  (`s-maxage`) and serves stale while revalidating — combined with the purge feed this is
+ *  effectively "cache forever at the edge, purge on change". */
+const DEFAULT_EDGE_CACHE_CONTROL = 'public, max-age=0, s-maxage=31536000, stale-while-revalidate=60'
+/** Default surrogate-key header name (the Fastly convention; Cloudflare uses `Cache-Tag`). */
+const DEFAULT_EDGE_TAG_HEADER = 'Surrogate-Key'
+
+/** A header NAME is used verbatim in an HTTP response; strip anything that isn't a valid
+ *  token char so a misconfigured `tagHeader` can't inject a second header. Falls back to
+ *  the default when nothing valid remains. */
+function sanitizeHeaderName(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const cleaned = value.replace(/[^A-Za-z0-9-]/g, '')
+  return cleaned.length > 0 ? cleaned : fallback
+}
+
+/** Remove ASCII control chars (0x00–0x1f, 0x7f), including CR/LF, from a string — done by
+ *  char-code filter to avoid embedding raw control chars in a regex (and an encoding hazard). */
+function stripControlChars(value: string): string {
+  let out = ''
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code > 0x1f && code !== 0x7f) out += value[i]
+  }
+  return out
+}
+
+/** A `Cache-Control` VALUE is set verbatim on a response; strip CR/LF/control chars so a
+ *  hostile config value can't inject a header. Falls back to the default when empty. */
+function sanitizeHeaderValue(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const cleaned = stripControlChars(value).trim()
+  return cleaned.length > 0 ? cleaned : fallback
+}
+
+/** Resolve the opt-in edge content-delivery setting. Disabled unless explicitly turned on.
+ *  When on, `cacheControl` + `tagHeader` are sanitized (they are written verbatim into HTTP
+ *  responses) and `includeRelationships` defaults ON. The cacheControl value here is only
+ *  ever applied to a CACHEABLE (anonymous, public-read) response — the server marks
+ *  authenticated/scoped responses `private, no-store` regardless. */
+function sanitizeEdge(edge: KernelConfig['edge']): SanitizedEdge {
+  if (!edge || edge.enabled !== true) {
+    return {
+      enabled: false,
+      cacheControl: DEFAULT_EDGE_CACHE_CONTROL,
+      tagHeader: DEFAULT_EDGE_TAG_HEADER,
+      includeRelationships: true,
+    }
+  }
+  return {
+    enabled: true,
+    cacheControl: sanitizeHeaderValue(edge.cacheControl, DEFAULT_EDGE_CACHE_CONTROL),
+    tagHeader: sanitizeHeaderName(edge.tagHeader, DEFAULT_EDGE_TAG_HEADER),
+    includeRelationships: edge.includeRelationships !== false,
+  }
 }
 
 /** Resolve the opt-in content-analytics setting. Disabled unless explicitly turned on.
@@ -986,6 +1045,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     agents,
     audit: sanitizeAudit(config.audit),
     realtime: sanitizeRealtime(config.realtime),
+    edge: sanitizeEdge(config.edge),
     analytics: sanitizeAnalytics(config.analytics),
     rbac: { enabled: rbacEnabled },
     rbacStore,

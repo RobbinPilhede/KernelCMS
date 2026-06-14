@@ -722,6 +722,78 @@ export interface ChangesResult {
 }
 
 // ---------------------------------------------------------------------------
+// Edge content delivery — surrogate cache tags + a purge feed
+//
+// Content reads carry surrogate cache TAGS (`<collection>`, `<collection>:<id>`, and —
+// opt-in — the tags of directly-referenced docs) so a CDN/edge cache can cache
+// aggressively, and a PURGE FEED derived from the real-time change feed tells the CDN
+// exactly which tags to invalidate when content changes. Provider-agnostic: KernelCMS
+// emits the tags + purge list; the user wires their CDN (Cloudflare/Fastly/Vercel).
+//
+// SECURITY — aggressive (`s-maxage`/public) caching is applied ONLY to a response
+// produced for an ANONYMOUS principal over a publicly-readable collection; an
+// authenticated/scoped response is marked `private, no-store`. Tags derive only from
+// the RETURNED, access-checked docs and are sanitized to CDN-safe tokens. The purge
+// feed reveals which ids changed → it is admin/operator-gated (like the change feed).
+// ---------------------------------------------------------------------------
+
+/** Edge content-delivery config. OPT-IN: when omitted, nothing changes (no cache
+ *  headers, no purge feed). The purge feed additionally requires `realtime` (it is
+ *  derived from the change feed). See {@link KernelConfig.edge}. */
+export interface EdgeConfig {
+  enabled?: boolean
+  /** The `Cache-Control` header value set on a CACHEABLE (anonymous, public-read)
+   *  content GET response. Default `'public, max-age=0, s-maxage=31536000,
+   *  stale-while-revalidate=60'` (browser revalidates, CDN caches long, serves stale
+   *  while revalidating — combined with tag-purge this is "cache forever, purge on
+   *  change"). An authenticated/scoped response is ALWAYS `private, no-store`
+   *  regardless of this value. */
+  cacheControl?: string
+  /** The surrogate-key header name. Default `'Surrogate-Key'` (the Fastly convention;
+   *  Cloudflare uses `Cache-Tag` — set it here to match your CDN). */
+  tagHeader?: string
+  /** Also tag a document with its DIRECT relationship targets, so changing a referenced
+   *  doc purges this one (the purge feed then maps a change to the docs that reference
+   *  it). Default true. */
+  includeRelationships?: boolean
+}
+
+/** Resolved edge settings (after sanitize). `enabled:false` when unconfigured. */
+export interface SanitizedEdge {
+  enabled: boolean
+  cacheControl: string
+  tagHeader: string
+  includeRelationships: boolean
+}
+
+/** Args for {@link Kernel.cacheTags}: a single document (by `id` and/or `doc`) OR a
+ *  list response (`docs`). For a single doc, supplying `doc` lets relationship-target
+ *  tags be included (when `edge.includeRelationships`); `id` alone yields the
+ *  collection + doc tag. */
+export interface CacheTagsOptions {
+  collection: string
+  id?: string
+  doc?: Doc
+  /** A list response's returned docs — yields the collection tag + each doc's tag. */
+  docs?: Doc[]
+}
+
+export interface PurgeFeedOptions {
+  /** Map only changes with `seq` strictly greater than this cursor. Default 0 (all). */
+  since?: number
+  /** Max recent changes to scan/map (clamped). Default 1000. */
+  limit?: number
+}
+
+export interface PurgeFeedResult {
+  /** The de-duped surrogate cache tags to purge at the CDN. */
+  tags: string[]
+  /** The highest `seq` scanned — poll again with `since=cursor`. Equals `since` when
+   *  nothing new was found. */
+  cursor: number
+}
+
+// ---------------------------------------------------------------------------
 // Content analytics & insights — privacy-first capture + aggregate
 //
 // Content EVENTS (view / search / ai_retrieval / citation / variant_impression /
@@ -930,6 +1002,12 @@ export interface KernelConfig {
    *  a live SSE stream, so UIs update live and agents react to changes. OPT-IN; events
    *  are metadata-only and access-filtered per subscriber. See {@link RealtimeConfig}. */
   realtime?: RealtimeConfig
+  /** Edge content delivery: surrogate cache tags on content reads + a purge feed
+   *  derived from the change feed, so a CDN/edge cache can cache aggressively and
+   *  invalidate precisely. OPT-IN and disabled by default. The purge feed additionally
+   *  requires `realtime`. Provider-agnostic — you emit the tags + purge list; you wire
+   *  your CDN. See {@link EdgeConfig}. */
+  edge?: EdgeConfig
   /** Content analytics & insights: capture content-usage events (views, searches,
    *  AI/RAG retrievals, variant impressions, conversions) into a bounded `_analytics`
    *  system table and answer them with privacy-first AGGREGATE insights. OPT-IN and
@@ -1219,6 +1297,10 @@ export interface SanitizedConfig {
   /** Resolved real-time setting. `enabled` provisions the `_changes` outbox + change-feed
    *  hooks + the in-process bus; disabled by default (opt-in). */
   realtime: SanitizedRealtime
+  /** Resolved edge content-delivery setting. `enabled` makes content GET responses carry
+   *  cache tags + a cacheable `Cache-Control` (for anonymous public reads) and enables
+   *  the purge feed; disabled by default (opt-in). */
+  edge: SanitizedEdge
   /** Resolved content-analytics setting. `enabled` provisions the `_analytics` table and
    *  enables `track`/`insights`; `autoCapture` toggles search/assignVariant auto-emit.
    *  Disabled by default (opt-in). */
@@ -2289,6 +2371,26 @@ export interface Kernel {
     event: ChangeEvent,
     opts?: { req?: Partial<RequestContext>; overrideAccess?: boolean },
   ): Promise<boolean>
+  /** The surrogate cache tags for a document or list response (edge delivery): the
+   *  collection tag (`<collection>`), the doc tag (`<collection>:<id>`), and — for a
+   *  single doc when `edge.includeRelationships` and a `doc` is supplied — the tags of
+   *  the docs it directly references. Pure (no DB/access); pass only docs the caller may
+   *  see, since a tag names a (collection,id). Tags are CDN-safe, de-duped tokens.
+   *  Returns `[]` when edge delivery is disabled or the collection is unknown. */
+  cacheTags(opts: CacheTagsOptions): string[]
+  /** The purge feed: cache tags to invalidate at the CDN for changes since `since`,
+   *  derived from the real-time change feed (the changed doc's + collection tags; when
+   *  `edge.includeRelationships`, also the tags of docs that REFERENCE the changed doc).
+   *  Returns the de-duped tags + the new `cursor` (poll again with `since=cursor`).
+   *  Requires `edge` + `realtime`; returns an empty set otherwise. The HTTP route is
+   *  admin/operator-gated (it reveals which ids changed). */
+  purgeFeed(opts?: PurgeFeedOptions): Promise<PurgeFeedResult>
+  /** Subscribe to purge tags pushed over the realtime bus: the listener receives the
+   *  cache tags (doc + collection) for each live change. A thin convenience over
+   *  `subscribe` for a push-based CDN purger; returns an unsubscribe function. No-op
+   *  (returns a no-op unsubscribe) when edge delivery is disabled. Reverse-ref tags are
+   *  NOT computed on the push path — poll {@link Kernel.purgeFeed} for those. */
+  onPurge(listener: (tags: string[]) => void): () => void
   find<T extends Doc = Doc>(opts: FindOptions): Promise<PaginatedResult<T>>
   findByID<T extends Doc = Doc>(opts: FindByIDOptions): Promise<T | null>
   create<T extends Doc = Doc>(opts: CreateOptions): Promise<T>

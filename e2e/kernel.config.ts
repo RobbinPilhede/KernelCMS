@@ -59,6 +59,8 @@ export default defineConfig({
   analytics: { enabled: true, autoCapture: true },
   // Real-time: a durable change feed (CDC) + live SSE stream for reactive UIs/agents.
   realtime: { enabled: true },
+  // Edge delivery: surrogate cache tags on public reads + a change-driven purge feed.
+  edge: { enabled: true, cacheControl: 'public, s-maxage=600, stale-while-revalidate=60' },
   // Structured data: schema.org JSON-LD generated from the typed model for SEO + AI.
   structuredData: {
     baseUrl: 'http://localhost:3100',

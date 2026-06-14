@@ -144,6 +144,17 @@ retrieve it**, from the same model. It is **privacy-first**: no third-party anal
 never recorded, and `track` strips PII-ish keys from `meta`. Insights are aggregates only,
 filtered to collections the caller can read. Red-teamed to Risk LOW.
 
+And content is built for the **edge**. Opt into `edge` and a public, published read carries
+the cache headers a CDN needs — your configured `Cache-Control` plus a `Surrogate-Key` listing
+the response's **cache tags** (`<collection>`, `<collection>:<id>`, and, by default, the docs it
+references). A change-driven **purge feed** (`kernel.purgeFeed(...)`) maps recent writes — and the
+docs that *reference* them — back to exactly those tags, so a CDN worker invalidates only the
+content that actually changed, provider-agnostically (you emit the tags + purge list; wire it to
+Cloudflare/Fastly/Vercel). Safe by construction: a private, authenticated, scoped, draft, or
+time-travel response is **never** handed a public/`s-maxage` `Cache-Control` or a surrogate key —
+it gets `private, no-store` — so private content is never cached at the edge. Cache aggressively,
+invalidate precisely. Red-teamed to Risk LOW.
+
 ---
 
 ## Quickstart
@@ -626,6 +637,53 @@ failure never breaks the content write. *(Honest notes: the hook-based feed emit
 create/update/delete, so a publish currently reads as `update`; `seq` is per-node — single-node
 ordering, multi-node needs a shared sequence.)* Pairs with [workflows](docs/agentic-workflows.md)
 (react to a change) and search (live re-index). See the [real-time guide](docs/realtime.md).
+
+### Edge delivery & CDN caching (cache tags + change-driven purge)
+
+Opt into `edge` and KernelCMS turns public reads into edge-cacheable responses with
+**cache tags**, then emits a **change-driven purge feed** so a CDN worker invalidates
+*exactly* the content that changed — provider-agnostically. You emit the tags and the
+purge list; you wire them to Cloudflare, Fastly, or Vercel. It is off by default and the
+purge feed requires `realtime`.
+
+```ts
+export default defineConfig({
+  realtime: { enabled: true }, // the purge feed reads the change feed
+  edge: {
+    enabled: true,
+    // the Cache-Control sent on a cacheable read:
+    cacheControl: 'public, s-maxage=31536000, stale-while-revalidate=60',
+    tagHeader: 'Surrogate-Key',   // surrogate-key header name (default 'Surrogate-Key')
+    includeRelationships: true,   // also tag a doc with its relationship targets (default true)
+  },
+  collections: [/* … */],
+})
+```
+
+- **Cache headers on public reads.** With `edge.enabled`, `GET /api/:collection/:id` and
+  `GET /api/:collection` add the configured `Cache-Control` plus a `Surrogate-Key` header
+  listing the response's cache tags (`<collection>`, `<collection>:<id>`, and — with
+  `includeRelationships` — its relationship targets) — but **only for a cacheable
+  response**: an *anonymous, published, non-time-travel* read. Any authenticated /
+  access-scoped / draft / `asOf` / `overrideAccess` read instead gets
+  `Cache-Control: private, no-store` and **no** surrogate key.
+- **Cache tags.** `kernel.cacheTags({ collection, id?, doc?, docs? })` returns the surrogate
+  keys for a doc or response (own + collection + relationship-target tags), sanitized to
+  CDN-safe tokens.
+- **Purge feed (change-driven).** `kernel.purgeFeed({ since? })` → `{ tags, cursor }` maps
+  recent changes to the cache tags to invalidate — **including the tags of docs that
+  reference a changed doc** (bounded), so changing a referenced doc purges the docs that
+  embed it. A CDN worker polls it and purges those surrogate keys. REST:
+  `GET /api/_edge/purge?since=` (**admin-gated** — it reveals changed ids).
+  `kernel.onPurge(fn)` pushes tags over the realtime bus.
+
+**The never-cache-private guarantee:** a private, authenticated, access-scoped, draft,
+time-travel (`asOf`), or `overrideAccess` response is **never** given a public/`s-maxage`
+`Cache-Control` or a surrogate key — a wrong header would cache private content at the
+edge, so it is the make-or-break property. Cache tags only ever contain ids from the
+access-checked returned docs (no leak), tag and header values are sanitized (no header
+injection), and the purge feed is admin-gated and bounded. CDN integration is yours.
+Red-teamed to Risk LOW. See the [edge delivery guide](docs/edge-delivery.md).
 
 ### Content analytics & insights (incl. AI-retrieval, privacy-first)
 
