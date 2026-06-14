@@ -30,7 +30,7 @@ import {
   KERNEL_VERSION,
 } from '@kernel/core'
 import type { AgentConfig, AuditDoc, Doc, EndpointConfig, RequestContext, RoleDef } from '@kernel/core'
-import { createGraphQL } from '@kernel/graphql'
+import type { createGraphQL } from '@kernel/graphql'
 import { buildOpenApiSpec, scalarHtml } from './openapi'
 import {
   HEADER_REMOTE_ADDR,
@@ -41,12 +41,26 @@ import {
 } from './rate-limit'
 import { ADMIN_HTML } from './admin-assets.generated'
 
-// One generated GraphQL executor per kernel, built lazily on first use.
+// One generated GraphQL executor per kernel, built lazily on first use. `@kernel/graphql`
+// (and the `graphql` library it pulls in) is loaded with a DYNAMIC import the first time the
+// GraphQL endpoint is actually hit — never at module-eval time. That keeps `graphql` an
+// OPTIONAL peer dependency: a REST-only deployment that never sets `graphql: true` never
+// loads it, and never needs it installed.
 const gqlExecutors = new WeakMap<Kernel, ReturnType<typeof createGraphQL>>()
-function graphqlExecutor(kernel: Kernel): ReturnType<typeof createGraphQL> {
+async function graphqlExecutor(kernel: Kernel): Promise<ReturnType<typeof createGraphQL>> {
   let exec = gqlExecutors.get(kernel)
   if (!exec) {
-    exec = createGraphQL(kernel)
+    let mod: typeof import('@kernel/graphql')
+    try {
+      mod = await import('@kernel/graphql')
+    } catch (err) {
+      throw new Error(
+        'The GraphQL endpoint needs the optional "graphql" package. Install it to use `graphql: true`:\n' +
+          '  npm install graphql',
+        { cause: err },
+      )
+    }
+    exec = mod.createGraphQL(kernel)
     gqlExecutors.set(kernel, exec)
   }
   return exec
@@ -685,7 +699,8 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     if (!options.graphql) return json({ error: { code: 'NOT_FOUND', message: 'GraphQL is not enabled.' } }, 404)
     if (method !== 'POST') return methodNotAllowed()
     const body = await readBody(request)
-    const result = await graphqlExecutor(kernel)({
+    const execute = await graphqlExecutor(kernel)
+    const result = await execute({
       query: String(body.query ?? ''),
       variables: (body.variables as Record<string, unknown> | null) ?? null,
       operationName: (body.operationName as string | null) ?? null,

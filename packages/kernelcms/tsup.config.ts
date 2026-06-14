@@ -1,9 +1,9 @@
 import { defineConfig } from 'tsup'
 
 // One published package, several entry points. The @kernel/* workspace packages
-// are inlined into the bundle (noExternal) so the published artifact has zero
-// runtime dependencies. node:sqlite stays external — it is a Node built-in that
-// the SQLite adapter loads lazily via createRequire.
+// are inlined into the bundle (noExternal). Every heavy third-party library is an
+// OPTIONAL peer dependency kept external (see below), so the base install is lean
+// and only the users of a given feature pull its dependency in.
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
@@ -24,9 +24,11 @@ export default defineConfig({
   dts: { resolve: [/^@kernel\//] },
   clean: true,
   noExternal: [/^@kernel\//],
-  // `pg` is a real third-party dependency; keep it external. node:sqlite is a
-  // Node built-in the SQLite adapter loads lazily. The MCP SDK is an OPTIONAL
-  // peer — keep it (and its subpaths/transitive runtime deps) external so the
-  // base install stays lean and only MCP users pull it in.
-  external: [/^@modelcontextprotocol\/sdk/, '@hono/node-server', 'node:sqlite', 'pg'],
+  // Optional peers, kept external so only the users of a given feature pull them in:
+  //   • pg          — only `kernelcms/postgres`
+  //   • @aws-sdk/*  — only the S3 storage adapter (loaded lazily on first use)
+  //   • graphql     — only when the GraphQL endpoint is enabled (loaded lazily)
+  //   • MCP SDK     — only MCP users
+  // node:sqlite is a Node built-in the SQLite adapter loads lazily via createRequire.
+  external: [/^@modelcontextprotocol\/sdk/, /^@aws-sdk\//, 'graphql', '@hono/node-server', 'node:sqlite', 'pg'],
 })

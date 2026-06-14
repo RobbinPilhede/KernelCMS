@@ -46,6 +46,20 @@ This is a pnpm monorepo. The interesting parts:
 Heavy or opinionated dependencies belong behind optional adapters, never in
 `@kernel/core`. Keeping the core dependency-light is a core design goal.
 
+### Operations modules
+
+`packages/core/src/operations.ts` is the engine orchestrator. Cohesive feature domains
+are being split out into `packages/core/src/operations/<domain>.ts` — each a pure factory
+`(ctx: OpsContext) => ({ ...ops })` over a single shared context (`operations/context.ts`).
+The factory destructures what it needs from `ctx` under the **same local names** the code
+used in the monolith, so a domain's function bodies move out verbatim with no behavioural
+change. Pure helpers (access evaluation, the `where` matcher, system-table name constants,
+typed errors) are imported directly from `../access` / `../query` / `../schema` / `../errors`;
+only the foundational primitives and genuinely cross-cutting helpers go on `OpsContext`.
+`collaboration`, `comments`, and `views` are extracted; the remaining domains follow the
+same pattern. When you touch one, prefer moving it to its own module over growing the
+monolith.
+
 ## Changesets
 
 We use [Changesets](https://github.com/changesets/changesets) to manage versions and
@@ -57,6 +71,11 @@ pnpm changeset
 
 Pick the affected packages and a semver bump, and write a short, user-facing summary.
 Commit the generated file in `.changeset/` with your PR.
+
+When choosing the bump, follow [STABILITY.md](./STABILITY.md): a change to a **stable**
+public API that breaks callers is a breaking change and needs a migration note (and, where
+a runtime shim is possible, a deprecation first rather than an outright removal). Changes
+confined to **experimental** features or non-public internals are not breaking.
 
 ## Commit and PR guidelines
 

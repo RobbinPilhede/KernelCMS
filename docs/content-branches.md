@@ -113,6 +113,25 @@ reason; the rest still merge. When merge finishes the branch is marked `merged` 
 overlay is dropped. `discardBranch` simply drops the overlay and marks the branch
 `discarded` — the live documents are left exactly as they were.
 
+### All-or-nothing merge (opt-in)
+
+By default a merge applies each staged change independently — the good ones land, failures
+collect in `failed[]`. Pass `atomic: true` to run the **whole merge in one database
+transaction** instead: if any change fails, every change already applied **rolls back**, the
+overlay is left intact, and the branch stays `open` so you can fix the offending change and
+retry.
+
+```ts
+// default: partial merge
+await kernel.mergeBranch({ branch: branch.name })
+
+// atomic: the whole branch merges together, or nothing does (branch stays open)
+await kernel.mergeBranch({ branch: branch.name, atomic: true })
+```
+
+(Atomic merge falls back to the per-change apply on a database adapter without transaction
+support; the bundled SQLite and Postgres adapters both support transactions.)
+
 ## The REST surface
 
 Every branch route is **reviewer-gated** (admin/editor):

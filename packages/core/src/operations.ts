@@ -42,17 +42,6 @@ import type {
   RestoreVersionOptions,
   RoleDef,
   RoleMutationOptions,
-  AcquireLockOptions,
-  AcquireLockResult,
-  ReleaseLockOptions,
-  ReleaseLockResult,
-  GetLockOptions,
-  ListLocksOptions,
-  LockDoc,
-  HeartbeatOptions,
-  GetPresenceOptions,
-  PresenceEntry,
-  PresenceKind,
   BulkResult,
   CreateAPIKeyOptions,
   CreateFromTemplateOptions,
@@ -103,19 +92,6 @@ import type {
   CancelReleaseOptions,
   ProcessScheduledReleasesOptions,
   ProcessScheduledReleasesResult,
-  CommentDoc,
-  AddCommentOptions,
-  ListCommentsOptions,
-  ResolveCommentOptions,
-  DeleteCommentOptions,
-  CommentCountOptions,
-  ViewDoc,
-  SaveViewOptions,
-  ListViewsOptions,
-  GetViewOptions,
-  UpdateViewOptions,
-  DeleteViewOptions,
-  ApplyViewOptions,
   ProcessWebhooksOptions,
   ProcessWebhooksResult,
   WebhookDeliveryDoc,
@@ -196,15 +172,11 @@ import { signAssetUrl } from './asset-urls'
 import { createFieldCipher } from './encryption'
 import {
   AUDIT_TABLE,
-  COMMENTS_TABLE,
   CREDENTIALS_TABLE,
   GLOBAL_ROW_ID,
-  LOCKS_TABLE,
-  PRESENCE_TABLE,
   RELEASES_TABLE,
   RELEASE_ITEMS_TABLE,
   REVIEWS_TABLE,
-  VIEWS_TABLE,
   WEBHOOK_DELIVERIES_TABLE,
   SUBSCRIPTIONS_TABLE,
   CHANGES_TABLE,
@@ -217,6 +189,10 @@ import {
 import { createSigner, hashContent, signManifest, verifyManifest, type Signer, type ContentManifest } from './signing'
 import { runEvals } from './evals'
 import { changedFieldNames, diffDocs, parseTimestamp } from './timemachine'
+import type { OpsContext } from './operations/context'
+import { createCollaborationOps } from './operations/collaboration'
+import { createCommentOps } from './operations/comments'
+import { createViewOps } from './operations/views'
 
 export interface OperationCtx {
   config: SanitizedConfig
@@ -252,8 +228,6 @@ const MAX_ASSET_TTL = 7 * 24 * 3600
 // Bounds on agent/MCP-reachable review surfaces (storage-growth guard, not auth).
 const MAX_COMPOSE_BLOCKS = 200
 const MAX_REVIEW_NOTE = 10_000
-// Bound on an editorial comment body (untrusted, agent/MCP-reachable storage-growth guard).
-const MAX_COMMENT_BODY = 10_000
 // Per-field cap for AI translation input (the provider is billed/external).
 const MAX_TRANSLATE_CHARS = 50_000
 
@@ -377,6 +351,27 @@ export function createOperations(ctx: OperationCtx) {
       const retryAfter = Math.ceil((EMAIL_ACTION_WINDOW_MS - (now - rec.windowStart)) / 1000)
       throw new TooManyRequestsError('Too many requests. Please try again later.', retryAfter)
     }
+  }
+
+  /**
+   * Run a write sequence atomically. The fix for the multi-write integrity gap: a
+   * publish writes the row, the version snapshot, and the content credential as a
+   * sequence — without a transaction a crash between them leaves a published row
+   * with no snapshot/credential, defeating the tamper-evidence those features sell.
+   *
+   * REENTRANT by design. The bundled adapters serialize transactions and SQLite
+   * cannot nest a `BEGIN` inside another, so an already-open transaction is THREADED
+   * down (the loop owners — `publishRelease`, `mergeBranch`, `syncContent`, cascade
+   * delete — open one transaction and pass its `tx` to each per-doc op). When `exec`
+   * is supplied we are already inside a transaction: reuse it, never open a nested
+   * one. When it is absent we own the boundary: open a real transaction if the
+   * adapter supports one, else fall back to the bare handle (a third-party adapter
+   * without transaction support keeps the historical best-effort behaviour).
+   */
+  async function runWrite<R>(exec: DatabaseAdapter | undefined, fn: (tx: DatabaseAdapter) => Promise<R>): Promise<R> {
+    if (exec) return fn(exec)
+    if (db.capabilities.transactions) return db.transaction(fn)
+    return fn(db)
   }
 
   /**
@@ -1089,12 +1084,15 @@ export function createOperations(ctx: OperationCtx) {
     req: RequestContext,
     autosave = false,
     approver?: { id: string | null; type: string } | null,
+    // Executor to run on — the calling write's transaction when threaded, else the
+    // bare handle. The snapshot must commit atomically with the row it records.
+    exec: DatabaseAdapter = db,
   ): Promise<string | null> {
     const v = versionsOf(collection)
     if (!v.enabled) return null
     const table = tableForVersions(collection.slug)
     const versionId = randomUUID()
-    await db.create({
+    await exec.create({
       collection: table,
       data: {
         id: versionId,
@@ -1112,16 +1110,16 @@ export function createOperations(ctx: OperationCtx) {
       },
     })
     if (v.maxPerDoc > 0) {
-      const total = await db.count({ collection: table, where: { parent: { equals: doc.id } } })
+      const total = await exec.count({ collection: table, where: { parent: { equals: doc.id } } })
       if (total > v.maxPerDoc) {
-        const oldest = await db.find({
+        const oldest = await exec.find({
           collection: table,
           where: { parent: { equals: doc.id } },
           sort: [{ field: 'createdAt', direction: 'asc' }],
           limit: total - v.maxPerDoc,
           page: 1,
         })
-        for (const row of oldest.docs) await db.delete({ collection: table, id: String(row.id) })
+        for (const row of oldest.docs) await exec.delete({ collection: table, id: String(row.id) })
       }
     }
     return versionId
@@ -1206,8 +1204,10 @@ export function createOperations(ctx: OperationCtx) {
    * Sign a content credential for a freshly-published document and store it in the
    * `_credentials` table. No-op when signing is disabled. The manifest embeds the
    * content hash (so tampering is detectable) + who/what/when; the signature covers the
-   * canonical manifest. Best-effort: a credential-write failure is warned, never thrown,
-   * so it can't roll back the publish it records. NO key material is ever written.
+   * canonical manifest. ATOMIC with the publish: it runs on the publish's transaction
+   * (threaded `exec`) and any failure propagates so the publish rolls back — a published
+   * document can never exist without its credential, which is the integrity guarantee
+   * the feature sells. NO key material is ever written.
    */
   async function signContentCredential(
     collection: CollectionConfig,
@@ -1215,37 +1215,35 @@ export function createOperations(ctx: OperationCtx) {
     req: RequestContext,
     approver: PrincipalRef | null,
     versionId: string | null,
+    // Executor to run on — the publish's transaction when threaded, else the bare handle.
+    exec: DatabaseAdapter = db,
   ): Promise<void> {
     if (!signer) return
-    try {
-      const manifest: ContentManifest = {
+    const manifest: ContentManifest = {
+      collection: collection.slug,
+      documentId: String(row.id),
+      // Hash the RAW stored row (locale-independent, deterministic) so verify can
+      // recompute the identical surface from the persisted row regardless of locale.
+      contentHash: hashContent(row as Record<string, unknown>),
+      author: { id: req.user?.id ?? null, type: req.user?.principalType ?? 'user' },
+      approver,
+      publishedAt: new Date().toISOString(),
+      versionId,
+    }
+    const signature = signManifest(signer, manifest)
+    await exec.create({
+      collection: CREDENTIALS_TABLE,
+      data: {
+        id: randomUUID(),
         collection: collection.slug,
         documentId: String(row.id),
-        // Hash the RAW stored row (locale-independent, deterministic) so verify can
-        // recompute the identical surface from the persisted row regardless of locale.
-        contentHash: hashContent(row as Record<string, unknown>),
-        author: { id: req.user?.id ?? null, type: req.user?.principalType ?? 'user' },
-        approver,
-        publishedAt: new Date().toISOString(),
         versionId,
-      }
-      const signature = signManifest(signer, manifest)
-      await db.create({
-        collection: CREDENTIALS_TABLE,
-        data: {
-          id: randomUUID(),
-          collection: collection.slug,
-          documentId: String(row.id),
-          versionId,
-          manifest,
-          signature,
-          algorithm: signer.algorithm,
-          signedAt: manifest.publishedAt,
-        },
-      })
-    } catch (err) {
-      logger?.warn('Failed to write content credential', err)
-    }
+        manifest,
+        signature,
+        algorithm: signer.algorithm,
+        signedAt: manifest.publishedAt,
+      },
+    })
   }
 
   /** The latest credential row for a (collection, documentId), or null. */
@@ -1893,43 +1891,57 @@ export function createOperations(ctx: OperationCtx) {
 
     // Pre-flight passed: publish every member through the EXISTING publish op with the
     // caller's req (so each re-runs assertCanPublish + the eval gate — the gate is the
-    // single source of truth; this is no override for an interactive publish). Best-effort
-    // atomic: a mid-publish DB error marks the release `failed` and reports the survivors.
+    // single source of truth; this is no override for an interactive publish). TRULY
+    // all-or-nothing: the whole loop AND the release-status flip run in ONE transaction,
+    // threaded into each member publish, so a mid-publish failure rolls back the members
+    // already applied — a release can never go half-live. (An adapter without transaction
+    // support falls back to the historical best-effort apply; the bundled adapters all
+    // support transactions.)
     const published: string[] = []
-    for (const m of members) {
-      try {
-        await publish({
-          collection: m.collection.slug,
-          id: m.id,
-          req: opts.req,
-          ...(override ? { overrideAccess: true } : {}),
-        })
-        published.push(`${m.collection.slug}/${m.id}`)
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
-        failed.push({ collection: m.collection.slug, id: m.id, reason })
-        await db.update({
+    let failedMember: { collection: string; id: string } | null = null
+    const publishedAt = new Date().toISOString()
+    try {
+      await runWrite(undefined, async (tx) => {
+        for (const m of members) {
+          failedMember = { collection: m.collection.slug, id: m.id }
+          await publish(
+            {
+              collection: m.collection.slug,
+              id: m.id,
+              req: opts.req,
+              ...(override ? { overrideAccess: true } : {}),
+            },
+            tx,
+          )
+          published.push(`${m.collection.slug}/${m.id}`)
+        }
+        failedMember = null
+        await tx.update({
           collection: RELEASES_TABLE,
           id: opts.release,
-          data: { status: 'failed' },
+          data: { status: 'published', publishedAt, scheduledAt: null },
         })
-        await recordAudit({
-          action: 'release.publish',
-          documentId: opts.release,
-          req,
-          overrideAccess: override,
-          meta: { status: 'failed', published, failed },
-        })
-        return { status: 'failed', published, failed }
-      }
+      })
+    } catch (err) {
+      // The transaction rolled back: NOTHING went live. The release-status write below is
+      // its own (committed) statement — the failure record must outlive the rollback.
+      const reason = err instanceof Error ? err.message : String(err)
+      // `failedMember` is mutated inside the transaction closure; widen back from the
+      // initializer-narrowed `null` so the failing member can be reported.
+      const fm = failedMember as { collection: string; id: string } | null
+      const failedNow: PublishReleaseResult['failed'] = fm
+        ? [{ collection: fm.collection, id: fm.id, reason }]
+        : [{ collection: '', id: opts.release, reason }]
+      await db.update({ collection: RELEASES_TABLE, id: opts.release, data: { status: 'failed' } })
+      await recordAudit({
+        action: 'release.publish',
+        documentId: opts.release,
+        req,
+        overrideAccess: override,
+        meta: { status: 'failed', published: [], failed: failedNow },
+      })
+      return { status: 'failed', published: [], failed: failedNow }
     }
-
-    const publishedAt = new Date().toISOString()
-    await db.update({
-      collection: RELEASES_TABLE,
-      id: opts.release,
-      data: { status: 'published', publishedAt, scheduledAt: null },
-    })
     await recordAudit({
       action: 'release.publish',
       documentId: opts.release,
@@ -2603,7 +2615,7 @@ export function createOperations(ctx: OperationCtx) {
     })
   }
 
-  async function publish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null> {
+  async function publish<T extends Doc = Doc>(opts: PublishOptions, exec?: DatabaseAdapter): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
     if (!draftsOn(collection))
       throw new BadRequestError(`Collection "${opts.collection}" does not have drafts enabled.`)
@@ -2624,6 +2636,7 @@ export function createOperations(ctx: OperationCtx) {
         ...(opts.expectedUpdatedAt != null ? { expectedUpdatedAt: opts.expectedUpdatedAt } : {}),
       },
       'publish',
+      exec,
     )
   }
 
@@ -2967,7 +2980,7 @@ export function createOperations(ctx: OperationCtx) {
     )
   }
 
-  async function create<T extends Doc = Doc>(opts: CreateOptions): Promise<T> {
+  async function create<T extends Doc = Doc>(opts: CreateOptions, exec?: DatabaseAdapter): Promise<T> {
     const collection = collectionOrThrow(opts.collection)
     const req = buildReq(opts.req)
     const override = opts.overrideAccess ?? false
@@ -3044,8 +3057,34 @@ export function createOperations(ctx: OperationCtx) {
       if (!override && sched != null && req.user?.principalType === 'agent') throw new ForbiddenError()
     }
 
-    const created = await db.create({ collection: collection.slug, data: row })
+    const approver: PrincipalRef | null = bornPublished ? principalRefOf(req) : null
+    // Atomic write: the row, its version snapshot, and (for a born-published create) the
+    // content credential commit together or not at all. Reentrant — joins the caller's
+    // transaction when `exec` is threaded (e.g. a federation sync bundle).
+    const { created } = await runWrite(exec, async (tx) => {
+      const created = await tx.create({ collection: collection.slug, data: row })
+      let publishedVersionId: string | null = null
+      if (versionsOf(collection).enabled) {
+        const status = draftsOn(collection) ? statusFromData(created as Row, 'draft') : 'published'
+        publishedVersionId = await snapshotVersion(
+          collection,
+          rowToDoc(collection, created, req),
+          status,
+          req,
+          false,
+          approver,
+          tx,
+        )
+      }
+      // Content credential for a born-published create.
+      if (bornPublished) {
+        await signContentCredential(collection, created, req, approver, publishedVersionId, tx)
+      }
+      return { created, publishedVersionId }
+    })
     const nonOkFindings = evalFindings.filter((f) => !f.ok)
+    // Audit is best-effort observability (it swallows its own errors); record it AFTER the
+    // atomic write so an audit hiccup can never roll the committed write back.
     await recordAudit({
       action: 'create',
       collection: collection.slug,
@@ -3056,23 +3095,6 @@ export function createOperations(ctx: OperationCtx) {
       ...(nonOkFindings.length > 0 ? { meta: { evalFindings: nonOkFindings } } : {}),
     })
     let doc = rowToDoc(collection, created, req)
-    const approver: PrincipalRef | null = bornPublished ? principalRefOf(req) : null
-    let publishedVersionId: string | null = null
-    if (versionsOf(collection).enabled) {
-      const status = draftsOn(collection) ? statusFromData(created as Row, 'draft') : 'published'
-      publishedVersionId = await snapshotVersion(
-        collection,
-        rowToDoc(collection, created, req),
-        status,
-        req,
-        false,
-        approver,
-      )
-    }
-    // Content credential for a born-published create.
-    if (bornPublished) {
-      await signContentCredential(collection, created, req, approver, publishedVersionId)
-    }
     doc = (await runHooks(collection.hooks?.afterChange, { req, operation: 'create', doc }, 'doc')) as Doc
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     doc = await populate(collection, doc, opts.depth ?? 0, req)
@@ -3170,12 +3192,19 @@ export function createOperations(ctx: OperationCtx) {
     return doc as T
   }
 
-  async function update<T extends Doc = Doc>(opts: UpdateOptions, auditAs?: AuditAction): Promise<T | null> {
+  async function update<T extends Doc = Doc>(
+    opts: UpdateOptions,
+    auditAs?: AuditAction,
+    exec?: DatabaseAdapter,
+  ): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
     const req = buildReq(opts.req)
     const override = opts.overrideAccess ?? false
 
-    const existing = await db.findByID({ collection: collection.slug, id: opts.id })
+    // Read against the threaded transaction when there is one (a parent op may have
+    // written this row earlier in the same transaction); else the bare handle.
+    const reader = exec ?? db
+    const existing = await reader.findByID({ collection: collection.slug, id: opts.id })
     if (!existing) throw new NotFoundError()
 
     if (!override) {
@@ -3305,13 +3334,46 @@ export function createOperations(ctx: OperationCtx) {
         row._archived_at = archivedAt == null ? null : new Date(String(archivedAt)).toISOString()
       }
     }
-    const updated = await db.update({ collection: collection.slug, id: opts.id, data: row })
+    // The approver of a publish is the publishing principal (for a review-approval, the
+    // reviewer is threaded in as that principal). Recorded on the published snapshot and
+    // in the credential manifest. Null for non-publish snapshots.
+    const approver: PrincipalRef | null = isPublishTransition ? principalRefOf(req) : null
+    // Atomic write: the row update, the version snapshot, and (on a publish transition)
+    // the content credential commit together or not at all — a crash between them must
+    // never leave a published row without its snapshot/credential. Reentrant: joins the
+    // caller's transaction when `exec` is threaded (publishRelease / mergeBranch /
+    // syncContent / cascade delete), else opens its own.
+    const { updated } = await runWrite(exec, async (tx) => {
+      const updated = await tx.update({ collection: collection.slug, id: opts.id, data: row })
+      if (!updated) return { updated: null as Row | null, publishedVersionId: null as string | null }
+      let publishedVersionId: string | null = null
+      if (versionsOf(collection).enabled) {
+        const status = draftsOn(collection) ? statusFromData(updated as Row, 'draft') : 'published'
+        publishedVersionId = await snapshotVersion(
+          collection,
+          rowToDoc(collection, updated, req),
+          status,
+          req,
+          opts.autosave === true,
+          approver,
+          tx,
+        )
+      }
+      // Content credential: sign a tamper-evident manifest of the published doc. Only on a
+      // real publish transition, and only when signing is enabled (else a no-op). Hashes the
+      // raw stored row so verify can recompute the same surface.
+      if (isPublishTransition) {
+        await signContentCredential(collection, updated, req, approver, publishedVersionId, tx)
+      }
+      return { updated, publishedVersionId }
+    })
     if (!updated) return null
 
-    // Record AFTER the write succeeds. publish()/unpublish() route through here and
-    // pass their own action so the log reads 'publish'/'unpublish', not 'update'.
-    // Non-blocking eval findings (warn/info, or errors from non-blocking rules) ride
-    // along in the audit meta so the content-CI result is observable.
+    // Record AFTER the write commits. publish()/unpublish() route through here and pass
+    // their own action so the log reads 'publish'/'unpublish', not 'update'. Non-blocking
+    // eval findings (warn/info, or errors from non-blocking rules) ride along in the audit
+    // meta so the content-CI result is observable. Audit is best-effort (it swallows its
+    // own errors) and runs outside the atomic write so it can never roll it back.
     const nonOkFindings = evalFindings.filter((f) => !f.ok)
     await recordAudit({
       action: auditAs ?? 'update',
@@ -3324,28 +3386,6 @@ export function createOperations(ctx: OperationCtx) {
     })
 
     let doc = rowToDoc(collection, updated, req)
-    // The approver of a publish is the publishing principal (for a review-approval, the
-    // reviewer is threaded in as that principal). Recorded on the published snapshot and
-    // in the credential manifest. Null for non-publish snapshots.
-    const approver: PrincipalRef | null = isPublishTransition ? principalRefOf(req) : null
-    let publishedVersionId: string | null = null
-    if (versionsOf(collection).enabled) {
-      const status = draftsOn(collection) ? statusFromData(updated as Row, 'draft') : 'published'
-      publishedVersionId = await snapshotVersion(
-        collection,
-        rowToDoc(collection, updated, req),
-        status,
-        req,
-        opts.autosave === true,
-        approver,
-      )
-    }
-    // Content credential: sign a tamper-evident manifest of the published doc. Only on a
-    // real publish transition, and only when signing is enabled (else a no-op). Hashes the
-    // raw stored row so verify can recompute the same surface.
-    if (isPublishTransition) {
-      await signContentCredential(collection, updated, req, approver, publishedVersionId)
-    }
     doc = (await runHooks(collection.hooks?.afterChange, { req, operation: 'update', doc }, 'doc')) as Doc
     doc = (await runHooks(collection.hooks?.afterRead, { req, operation: 'read', doc }, 'doc')) as Doc
     doc = await populate(collection, doc, opts.depth ?? 0, req)
@@ -3795,13 +3835,17 @@ export function createOperations(ctx: OperationCtx) {
     id: string,
     req: RequestContext,
     visited: Set<string>,
+    // The delete's transaction (so cascade/setNull writes commit atomically with the
+    // target's removal) and the deferred post-commit queue (storage sweeps + audit).
+    exec: DatabaseAdapter,
+    post: Array<() => Promise<void>>,
   ): Promise<void> {
     // Resolve every rule's matching referrers up front. Scan rows by raw stored value —
     // works regardless of adapter JSON-query support and across single/hasMany/polymorphic
     // shapes. Capped like other bulk ops.
     const resolved: Array<{ rule: ReferrerRule; matches: Row[] }> = []
     for (const rule of referrerRules(targetSlug)) {
-      const rows = await db.find({ collection: rule.collection.slug, where: undefined, limit: MAX_LIMIT, page: 1 })
+      const rows = await exec.find({ collection: rule.collection.slug, where: undefined, limit: MAX_LIMIT, page: 1 })
       const matches = rows.docs.filter((row) => refMatches(row[rule.field.name], rule.field, targetSlug, id))
       if (matches.length) resolved.push({ rule, matches })
     }
@@ -3833,29 +3877,44 @@ export function createOperations(ctx: OperationCtx) {
           await deleteOne(
             { collection: rule.collection.slug, id: refId, req, overrideAccess: overrideCascade },
             visited,
+            exec,
+            post,
           )
         } else {
           // setNull: clear the single ref, or pull the id from a hasMany list. Routed
-          // through update() so hooks/versions fire and the value is re-validated.
+          // through update() so hooks/versions fire and the value is re-validated. Runs on
+          // the same transaction so a cascade either fully settles or fully rolls back.
           const next = pullRef(row[rule.field.name], rule.field, targetSlug, id)
-          await update({
-            collection: rule.collection.slug,
-            id: refId,
-            data: { [rule.field.name]: next } as Row,
-            req,
-            overrideAccess: overrideCascade,
-          })
+          await update(
+            {
+              collection: rule.collection.slug,
+              id: refId,
+              data: { [rule.field.name]: next } as Row,
+              req,
+              overrideAccess: overrideCascade,
+            },
+            undefined,
+            exec,
+          )
         }
       }
     }
   }
 
-  async function deleteOne<T extends Doc = Doc>(opts: DeleteOptions, visited?: Set<string>): Promise<T | null> {
+  async function deleteOne<T extends Doc = Doc>(
+    opts: DeleteOptions,
+    visited?: Set<string>,
+    // The enclosing transaction when this delete is a cascade step of a parent delete,
+    // and the parent's deferred post-commit queue. A root delete owns both.
+    exec?: DatabaseAdapter,
+    deferred?: Array<() => Promise<void>>,
+  ): Promise<T | null> {
     const collection = collectionOrThrow(opts.collection)
     const req = buildReq(opts.req)
     const override = opts.overrideAccess ?? false
 
-    const existing = await db.findByID({ collection: collection.slug, id: opts.id })
+    const reader = exec ?? db
+    const existing = await reader.findByID({ collection: collection.slug, id: opts.id })
     if (!existing) throw new NotFoundError()
 
     if (!override) {
@@ -3865,28 +3924,46 @@ export function createOperations(ctx: OperationCtx) {
       if (scope && !matchesWhere(existing, scope)) throw new ForbiddenError()
     }
 
-    // Referential integrity: settle referrers (restrict/setNull/cascade) BEFORE the
-    // row leaves, so `restrict` can still abort and a cascade sees the target intact.
-    // `visited` carries the in-flight delete set across a recursive cascade to break
-    // reference cycles; seed it with this doc so a back-reference can't loop into it.
+    // A root delete owns the transaction and the deferred post-commit queue; a cascade
+    // step inherits both from its parent. Storage sweeps + audit are queued, never run
+    // inside the transaction — a rollback must not orphan blobs or log a delete that
+    // didn't happen.
+    const isRoot = exec === undefined
+    const post = deferred ?? []
+
+    // Referential integrity: settle referrers (restrict/setNull/cascade) BEFORE the row
+    // leaves, so `restrict` can still abort and a cascade sees the target intact. The whole
+    // settle-then-delete runs in ONE transaction so a mid-cascade failure rolls every
+    // referrer write back. `visited` carries the in-flight delete set across the recursive
+    // cascade to break reference cycles; seed it with this doc so a back-reference can't loop.
     const tracked = visited ?? new Set<string>()
     tracked.add(`${collection.slug}:${opts.id}`)
-    await applyOnDelete(collection.slug, opts.id, req, tracked)
-
-    for (const hook of collection.hooks?.beforeDelete ?? []) await hook({ req, id: opts.id })
-    const removed = await db.delete({ collection: collection.slug, id: opts.id })
+    const removed = await runWrite(exec, async (tx) => {
+      await applyOnDelete(collection.slug, opts.id, req, tracked, tx, post)
+      for (const hook of collection.hooks?.beforeDelete ?? []) await hook({ req, id: opts.id })
+      return tx.delete({ collection: collection.slug, id: opts.id })
+    })
     const doc = removed ? rowToDoc(collection, removed, req) : null
     if (doc && removed) {
-      // Sweep the upload binary so bytes never outlive the row (and no signed link survives it).
-      await sweepUploadBinary(collection, removed)
-      await recordAudit({
-        action: 'delete',
-        collection: collection.slug,
-        documentId: opts.id,
-        req,
-        overrideAccess: override,
+      // Queue the post-commit side effects: sweep the upload binary so bytes never outlive
+      // the row, then audit + fire afterDelete hooks. Deferred so they run only once the
+      // transaction has actually committed.
+      post.push(async () => {
+        await sweepUploadBinary(collection, removed)
+        await recordAudit({
+          action: 'delete',
+          collection: collection.slug,
+          documentId: opts.id,
+          req,
+          overrideAccess: override,
+        })
+        for (const hook of collection.hooks?.afterDelete ?? []) await hook({ req, id: opts.id, doc })
       })
-      for (const hook of collection.hooks?.afterDelete ?? []) await hook({ req, id: opts.id, doc })
+    }
+    // The root delete drains the queue after its transaction has committed; a cascade step
+    // leaves the queue for the root to drain.
+    if (isRoot) {
+      for (const fn of post) await fn()
     }
     return doc as T | null
   }
@@ -4917,13 +4994,6 @@ export function createOperations(ctx: OperationCtx) {
   // auth for the presence/lock routes). `now` is injectable for deterministic expiry.
   // -------------------------------------------------------------------------
 
-  const DEFAULT_LOCK_TTL_MS = 120_000
-  // Upper bound on a lock's lifetime. Clamps hostile/garbage `ttlMs` (NaN, Infinity, or
-  // values so large that `now + ttl` overflows a JS Date) to a finite range so the date
-  // math below can never throw a RangeError into a 500.
-  const MAX_LOCK_TTL_MS = 24 * 60 * 60 * 1000
-  const DEFAULT_PRESENCE_TTL_MS = 30_000
-
   /** The principal id/kind for a collaboration op, derived from the request user. An
    *  anonymous principal collapses to a stable 'anonymous'/'system' identity. */
   function principalOf(req: RequestContext): { id: string; type: 'user' | 'agent' | 'system' } {
@@ -4955,182 +5025,9 @@ export function createOperations(ctx: OperationCtx) {
     return coll
   }
 
-  /** Shape a raw `_locks` row into a public LockDoc. */
-  function rowToLock(row: Row): LockDoc {
-    return {
-      id: String(row.id),
-      collection: String(row.collection),
-      documentId: String(row.documentId),
-      principalId: String(row.principalId),
-      principalType: (row.principalType as LockDoc['principalType']) ?? 'user',
-      acquiredAt: String(row.acquiredAt),
-      expiresAt: String(row.expiresAt),
-      label: row.label != null ? String(row.label) : null,
-    }
-  }
-
-  /** True when a lock row is still in force at `now` (epoch ms). */
-  function lockUnexpired(row: Row, now: number): boolean {
-    const exp = new Date(String(row.expiresAt)).getTime()
-    return Number.isFinite(exp) && exp > now
-  }
-
-  async function acquireLock(opts: AcquireLockOptions): Promise<AcquireLockResult> {
-    const req = buildReq(opts.req)
-    const coll = await assertTarget(opts.collection, opts.id, req)
-    const me = principalOf(req)
-    const now = opts.now ?? Date.now()
-    // Clamp `ttlMs` to a finite, bounded range: garbage from the wire (NaN, Infinity, or a
-    // value so large it overflows `new Date(now + ttl)`) must not throw a RangeError 500.
-    const raw = Math.floor(Number(opts.ttlMs))
-    const ttl = Math.min(Math.max(Number.isFinite(raw) ? raw : DEFAULT_LOCK_TTL_MS, 1), MAX_LOCK_TTL_MS)
-    const lockId = `${coll.slug}:${opts.id}`
-
-    const existing = await db.findByID({ collection: LOCKS_TABLE, id: lockId })
-    // A different principal holding an UNEXPIRED lock is respected — never stolen.
-    if (existing && lockUnexpired(existing, now) && String(existing.principalId) !== me.id) {
-      return { lock: rowToLock(existing), heldBy: 'other' }
-    }
-
-    // Free, expired, or already ours → (re)acquire. A re-acquire by the same principal
-    // refreshes `expiresAt` (and updates the label), which is how a holder keeps a lock
-    // alive while editing.
-    const acquiredAt = new Date(now).toISOString()
-    const expiresAt = new Date(now + ttl).toISOString()
-    const data: Row = {
-      collection: coll.slug,
-      documentId: opts.id,
-      principalId: me.id,
-      principalType: me.type,
-      acquiredAt,
-      expiresAt,
-      label: typeof opts.label === 'string' ? opts.label : null,
-    }
-    if (existing) await db.update({ collection: LOCKS_TABLE, id: lockId, data })
-    else await db.create({ collection: LOCKS_TABLE, data: { id: lockId, ...data } })
-    const saved = (await db.findByID({ collection: LOCKS_TABLE, id: lockId })) ?? { id: lockId, ...data }
-    return { lock: rowToLock(saved), heldBy: 'you' }
-  }
-
-  async function releaseLock(opts: ReleaseLockOptions): Promise<ReleaseLockResult> {
-    const req = buildReq(opts.req)
-    const coll = await assertTarget(opts.collection, opts.id, req)
-    const me = principalOf(req)
-    const now = opts.now ?? Date.now()
-    const lockId = `${coll.slug}:${opts.id}`
-
-    const existing = await db.findByID({ collection: LOCKS_TABLE, id: lockId })
-    if (!existing) return { released: false }
-    // An UNEXPIRED lock may only be released by its holder, an admin, or a system
-    // override. An already-expired lock is fair game for anyone to clear.
-    const isHolder = String(existing.principalId) === me.id
-    const isAdmin = Array.isArray(req.user?.roles) && req.user!.roles!.includes('admin')
-    if (lockUnexpired(existing, now) && !isHolder && !isAdmin) {
-      throw new ForbiddenError('Only the lock holder can release this lock.')
-    }
-    await db.delete({ collection: LOCKS_TABLE, id: lockId })
-    return { released: true }
-  }
-
-  async function getLock(opts: GetLockOptions): Promise<LockDoc | null> {
-    const req = buildReq(opts.req)
-    // Access-check READ first: a caller who can't read the target gets NotFound (matching
-    // the 404 the rest of the API returns for out-of-scope documents), never the lock.
-    const coll = await assertTarget(opts.collection, opts.id, req)
-    const now = opts.now ?? Date.now()
-    const row = await db.findByID({ collection: LOCKS_TABLE, id: `${coll.slug}:${opts.id}` })
-    if (!row || !lockUnexpired(row, now)) return null
-    return rowToLock(row)
-  }
-
-  async function listLocks(opts: ListLocksOptions = {}): Promise<LockDoc[]> {
-    const req = buildReq(opts.req)
-    const now = opts.now ?? Date.now()
-    const where = opts.collection ? { collection: { equals: collectionOrThrow(opts.collection).slug } } : undefined
-    const res = await db.find({ collection: LOCKS_TABLE, where, limit: MAX_LIMIT, page: 1 })
-    const unexpired = res.docs.filter((row) => lockUnexpired(row, now))
-    // Trusted server call (no principal) sees every lock. An authenticated principal only
-    // sees locks on documents they can READ — otherwise the lock table leaks who is editing
-    // documents outside their read scope. Locks are few, so a per-lock check is bounded.
-    if (!req.user) return unexpired.map(rowToLock)
-    const visible: Row[] = []
-    for (const row of unexpired) {
-      const slug = String(row.collection)
-      const coll = config.collectionsBySlug[slug]
-      if (!coll) continue
-      const access = await evalAccess(coll.access?.read, { req, id: String(row.documentId) })
-      if (!isAllowed(access)) continue
-      const scope = asWhere(access)
-      if (scope) {
-        const target = await db.findByID({ collection: slug, id: String(row.documentId) })
-        if (!target || !matchesWhere(target, scope)) continue
-      }
-      visible.push(row)
-    }
-    return visible.map(rowToLock)
-  }
-
-  /** Validate a presence kind, defaulting to 'viewing' for anything unexpected. */
-  function presenceKind(kind: unknown): PresenceKind {
-    return kind === 'editing' ? 'editing' : 'viewing'
-  }
-
-  async function heartbeat(opts: HeartbeatOptions): Promise<void> {
-    const req = buildReq(opts.req)
-    const coll = await assertTarget(opts.collection, opts.id, req)
-    const me = principalOf(req)
-    const now = opts.now ?? Date.now()
-    const rowId = `${coll.slug}:${opts.id}:${me.id}`
-    const data: Row = {
-      collection: coll.slug,
-      documentId: opts.id,
-      principalId: me.id,
-      principalType: me.type,
-      kind: presenceKind(opts.kind),
-      lastSeen: new Date(now).toISOString(),
-    }
-    // The row key is one slot per principal per document (upsert), so the table grows only
-    // with the number of DISTINCT concurrent principals on a doc — not with heartbeat rate.
-    // Stale rows are lazily pruned on the next `getPresence` read (below), so growth stays
-    // bounded without a background sweeper.
-    const existing = await db.findByID({ collection: PRESENCE_TABLE, id: rowId })
-    if (existing) await db.update({ collection: PRESENCE_TABLE, id: rowId, data })
-    else await db.create({ collection: PRESENCE_TABLE, data: { id: rowId, ...data } })
-  }
-
-  async function getPresence(opts: GetPresenceOptions): Promise<PresenceEntry[]> {
-    const req = buildReq(opts.req)
-    // Access-check READ first: a caller who can't read the target gets NotFound, so presence
-    // can't reveal who is on a document outside the caller's read scope.
-    const coll = await assertTarget(opts.collection, opts.id, req)
-    const now = opts.now ?? Date.now()
-    // Finite-guard the liveness window: NaN/Infinity from the wire must not poison `cutoff`.
-    const rawTtl = Math.floor(Number(opts.ttlMs))
-    const ttl = Math.min(Math.max(Number.isFinite(rawTtl) ? rawTtl : DEFAULT_PRESENCE_TTL_MS, 1), MAX_LOCK_TTL_MS)
-    const cutoff = now - ttl
-    const res = await db.find({
-      collection: PRESENCE_TABLE,
-      where: { and: [{ collection: { equals: coll.slug } }, { documentId: { equals: opts.id } }] },
-      limit: MAX_LIMIT,
-      page: 1,
-    })
-    const active: PresenceEntry[] = []
-    for (const row of res.docs) {
-      const seen = new Date(String(row.lastSeen)).getTime()
-      if (!Number.isFinite(seen) || seen < cutoff) {
-        // Stale: lazily prune so the table doesn't accumulate dead heartbeats.
-        await db.delete({ collection: PRESENCE_TABLE, id: String(row.id) })
-        continue
-      }
-      active.push({
-        principalId: String(row.principalId),
-        principalType: (row.principalType as PresenceEntry['principalType']) ?? 'user',
-        kind: presenceKind(row.kind),
-        lastSeen: new Date(seen).toISOString(),
-      })
-    }
-    return active
-  }
+  // Real-time collaboration (advisory locks + presence) lives in its own per-domain module
+  // (./operations/collaboration.ts); it is wired below alongside the other extracted domains,
+  // once every shared helper it shares the OpsContext with has been defined.
 
   // -------------------------------------------------------------------------
   // Editorial comments / annotations
@@ -5143,52 +5040,13 @@ export function createOperations(ctx: OperationCtx) {
   // from the authenticated principal — NEVER client input — so a comment can't be forged.
   // -------------------------------------------------------------------------
 
-  /** Prototype-pollution guard for an untrusted id/field string used as a key/lookup. */
+  // Prototype-pollution guard for an untrusted id/field string used as a key/lookup. Kept
+  // here because many ops across this file (create, sync, locks, …) reuse it.
   const COMMENT_FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
-  /** Shape a raw `_comments` row into a public CommentDoc. */
-  function rowToComment(row: Row): CommentDoc {
-    return {
-      id: String(row.id),
-      collection: String(row.collection),
-      documentId: String(row.documentId),
-      field: row.field != null ? String(row.field) : null,
-      parentId: row.parentId != null ? String(row.parentId) : null,
-      body: String(row.body ?? ''),
-      authorId: row.authorId != null ? String(row.authorId) : null,
-      authorType: normalizePrincipalType(row.authorType),
-      resolved: row.resolved === true,
-      createdAt: row.createdAt != null ? String(row.createdAt) : '',
-      updatedAt: row.updatedAt != null ? String(row.updatedAt) : '',
-    }
-  }
-
-  /**
-   * Access-check a READ on the target document, exactly like `assertTarget`/the read path:
-   * the document must exist AND the caller must be able to read it (rule + row-scope). A
-   * denial (or a missing doc) throws — so a caller can never add/list/resolve comments for a
-   * document outside their read scope, and the comment surface can't be used to probe for
-   * hidden documents. Only an `overrideAccess` (service/internal) call skips the check —
-   * an anonymous Local-API caller (no `req.user`) is still held to the document's read rule,
-   * exactly like `assertCanReadDoc`, so comment bodies/authors/counts never leak.
-   */
-  async function assertCanCommentOn(
-    collection: CollectionConfig,
-    id: string,
-    req: RequestContext,
-    override: boolean,
-  ): Promise<void> {
-    if (typeof id !== 'string' || id.length === 0 || COMMENT_FORBIDDEN_KEYS.has(id)) {
-      throw new BadRequestError('A valid document `id` is required.')
-    }
-    const row = await db.findByID({ collection: collection.slug, id })
-    if (!row) throw new NotFoundError()
-    if (override) return
-    const access = await evalAccess(collection.access?.read, { req, id })
-    if (!isAllowed(access)) throw new ForbiddenError()
-    const scope = asWhere(access)
-    if (scope && !matchesWhere(row, scope)) throw new ForbiddenError()
-  }
+  // Editorial comments / annotations are extracted to ./operations/comments.ts (wired below).
+  // `isReviewerPrincipal` / `isAdminPrincipal` stay here — the subscriptions, branches, and
+  // saved-views domains reuse them through the shared OpsContext.
 
   /** Whether `user` is a reviewer (admin or editor) — the role allowed to resolve any
    *  comment on a document they can read (an author can always resolve their own). */
@@ -5203,242 +5061,10 @@ export function createOperations(ctx: OperationCtx) {
     return Array.isArray(roles) && roles.includes('admin')
   }
 
-  /** The single comment row by id, or null. */
-  async function commentRowById(commentId: string): Promise<Row | null> {
-    if (typeof commentId !== 'string' || commentId.length === 0 || COMMENT_FORBIDDEN_KEYS.has(commentId)) {
-      throw new BadRequestError('A valid `commentId` is required.')
-    }
-    return (await db.findByID({ collection: COMMENTS_TABLE, id: commentId })) ?? null
-  }
-
-  async function addComment(opts: AddCommentOptions): Promise<CommentDoc> {
-    if (!config.comments.enabled) {
-      throw new BadRequestError('Editorial comments are not enabled (set `config.comments`).')
-    }
-    const collection = collectionOrThrow(opts.collection)
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-
-    // Anonymous principals can't comment — a comment must be attributable to a user/agent.
-    if (!override && !req.user) throw new UnauthorizedError('Authentication is required to comment.')
-
-    // Gate on the TARGET DOCUMENT's read access. A caller who can't read it gets
-    // Forbidden/NotFound — never a stored comment, and never a hint the doc exists.
-    await assertCanCommentOn(collection, opts.id, req, override)
-
-    // Body is untrusted: require a non-empty trimmed string, bound its length.
-    const body = typeof opts.body === 'string' ? opts.body.trim() : ''
-    if (body.length === 0) throw new ValidationError([{ path: 'body', message: 'A comment `body` is required.' }])
-    if (body.length > MAX_COMMENT_BODY) {
-      throw new ValidationError([
-        { path: 'body', message: `Comment is too long (max ${MAX_COMMENT_BODY} characters).` },
-      ])
-    }
-
-    // `field` (if given) must be a REAL field of the collection — reject prototype-pollution
-    // keys and any name that isn't an actual field so the anchor can't be a poisoned key or
-    // a probe. We match against the storage fields (the columns content actually has).
-    let field: string | null = null
-    if (opts.field != null) {
-      const name = String(opts.field)
-      if (COMMENT_FORBIDDEN_KEYS.has(name) || !storageFields(collection.fields).some((f) => f.name === name)) {
-        throw new ValidationError([{ path: 'field', message: `"${name}" is not a field of "${collection.slug}".` }])
-      }
-      field = name
-    }
-
-    // `parentId` (if given) must be an EXISTING comment on the SAME (collection, document) —
-    // no cross-document/cross-collection threading (which would leak ids / attach a reply to
-    // a doc the caller couldn't otherwise touch).
-    let parentId: string | null = null
-    if (opts.parentId != null) {
-      const parent = await commentRowById(String(opts.parentId))
-      if (!parent || String(parent.collection) !== collection.slug || String(parent.documentId) !== String(opts.id)) {
-        throw new ValidationError([{ path: 'parentId', message: 'Parent comment must be on the same document.' }])
-      }
-      parentId = String(parent.id)
-    }
-
-    // Author is the AUTHENTICATED PRINCIPAL — never client input. A forged `authorId` in the
-    // call has no effect (we don't read it); the stored author is `principalOf(req)`.
-    const me = principalOf(req)
-    const id = randomUUID()
-    await db.create({
-      collection: COMMENTS_TABLE,
-      data: {
-        id,
-        collection: collection.slug,
-        documentId: String(opts.id),
-        field,
-        parentId,
-        body,
-        authorId: override ? null : me.id,
-        authorType: override ? 'system' : me.type,
-        resolved: false,
-      },
-    })
-
-    await recordAudit({
-      action: 'comment.create',
-      collection: collection.slug,
-      documentId: String(opts.id),
-      req,
-      overrideAccess: override,
-      ...(field ? { fields: [field] } : {}),
-      meta: { commentId: id, ...(parentId ? { parentId } : {}) },
-    })
-
-    const saved = await db.findByID({ collection: COMMENTS_TABLE, id })
-    return rowToComment(saved ?? { id })
-  }
-
-  async function listComments(opts: ListCommentsOptions): Promise<CommentDoc[]> {
-    if (!config.comments.enabled) return []
-    const collection = collectionOrThrow(opts.collection)
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-
-    // NEVER list comments for a document the caller can't read (Forbidden — no leak).
-    await assertCanCommentOn(collection, opts.id, req, override)
-
-    const and: Where[] = [{ collection: { equals: collection.slug } }, { documentId: { equals: String(opts.id) } }]
-    if (opts.field != null) and.push({ field: { equals: String(opts.field) } })
-    // Resolved comments are hidden unless explicitly requested.
-    if (opts.includeResolved !== true) and.push({ resolved: { not_equals: true } })
-
-    const res = await db.find({
-      collection: COMMENTS_TABLE,
-      where: { and },
-      sort: [{ field: 'createdAt', direction: 'asc' }],
-      limit: MAX_LIMIT,
-      page: 1,
-    })
-    return res.docs.map(rowToComment)
-  }
-
-  async function resolveComment(opts: ResolveCommentOptions): Promise<CommentDoc> {
-    if (!config.comments.enabled) {
-      throw new BadRequestError('Editorial comments are not enabled (set `config.comments`).')
-    }
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-    const row = await commentRowById(opts.commentId)
-    if (!row) throw new NotFoundError()
-
-    const collection = collectionOrThrow(String(row.collection))
-    // Re-check the document read access (the comment's doc could now be out of scope).
-    await assertCanCommentOn(collection, String(row.documentId), req, override)
-
-    // Only the comment's AUTHOR or a reviewer (admin/editor) may resolve it. A random user
-    // who merely shares read access to the document cannot touch someone else's comment.
-    if (!override) {
-      const me = principalOf(req)
-      const isAuthor = row.authorId != null && String(row.authorId) === me.id
-      if (!isAuthor && !isReviewerPrincipal(req)) {
-        throw new ForbiddenError('Only the comment author or a reviewer can resolve this comment.')
-      }
-    }
-
-    const resolved = opts.resolved !== false
-    await db.update({ collection: COMMENTS_TABLE, id: String(row.id), data: { resolved } })
-
-    await recordAudit({
-      action: 'comment.resolve',
-      collection: collection.slug,
-      documentId: String(row.documentId),
-      req,
-      overrideAccess: override,
-      meta: { commentId: String(row.id), resolved },
-    })
-
-    const saved = await db.findByID({ collection: COMMENTS_TABLE, id: String(row.id) })
-    return rowToComment(saved ?? row)
-  }
-
-  async function deleteComment(opts: DeleteCommentOptions): Promise<{ id: string }> {
-    if (!config.comments.enabled) {
-      throw new BadRequestError('Editorial comments are not enabled (set `config.comments`).')
-    }
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-    const row = await commentRowById(opts.commentId)
-    if (!row) throw new NotFoundError()
-
-    const collection = collectionOrThrow(String(row.collection))
-    await assertCanCommentOn(collection, String(row.documentId), req, override)
-
-    // Only the comment's AUTHOR or an admin may delete it.
-    if (!override) {
-      const me = principalOf(req)
-      const isAuthor = row.authorId != null && String(row.authorId) === me.id
-      if (!isAuthor && !isAdminPrincipal(req)) {
-        throw new ForbiddenError('Only the comment author or an admin can delete this comment.')
-      }
-    }
-
-    await db.delete({ collection: COMMENTS_TABLE, id: String(row.id) })
-
-    await recordAudit({
-      action: 'comment.delete',
-      collection: collection.slug,
-      documentId: String(row.documentId),
-      req,
-      overrideAccess: override,
-      meta: { commentId: String(row.id) },
-    })
-
-    return { id: String(row.id) }
-  }
-
-  async function commentCount(opts: CommentCountOptions): Promise<number> {
-    if (!config.comments.enabled) return 0
-    const collection = collectionOrThrow(opts.collection)
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-    await assertCanCommentOn(collection, opts.id, req, override)
-
-    const and: Where[] = [{ collection: { equals: collection.slug } }, { documentId: { equals: String(opts.id) } }]
-    if (opts.includeResolved !== true) and.push({ resolved: { not_equals: true } })
-    return db.count({ collection: COMMENTS_TABLE, where: { and } })
-  }
-
   // -------------------------------------------------------------------------
-  // Saved views / smart collections
-  //
-  // A view stores a named (`where` + `sort` + `columns`) preset for one collection. It is
-  // owned by its creator (owner from the principal, never client input) and private unless
-  // `shared`. The stored `where`/`sort` are validated against the collection on save AND on
-  // apply; applying runs the NORMAL access-checked `find`, so a view can only ever narrow
-  // within the caller's read access — it can never widen or bypass it.
+  // Saved views / smart collections — extracted to ./operations/views.ts (wired below).
+  // `assertCanReadCollection` stays here: it is also used by the subscriptions domain.
   // -------------------------------------------------------------------------
-
-  const VIEW_NAME_MAX = 200
-
-  /** Shape a raw `_views` row into a public ViewDoc. The `where`/`sort`/`columns` columns are
-   *  `json`, which the storage adapter already decodes on read — so they come back as the
-   *  original JS value (object / string / array) and must NOT be parsed again. */
-  function rowToView(row: Row): ViewDoc {
-    return {
-      id: String(row.id),
-      collection: String(row.collection),
-      name: String(row.name),
-      where: (row.where ?? null) as Where | null,
-      sort: (row.sort ?? null) as string | string[] | null,
-      columns: (row.columns ?? null) as string[] | null,
-      ownerId: row.ownerId == null ? null : String(row.ownerId),
-      shared: row.shared === true,
-      createdAt: String(row.createdAt),
-      updatedAt: String(row.updatedAt),
-    }
-  }
-
-  /** The single view row by id, or null. Rejects a non-string / prototype-pollution id. */
-  async function viewRowById(viewId: string): Promise<Row | null> {
-    if (typeof viewId !== 'string' || viewId.length === 0 || COMMENT_FORBIDDEN_KEYS.has(viewId)) {
-      throw new BadRequestError('A valid `viewId` is required.')
-    }
-    return (await db.findByID({ collection: VIEWS_TABLE, id: viewId })) ?? null
-  }
 
   /** A caller may READ a collection (the collection-level gate, no specific row). Throws
    *  Forbidden when the read rule denies. A trusted (override) call skips the check. */
@@ -5452,253 +5078,31 @@ export function createOperations(ctx: OperationCtx) {
     if (!isAllowed(access)) throw new ForbiddenError()
   }
 
-  /** Validate that every field a stored `sort` references is a real, filterable column of
-   *  the collection — the same allow-list `where` is held to. Keeps a saved sort from
-   *  referencing a renamed/removed field (or an injected key) at apply time. */
-  function assertSortFields(collection: CollectionConfig, sort: string | string[] | null | undefined): void {
-    if (sort == null) return
-    const allowed = filterableFields(collection)
-    for (const spec of parseSort(sort)) {
-      if (!allowed.has(spec.field)) {
-        throw new BadRequestError(`Cannot sort on unknown field "${spec.field}" of "${collection.slug}".`)
-      }
-    }
+  // Per-domain operations modules, wired over one shared OpsContext. Placed here — after
+  // every shared helper they consume has been defined — so each is a pure factory that
+  // destructures what it needs by the same names the code used inside the monolith.
+  // `assertCanReadCollection` is passed in because the subscriptions domain reuses it too.
+  const opsContext: OpsContext = {
+    config,
+    db,
+    logger,
+    MAX_LIMIT,
+    collectionOrThrow,
+    buildReq,
+    principalOf,
+    assertTarget,
+    find,
+    recordAudit,
+    assertWhereFields,
+    filterableFields,
+    isAdminPrincipal,
+    isReviewerPrincipal,
+    normalizePrincipalType,
+    assertCanReadCollection,
   }
-
-  /** Normalize + validate the columns hint: a bounded list of real field names. Non-security
-   *  (display only), but kept clean so the stored payload can't carry junk/injection keys. */
-  function sanitizeViewColumns(collection: CollectionConfig, columns: string[] | null | undefined): string[] | null {
-    if (columns == null) return null
-    if (!Array.isArray(columns)) throw new BadRequestError('`columns` must be an array of field names.')
-    const allowed = filterableFields(collection)
-    const out: string[] = []
-    for (const c of columns) {
-      if (typeof c !== 'string' || !allowed.has(c)) {
-        throw new BadRequestError(`Unknown column "${String(c)}" of "${collection.slug}".`)
-      }
-      if (!out.includes(c)) out.push(c)
-    }
-    return out
-  }
-
-  function assertViewName(name: unknown): string {
-    if (typeof name !== 'string' || name.trim().length === 0) {
-      throw new BadRequestError('A view `name` is required.')
-    }
-    if (name.length > VIEW_NAME_MAX) {
-      throw new BadRequestError(`A view name must be at most ${VIEW_NAME_MAX} characters.`)
-    }
-    return name.trim()
-  }
-
-  async function saveView(opts: SaveViewOptions): Promise<ViewDoc> {
-    if (!config.views.enabled) {
-      throw new BadRequestError('Saved views are not enabled (set `config.views`).')
-    }
-    const collection = collectionOrThrow(opts.collection)
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-
-    // A view must be attributable to a principal — anonymous callers can't save one.
-    if (!override && !req.user) throw new UnauthorizedError('Authentication is required to save a view.')
-    // You can only build a view for a collection you can READ.
-    await assertCanReadCollection(collection, req, override)
-
-    const name = assertViewName(opts.name)
-    // Validate the stored filter/sort/columns against the collection up front — a malformed
-    // preset is rejected at save, never silently stored to fail (or escalate) on apply.
-    assertWhereFields(collection, opts.where)
-    assertSortFields(collection, opts.sort)
-    const columns = sanitizeViewColumns(collection, opts.columns)
-
-    const me = principalOf(req)
-    const id = randomUUID()
-    const created = await db.create({
-      collection: VIEWS_TABLE,
-      data: {
-        id,
-        collection: collection.slug,
-        name,
-        where: opts.where ?? null,
-        sort: opts.sort ?? null,
-        columns,
-        // The owner is the trusted principal, NEVER a client-supplied value. Under override
-        // (a trusted server call) there's no human owner → null (a system/global view).
-        ownerId: override ? null : me.id,
-        shared: opts.shared === true,
-      },
-    })
-
-    await recordAudit({
-      action: 'view.create',
-      collection: collection.slug,
-      documentId: String(created.id),
-      req,
-      overrideAccess: override,
-      meta: { viewId: String(created.id), shared: opts.shared === true },
-    })
-
-    return rowToView(created)
-  }
-
-  /** Whether the caller may SEE a view: its owner, or a `shared` view on a collection the
-   *  caller can currently read. A trusted (override) call sees everything. */
-  async function canSeeView(row: Row, req: RequestContext, override: boolean): Promise<boolean> {
-    if (override) return true
-    const me = principalOf(req)
-    if (row.ownerId != null && String(row.ownerId) === me.id) return true
-    if (row.shared !== true) return false
-    const collection = config.collectionsBySlug[String(row.collection)]
-    if (!collection) return false
-    const access = await evalAccess(collection.access?.read, { req })
-    return isAllowed(access)
-  }
-
-  async function listViews(opts: ListViewsOptions = {}): Promise<ViewDoc[]> {
-    if (!config.views.enabled) return []
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-    if (opts.collection != null) collectionOrThrow(opts.collection) // validate slug if given
-
-    const and: Where[] = []
-    if (opts.collection != null) and.push({ collection: { equals: String(opts.collection) } })
-    const res = await db.find({
-      collection: VIEWS_TABLE,
-      where: and.length ? { and } : undefined,
-      sort: [{ field: 'createdAt', direction: 'desc' }],
-      limit: MAX_LIMIT,
-      page: 1,
-    })
-    // Filter to what the caller may see (own + shared-on-readable-collection). Done in code
-    // because visibility depends on the live per-collection read rule, not a static column.
-    const out: ViewDoc[] = []
-    for (const row of res.docs) {
-      if (await canSeeView(row, req, override)) out.push(rowToView(row))
-    }
-    return out
-  }
-
-  async function getView(opts: GetViewOptions): Promise<ViewDoc | null> {
-    if (!config.views.enabled) return null
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-    const row = await viewRowById(opts.viewId)
-    if (!row) return null
-    if (!(await canSeeView(row, req, override))) return null
-    return rowToView(row)
-  }
-
-  /** Whether the caller may MUTATE a view (update/delete): its owner, or an admin. A shared
-   *  view is still owned — sharing grants visibility, never edit rights. */
-  function canEditView(row: Row, req: RequestContext, override: boolean): boolean {
-    if (override) return true
-    const me = principalOf(req)
-    if (row.ownerId != null && String(row.ownerId) === me.id) return true
-    return isAdminPrincipal(req)
-  }
-
-  async function updateView(opts: UpdateViewOptions): Promise<ViewDoc> {
-    if (!config.views.enabled) {
-      throw new BadRequestError('Saved views are not enabled (set `config.views`).')
-    }
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-    const row = await viewRowById(opts.viewId)
-    // Invisible views are indistinguishable from missing ones (NotFound, no existence oracle);
-    // a view the caller CAN see but doesn't own gets a clear Forbidden.
-    if (!row || !(await canSeeView(row, req, override))) throw new NotFoundError()
-    if (!canEditView(row, req, override)) {
-      throw new ForbiddenError('Only the view owner or an admin can update this view.')
-    }
-    const collection = collectionOrThrow(String(row.collection))
-
-    const data: Row = {}
-    if (opts.name !== undefined) data.name = assertViewName(opts.name)
-    if (opts.where !== undefined) {
-      assertWhereFields(collection, opts.where ?? undefined)
-      data.where = opts.where ?? null
-    }
-    if (opts.sort !== undefined) {
-      assertSortFields(collection, opts.sort)
-      data.sort = opts.sort ?? null
-    }
-    if (opts.columns !== undefined) data.columns = sanitizeViewColumns(collection, opts.columns)
-    if (opts.shared !== undefined) data.shared = opts.shared === true
-
-    if (Object.keys(data).length > 0) {
-      await db.update({ collection: VIEWS_TABLE, id: String(row.id), data })
-    }
-    await recordAudit({
-      action: 'view.update',
-      collection: collection.slug,
-      documentId: String(row.id),
-      req,
-      overrideAccess: override,
-      meta: { viewId: String(row.id) },
-    })
-    const saved = await db.findByID({ collection: VIEWS_TABLE, id: String(row.id) })
-    return rowToView(saved ?? row)
-  }
-
-  async function deleteView(opts: DeleteViewOptions): Promise<{ id: string }> {
-    if (!config.views.enabled) {
-      throw new BadRequestError('Saved views are not enabled (set `config.views`).')
-    }
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-    const row = await viewRowById(opts.viewId)
-    if (!row || !(await canSeeView(row, req, override))) throw new NotFoundError()
-    if (!canEditView(row, req, override)) {
-      throw new ForbiddenError('Only the view owner or an admin can delete this view.')
-    }
-    await db.delete({ collection: VIEWS_TABLE, id: String(row.id) })
-    await recordAudit({
-      action: 'view.delete',
-      collection: String(row.collection),
-      documentId: String(row.id),
-      req,
-      overrideAccess: override,
-      meta: { viewId: String(row.id) },
-    })
-    return { id: String(row.id) }
-  }
-
-  async function applyView<T extends Doc = Doc>(opts: ApplyViewOptions): Promise<PaginatedResult<T>> {
-    if (!config.views.enabled) {
-      throw new BadRequestError('Saved views are not enabled (set `config.views`).')
-    }
-    const req = buildReq(opts.req)
-    const override = opts.overrideAccess ?? false
-    const row = await viewRowById(opts.viewId)
-    if (!row) throw new NotFoundError()
-    // Visibility gate: you can only apply a view you can see (own or shared-on-readable).
-    if (!(await canSeeView(row, req, override))) throw new NotFoundError()
-
-    const collection = collectionOrThrow(String(row.collection))
-    const view = rowToView(row)
-    // Re-validate the stored filter/sort at apply time too (defence in depth: the schema may
-    // have drifted since save, or the row could have been tampered with out-of-band).
-    assertWhereFields(collection, view.where ?? undefined)
-    assertSortFields(collection, view.sort)
-
-    // The view's stored where, AND-combined with any extra caller filter (further narrows).
-    const where = mergeWhere(view.where ?? undefined, opts.where)
-    // Caller's per-application sort overrides the stored one; else use the saved sort.
-    const sort = opts.sort ?? view.sort ?? undefined
-
-    // Run the NORMAL access-checked find — the read rule + row-scope are AND-combined there,
-    // so a saved view can only ever narrow results within the caller's access, never widen.
-    return find<T>({
-      collection: collection.slug,
-      ...(where ? { where } : {}),
-      ...(sort != null ? { sort } : {}),
-      ...(opts.draft !== undefined ? { draft: opts.draft } : {}),
-      ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
-      ...(opts.page !== undefined ? { page: opts.page } : {}),
-      req: opts.req,
-      overrideAccess: override,
-    })
-  }
+  const collaborationOps = createCollaborationOps(opsContext)
+  const commentOps = createCommentOps(opsContext)
+  const viewOps = createViewOps(opsContext)
 
   // -------------------------------------------------------------------------
   // Saved-search alerts / content subscriptions
@@ -6162,27 +5566,82 @@ export function createOperations(ctx: OperationCtx) {
       page: 1,
     })
     const result: MergeBranchResult = { merged: [], failed: [] }
-    for (const ch of changes.docs) {
-      const collection = String(ch.collection)
-      const documentId = String(ch.documentId)
-      try {
-        // Replay through the NORMAL access-checked update — publish gate, field access, and
-        // validation all apply, as the merging principal. A staged change can never bypass them.
-        await update({
-          collection,
-          id: documentId,
+    const atomic = opts.atomic === true
+
+    // Replay one staged change through the NORMAL access-checked update — publish gate,
+    // field access, and validation all apply, as the merging principal. A staged change can
+    // never bypass them. `exec` threads the merge transaction in atomic mode (so the whole
+    // merge is one unit); in the default mode it is omitted and each update self-manages its
+    // own row+version+credential transaction.
+    const mergeOne = async (ch: Row, exec?: DatabaseAdapter): Promise<string> => {
+      await update(
+        {
+          collection: String(ch.collection),
+          id: String(ch.documentId),
           data: (ch.data ?? {}) as Row,
           req: opts.req,
           overrideAccess: override,
-        })
-        result.merged.push(`${collection}:${documentId}`)
-      } catch (err) {
-        result.failed.push({ collection, documentId, reason: err instanceof Error ? err.message : 'merge failed' })
-      }
+        },
+        undefined,
+        exec,
+      )
+      return `${String(ch.collection)}:${String(ch.documentId)}`
     }
-    // Mark merged + drop the overlay (it's been applied).
-    await db.update({ collection: BRANCHES_TABLE, id: String(branchRow.id), data: { status: 'merged' } })
-    for (const ch of changes.docs) await db.delete({ collection: BRANCH_DOCS_TABLE, id: String(ch.id) })
+    const reasonOf = (err: unknown) => (err instanceof Error ? err.message : 'merge failed')
+
+    if (atomic) {
+      // All-or-nothing: the whole merge — every staged update, the status flip, and the
+      // overlay drop — runs in ONE transaction. The first failure aborts and rolls every
+      // applied change back; the branch stays open and the overlay is intact, so the merge
+      // can be retried after the offending change is fixed.
+      try {
+        await runWrite(undefined, async (tx) => {
+          for (const ch of changes.docs) {
+            try {
+              result.merged.push(await mergeOne(ch, tx))
+            } catch (err) {
+              result.failed.push({
+                collection: String(ch.collection),
+                documentId: String(ch.documentId),
+                reason: reasonOf(err),
+              })
+              throw err
+            }
+          }
+          await tx.update({ collection: BRANCHES_TABLE, id: String(branchRow.id), data: { status: 'merged' } })
+          for (const ch of changes.docs) await tx.delete({ collection: BRANCH_DOCS_TABLE, id: String(ch.id) })
+        })
+      } catch {
+        // Rolled back: nothing merged, overlay intact, branch still open.
+        result.merged = []
+        await recordAudit({
+          action: 'branch.merge',
+          documentId: String(branchRow.id),
+          req,
+          overrideAccess: override,
+          meta: { branch: opts.branch, merged: 0, failed: result.failed.length, atomic: true, rolledBack: true },
+        })
+        return result
+      }
+    } else {
+      // Default (backward-compatible): apply each change independently; collect failures and
+      // proceed. Each update is individually atomic (row+version+credential), but the branch
+      // as a whole is not — documented on `BranchRef.atomic`.
+      for (const ch of changes.docs) {
+        try {
+          result.merged.push(await mergeOne(ch))
+        } catch (err) {
+          result.failed.push({
+            collection: String(ch.collection),
+            documentId: String(ch.documentId),
+            reason: reasonOf(err),
+          })
+        }
+      }
+      // Mark merged + drop the overlay (it's been applied).
+      await db.update({ collection: BRANCHES_TABLE, id: String(branchRow.id), data: { status: 'merged' } })
+      for (const ch of changes.docs) await db.delete({ collection: BRANCH_DOCS_TABLE, id: String(ch.id) })
+    }
     await recordAudit({
       action: 'branch.merge',
       documentId: String(branchRow.id),
@@ -6270,64 +5729,99 @@ export function createOperations(ctx: OperationCtx) {
       throw new BadRequestError(`A content bundle is limited to ${MAX_LIMIT} documents per sync.`)
     }
     const dryRun = opts.dryRun === true
+    // Atomic only writes; a dry run never writes, so the flag is moot there.
+    const atomic = opts.atomic === true && !dryRun
     const result: SyncContentResult = { created: 0, updated: 0, unchanged: 0, failed: [], plan: [], dryRun }
 
-    for (const entry of bundle.documents) {
-      const collectionSlug = String(entry?.collection ?? '')
+    // Apply one bundle entry (create-or-update by id). The WRITE runs on `exec` — the sync
+    // transaction in atomic mode, else the bare handle so each doc self-manages its own
+    // row+version+credential transaction. The existence check stays on the access-checked
+    // read path so a sync never silently overwrites a doc the caller can't see.
+    const applyEntry = async (entry: ContentBundle['documents'][number], exec?: DatabaseAdapter): Promise<void> => {
+      const collection = collectionOrThrow(String(entry?.collection ?? ''))
       const id = String(entry?.id ?? '')
-      try {
-        const collection = collectionOrThrow(collectionSlug)
-        if (id.length === 0 || COMMENT_FORBIDDEN_KEYS.has(id))
-          throw new BadRequestError('A valid document `id` is required.')
-        const data = (entry.data ?? {}) as Row
-        // Reject prototype-pollution keys in the staged data up front (downstream create/update
-        // only iterate declared fields, so this is defence in depth + a clean per-entry error).
-        for (const k of Object.keys(data)) {
-          if (COMMENT_FORBIDDEN_KEYS.has(k)) throw new BadRequestError(`Illegal field "${k}".`)
-        }
-        // Detect existence through the access-checked read (drafts included). A missing id
-        // routes to create; an existing-but-unreadable doc throws Forbidden here → it lands in
-        // `failed[]` (the apply never runs), so a sync never silently overwrites a doc the
-        // caller can't see.
-        const existing = await findByID({
-          collection: collection.slug,
-          id,
-          req: opts.req,
-          overrideAccess: opts.overrideAccess,
-          draft: true,
-        })
-        if (existing) {
-          // Unchanged if every incoming field already matches the existing document.
-          const changed = Object.keys(data).some(
-            (k) => JSON.stringify((existing as Row)[k]) !== JSON.stringify(data[k]),
-          )
-          const action: SyncEntry['action'] = changed ? 'update' : 'unchanged'
-          result.plan.push({ collection: collection.slug, id, action })
-          if (action === 'unchanged') {
-            result.unchanged++
-          } else {
-            if (!dryRun)
-              await update({
-                collection: collection.slug,
-                id,
-                data,
-                req: opts.req,
-                overrideAccess: opts.overrideAccess,
-              })
-            result.updated++
-          }
+      if (id.length === 0 || COMMENT_FORBIDDEN_KEYS.has(id))
+        throw new BadRequestError('A valid document `id` is required.')
+      const data = (entry.data ?? {}) as Row
+      // Reject prototype-pollution keys in the staged data up front (downstream create/update
+      // only iterate declared fields, so this is defence in depth + a clean per-entry error).
+      for (const k of Object.keys(data)) {
+        if (COMMENT_FORBIDDEN_KEYS.has(k)) throw new BadRequestError(`Illegal field "${k}".`)
+      }
+      const existing = await findByID({
+        collection: collection.slug,
+        id,
+        req: opts.req,
+        overrideAccess: opts.overrideAccess,
+        draft: true,
+      })
+      if (existing) {
+        // Unchanged if every incoming field already matches the existing document.
+        const changed = Object.keys(data).some((k) => JSON.stringify((existing as Row)[k]) !== JSON.stringify(data[k]))
+        const action: SyncEntry['action'] = changed ? 'update' : 'unchanged'
+        result.plan.push({ collection: collection.slug, id, action })
+        if (action === 'unchanged') {
+          result.unchanged++
         } else {
-          result.plan.push({ collection: collection.slug, id, action: 'create' })
           if (!dryRun)
-            await create({ collection: collection.slug, id, data, req: opts.req, overrideAccess: opts.overrideAccess })
-          result.created++
+            await update(
+              { collection: collection.slug, id, data, req: opts.req, overrideAccess: opts.overrideAccess },
+              undefined,
+              exec,
+            )
+          result.updated++
         }
-      } catch (err) {
-        result.failed.push({
-          collection: collectionSlug,
-          id,
-          reason: err instanceof Error ? err.message : 'sync failed',
+      } else {
+        result.plan.push({ collection: collection.slug, id, action: 'create' })
+        if (!dryRun)
+          await create(
+            { collection: collection.slug, id, data, req: opts.req, overrideAccess: opts.overrideAccess },
+            exec,
+          )
+        result.created++
+      }
+    }
+    const recordFailure = (entry: ContentBundle['documents'][number], err: unknown) => {
+      result.failed.push({
+        collection: String(entry?.collection ?? ''),
+        id: String(entry?.id ?? ''),
+        reason: err instanceof Error ? err.message : 'sync failed',
+      })
+    }
+
+    if (atomic) {
+      // All-or-nothing: apply the whole bundle in ONE transaction. The first failure aborts
+      // and rolls every applied document back — the bundle lands whole or not at all.
+      try {
+        await runWrite(undefined, async (tx) => {
+          for (const entry of bundle.documents) {
+            try {
+              await applyEntry(entry, tx)
+            } catch (err) {
+              recordFailure(entry, err)
+              throw err
+            }
+          }
         })
+      } catch {
+        // Rolled back: nothing was written. Reset the would-be tallies; `failed[]` keeps the
+        // offending entry so the caller sees why the bundle did not apply.
+        result.created = 0
+        result.updated = 0
+        result.unchanged = 0
+        result.plan = []
+      }
+      return result
+    }
+
+    // Default (backward-compatible): apply each document independently; collect failures and
+    // proceed. Each create/update is individually atomic, but the bundle is not — documented
+    // on `SyncContentOptions.atomic`.
+    for (const entry of bundle.documents) {
+      try {
+        await applyEntry(entry)
+      } catch (err) {
+        recordFailure(entry, err)
       }
     }
     return result
@@ -6456,7 +5950,7 @@ export function createOperations(ctx: OperationCtx) {
 
     // Comments (any reader; doc-read-gated by `listComments`). Include resolved for the feed.
     if (want('comment') && config.comments.enabled) {
-      for (const c of await listComments({
+      for (const c of await commentOps.listComments({
         collection: collection.slug,
         id: docId,
         includeResolved: true,
@@ -6629,17 +6123,8 @@ export function createOperations(ctx: OperationCtx) {
     deleteRole,
     findReviewQueue,
     submitReview,
-    addComment,
-    listComments,
-    resolveComment,
-    deleteComment,
-    commentCount,
-    saveView,
-    listViews,
-    getView,
-    updateView,
-    deleteView,
-    applyView,
+    ...commentOps,
+    ...viewOps,
     createSubscription,
     listSubscriptions,
     deleteSubscription,
@@ -6671,12 +6156,7 @@ export function createOperations(ctx: OperationCtx) {
     composePage,
     listTemplates,
     createFromTemplate,
-    acquireLock,
-    releaseLock,
-    getLock,
-    listLocks,
-    heartbeat,
-    getPresence,
+    ...collaborationOps,
     provenance,
     getContentCredential,
     verifyContentCredential,

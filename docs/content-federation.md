@@ -80,6 +80,29 @@ reason while the rest still apply. The `plan` lists the decided action per docum
 `created` / `updated` / `unchanged` / `failed` partition the outcome. **Re-syncing the same
 bundle is idempotent** — the second run reports every document `unchanged` and writes nothing.
 
+### All-or-nothing sync (opt-in)
+
+By default a sync is **per-document**: each create/update applies independently and failures
+collect in `failed[]` while the rest land. Pass `atomic: true` to apply the **whole bundle in
+one database transaction** — if any document fails, every document already applied **rolls
+back** and the sync writes nothing, so the bundle lands whole or not at all.
+
+```ts
+// default: partial apply, failures reported in failed[]
+await kernel.syncContent({ bundle })
+
+// atomic: the entire bundle commits together, or nothing does
+const res = await kernel.syncContent({ bundle, atomic: true })
+if (res.failed.length) {
+  // nothing was written — the target is untouched
+}
+```
+
+Atomic mode suits **promoting a coordinated change set** (a launch that must land whole); the
+per-document default suits **best-effort reconciliation**. `atomic` is ignored under `dryRun`
+(a dry run never writes) and falls back to the per-document apply on an adapter without
+transaction support.
+
 > To preserve identity across environments, `kernel.create` now accepts an optional `id`.
 > Sync uses it under the hood to recreate a missing document with its original id; a
 > **duplicate id is a conflict** (the existing document wins and the apply lands in

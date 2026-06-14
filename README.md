@@ -226,6 +226,17 @@ A working CMS, an admin panel, and a typed REST + GraphQL API in three steps.
 npm install kernelcms
 ```
 
+The base install is lean: it ships **no required runtime dependencies**. The heavy
+integrations are **optional peer dependencies** you add only when you use them — so a
+SQLite + local-file + REST deployment never pulls them in:
+
+```bash
+npm install pg                                              # only for the Postgres adapter
+npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner # only for the S3/R2 storage adapter
+npm install graphql                                        # only for the GraphQL endpoint
+npm install @modelcontextprotocol/sdk                      # only for the MCP server
+```
+
 ### 2. Add a `kernel.config.ts`
 
 ```ts
@@ -1856,6 +1867,17 @@ pnpm test                             # vitest: engine, HTTP API, adapters
 pnpm --filter @kernel/admin-app build # bundle the admin
 pnpm kernel -- --help                 # the CLI
 ```
+
+---
+
+## Stability & versioning
+
+KernelCMS follows [Semantic Versioning](https://semver.org/). It is pre-1.0: on the `0.x`
+line a **minor** can carry a documented breaking change (with a migration note and, for
+stable APIs, a deprecation first), while a **patch** never breaks the public API. What
+counts as the public API, which features are still **experimental**, the deprecation
+policy, and the road to 1.0 are all in **[STABILITY.md](./STABILITY.md)**. Pin the version
+you deploy and skim the changelog before bumping across a minor.
 
 ---
 
