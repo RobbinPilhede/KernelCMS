@@ -1,5 +1,17 @@
 # kernelcms
 
+## 0.25.0
+
+### Minor Changes
+
+- **Content analytics & insights — see how your content performs, and how AI uses it. No third-party tracker, no PII.** Built into the same model, privacy-first.
+  - **Capture events.** `kernel.track({ type, collection, documentId, query?, value?, meta? })` records a content event (`view`, `search`, `ai_retrieval`, `citation`, `variant_impression`, `conversion`, `custom`). It never throws into your code, and over REST it's `POST /api/_analytics/track`.
+  - **See how AI uses your content (opt-in auto-capture).** Turn on `analytics: { enabled: true, autoCapture: true }` and every semantic / hybrid / graph search emits an `ai_retrieval` event for the documents it returned, and every A/B assignment emits a `variant_impression` — automatically, with zero added latency. The `ai_retrieval_leaderboard` insight then shows exactly which content your RAG and AI features surface most.
+  - **Aggregate insights.** `kernel.insights({ metric })` gives `top_content`, `top_queries`, `variant_performance` (impressions, conversions, rate), `activity` (over time), and `ai_retrieval_leaderboard`. Admin/editor-gated over `GET /api/_admin/insights`.
+  - **Privacy-first by construction.** There is no user, IP, visitor-key, email, or token column — the event row physically can't hold PII; `track` strips PII-ish and prototype-pollution keys from `meta` and never records the authenticated principal. `track` can only ever write the analytics table (never another collection). Insights are aggregates only, filtered to collections the caller can read (a hidden collection's counts never leak), with bounded retention and scan. Red-teamed exhaustively — **Risk: LOW, zero findings** — verified by a live harness and a Playwright end-to-end test.
+
+  Opt-in via `analytics`; auto-capture off by default; fully backward-compatible.
+
 ## 0.24.0
 
 ### Minor Changes
