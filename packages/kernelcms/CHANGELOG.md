@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.27.0
+
+### Minor Changes
+
+- **Multi-tenancy: run many clients on one instance with airtight isolation — zero boilerplate.** For SaaS built on KernelCMS, or an agency managing dozens of sites, every tenant must see only their own content. KernelCMS now does that automatically, enforced through the same access pipeline that protects everything else.
+  - **One line of config.** `tenancy: { field: 'tenant' }` auto-adds a server-managed tenant field to your scoped collections and auto-injects a tenant scope into their read/create/update/delete access — AND-combined with your own rules (it never widens them). Every find/findByID/update/delete/count is then transparently filtered to the caller's tenant. On create the tenant is stamped automatically; on update it's immutable. No per-collection access code.
+  - **The tenant comes from the principal, never the client.** It's resolved from `req.user.tenant` (put a tenant on your user records, or supply a `resolve` from verified state) — never a query param, body field, or header. So a tenant-A user can never read, list, count, update, or delete tenant-B content, and a client can never create or move a document into another tenant (the value is stamped on create and stripped on update). A tenant-less principal sees nothing in scoped collections (fail-closed); cross-tenant content never leaks through relationship populate.
+  - **Safe escape hatch.** `overrideAccess` / system calls (migrations, admin tooling) see across all tenants — the single, documented bypass.
+
+  Red-teamed with 35 cross-tenant attacks (IDOR, `where`-widening, spoofing, populate leaks, bulk ops) — **Risk: LOW, zero leaks** — verified by a live harness and a Playwright end-to-end test where two authenticated tenants each see only their own data over HTTP. Opt-in via `tenancy`; fully backward-compatible.
+
 ## 0.26.0
 
 ### Minor Changes
