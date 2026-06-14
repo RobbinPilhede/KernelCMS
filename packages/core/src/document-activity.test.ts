@@ -16,7 +16,7 @@ const viewerB = { user: { id: 'vw2', roles: ['viewer'] } } as const
 const anon = {} as const
 
 // Owner-scoped read: a row is only readable by its owner (or an admin).
-const ownerRead = ({ req }: any): unknown => {
+const ownerRead = ({ req }: any): any => {
   if (req.user?.roles?.includes('admin')) return true
   return { owner: { equals: req.user?.id ?? '__none__' } }
 }
