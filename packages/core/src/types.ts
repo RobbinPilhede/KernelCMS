@@ -941,6 +941,35 @@ export interface MergeBranchResult {
 }
 
 // ---------------------------------------------------------------------------
+// Content QA / linting (on-demand evals)
+// ---------------------------------------------------------------------------
+
+export interface LintDocumentOptions extends OperationBase {
+  collection: string
+  id: string
+}
+
+/** One finding from running the configured evals against a document on demand. */
+export interface LintFinding {
+  rule: string
+  ok: boolean
+  severity: 'error' | 'warn' | 'info'
+  message: string
+  field?: string
+  /** Whether this finding's rule is BLOCKING — i.e. an `error` here would reject a publish. */
+  blocking: boolean
+}
+
+export interface DocumentLintResult {
+  /** True when nothing would block a publish (no blocking `error` findings). */
+  ok: boolean
+  /** Every finding from every applicable rule (errors + warnings + info). */
+  findings: LintFinding[]
+  /** The findings that WOULD block a publish (blocking rules with an `error`). */
+  blocking: LintFinding[]
+}
+
+// ---------------------------------------------------------------------------
 // Content federation / sync (portable bundles between environments)
 // ---------------------------------------------------------------------------
 
@@ -3503,6 +3532,10 @@ export interface Kernel {
   mergeBranch(opts: BranchRef): Promise<MergeBranchResult>
   /** Discard a branch: drop its staged overlay and mark it discarded. Reviewer-gated. */
   discardBranch(opts: BranchRef): Promise<{ name: string }>
+  /** Run the configured content evals against a document ON DEMAND (read-only) — the same
+   *  rules that gate publish, surfaced so an editor sees blocking errors + quality warnings
+   *  before publishing. Access-checked (the caller must be able to read the document). */
+  lintDocument(opts: LintDocumentOptions): Promise<DocumentLintResult>
   /** Export documents of a collection as a portable, deterministic bundle (access-checked —
    *  only documents the caller can read). Requires `config.federation`. */
   exportContent(opts: ExportContentOptions): Promise<ContentBundle>

@@ -931,6 +931,7 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     discardBranch: ops.discardBranch,
     exportContent: ops.exportContent,
     syncContent: ops.syncContent,
+    lintDocument: ops.lintDocument,
     processWebhooks: ops.processWebhooks,
     listWebhooks: ops.listWebhooks,
     webhookDeliveries: ops.webhookDeliveries,

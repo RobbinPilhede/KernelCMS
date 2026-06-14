@@ -1847,6 +1847,11 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     if (segments[2] === 'history' && method === 'GET') {
       return json(await kernel.history({ collection, id, ...base }))
     }
+    // Content QA: run the configured evals against the document's draft on demand. Read-only,
+    // but gated on UPDATE access (it's an editorial pre-publish tool — see `lintDocument`).
+    if (segments[2] === 'lint' && method === 'GET') {
+      return json(await kernel.lintDocument({ collection, id, ...base }))
+    }
     // Activity feed: a merged, time-ordered timeline (versions + comments for any reader;
     // reviews + audit for reviewers). Gated on the document's read access.
     if (segments[2] === 'activity' && method === 'GET') {

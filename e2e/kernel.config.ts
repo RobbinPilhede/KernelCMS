@@ -1,4 +1,4 @@
-import { defineConfig, memorySearch } from '@kernel/core'
+import { defineConfig, memorySearch, requiredFieldsEval, readabilityEval } from '@kernel/core'
 import { sqliteAdapter } from '@kernel/db-sqlite'
 import { localStorage } from '@kernel/storage'
 
@@ -101,6 +101,12 @@ export default defineConfig({
   branches: true,
   // Content federation: export a content set as a portable bundle + sync it into another env.
   federation: true,
+  // Content QA / linting: required-before-publish + a readability nudge on the `qa_docs`
+  // collection, surfaced on demand via GET /api/:c/:id/lint and enforced at publish.
+  evals: [
+    { ...requiredFieldsEval({ fields: ['summary'] }), appliesTo: ['qa_docs'] },
+    { ...readabilityEval({ fields: ['summary'], maxAvgSentenceWords: 8 }), appliesTo: ['qa_docs'] },
+  ],
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).
@@ -227,6 +233,16 @@ export default defineConfig({
       fields: [
         { name: 'label', type: 'text', required: true },
         { name: 'body', type: 'text' },
+      ],
+    },
+    {
+      // Content QA demo: drafts + a required `summary` (a blocking eval) for the lint surface.
+      slug: 'qa_docs',
+      versions: { drafts: true },
+      access: { read: () => true, create: ({ req }) => Boolean(req.user), update: ({ req }) => Boolean(req.user) },
+      fields: [
+        { name: 'title', type: 'text', required: true },
+        { name: 'summary', type: 'text' },
       ],
     },
     {

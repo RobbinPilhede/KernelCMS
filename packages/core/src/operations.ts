@@ -148,6 +148,9 @@ import type {
   SyncContentOptions,
   SyncContentResult,
   SyncEntry,
+  LintDocumentOptions,
+  DocumentLintResult,
+  LintFinding,
 } from './types'
 import {
   BadRequestError,
@@ -1156,6 +1159,47 @@ export function createOperations(ctx: OperationCtx) {
     }
     // Strip the internal rule/blocking bookkeeping from what we hand back as findings.
     return { findings: results.map(({ ok, severity, message, field }) => ({ ok, severity, message, field })) }
+  }
+
+  /** Run the configured evals against a document ON DEMAND (read-only) — the same rules that
+   *  gate publish, surfaced for an editor to see blocking errors + quality warnings before
+   *  publishing. Linting is an EDITORIAL pre-publish tool, so it's gated on UPDATE access, not
+   *  plain read: it inspects the live DRAFT and its findings echo content (banned terms, link
+   *  targets, field presence). Gating on read alone would let any reader of a `read: () => true`
+   *  collection harvest unpublished drafts through the lint surface — so the caller must be able
+   *  to edit the document, exactly as if they were about to publish it. */
+  async function lintDocument(opts: LintDocumentOptions): Promise<DocumentLintResult> {
+    const collection = collectionOrThrow(opts.collection)
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    // Capability gate: 404 if it doesn't exist, 403 unless the caller may update it.
+    await assertCanUpdateDoc(collection, String(opts.id), req, override)
+    // Load the field-projected, decrypted draft to lint (drafts included, so you can lint a
+    // work-in-progress). The caller has already proven update rights above.
+    const doc = await findByID({
+      collection: collection.slug,
+      id: opts.id,
+      req: opts.req,
+      overrideAccess: opts.overrideAccess,
+      draft: true,
+    })
+    if (!doc) throw new NotFoundError()
+    const { results } = await runEvals(config.evals, {
+      doc: doc as Row,
+      collection: collection.slug,
+      req,
+      fields: collection.fields,
+    })
+    const findings: LintFinding[] = results.map((r) => ({
+      rule: r.rule,
+      ok: r.ok,
+      severity: r.severity,
+      message: r.message,
+      ...(r.field !== undefined ? { field: r.field } : {}),
+      blocking: r.blocking,
+    }))
+    const blocking = findings.filter((f) => f.blocking && !f.ok && f.severity === 'error')
+    return { ok: blocking.length === 0, findings, blocking }
   }
 
   /**
@@ -6609,6 +6653,7 @@ export function createOperations(ctx: OperationCtx) {
     discardBranch,
     exportContent,
     syncContent,
+    lintDocument,
     processWebhooks,
     listWebhooks,
     webhookDeliveries,

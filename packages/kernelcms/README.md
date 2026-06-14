@@ -1572,6 +1572,54 @@ generation is your agent/LLM inside a step, and approval publishes through the i
 A self-triggering loop is guarded: an agent's own write into its trigger collection won't
 re-fire its workflow.
 
+### Content QA & linting
+
+KernelCMS runs **pre-publish evals** — "content CI" — at the publish gate: a blocking rule
+that returns an `error` **rejects the publish**. Content QA extends that with an *on-demand*
+lint, so an editor sees the blocking errors and quality warnings **before** they publish —
+and adds three new built-in rule factories. The rules that gate a publish and the rules you
+lint against are the **same rules**: a green lint is a publishable document.
+
+```ts
+export default defineConfig({
+  evals: [
+    requiredFieldsEval({ fields: ['summary', 'hero'] }), // BLOCKING: no publish without these
+    seoEval({ titleField: 'title', descriptionField: 'meta_description' }),
+    a11yEval(),                                           // alt text + heading levels
+    readabilityEval({ fields: ['body'] }),               // warns on long-winded prose
+    linkEval(),                                           // warns on empty/broken link targets
+    // policyEval({ bannedTerms }), brandEval({ requiredDisclaimers }) …
+  ],
+  collections: [/* … */],
+})
+```
+
+- **Lint on demand.** `kernel.lintDocument({ collection, id, req })` runs the configured
+  rules read-only and returns `{ ok, findings, blocking }` — every finding
+  (`{ rule, ok, severity: 'error' | 'warn' | 'info', message, field?, blocking }`), the
+  subset that would reject a publish, and `ok` when nothing blocks. **Access-checked** (you
+  must be able to read the document, drafts included).
+- **Seven built-in checks.** `a11yEval`, `seoEval`, `policyEval`, `brandEval`,
+  `readabilityEval`, `requiredFieldsEval`, `linkEval` — all pure (read only the fields they
+  declare, never the network) and exported from `@kernel/core`. Scope a rule with
+  `appliesTo: ['posts']`.
+- **Blocking vs warning.** `blocking: true` (the default) means an `error` rejects the
+  publish; a `blocking: false` rule (readability, links) only ever warns. `warn`/`info`
+  never block.
+
+```bash
+# Lint a document — runs the configured evals read-only; requires UPDATE access (an editor token)
+curl -H "Authorization: Bearer <editor-token>" "http://localhost:3000/api/posts/<id>/lint"
+```
+
+**`lintDocument` is read-only and gated on update access, and returns exactly what the publish
+gate would see** — a green lint means the document clears the gate, for the configured rules.
+Lint exposes the live draft and its findings echo content, so it requires the same right as
+publishing: only an editor of the document can lint it, never a public reader — drafts can't
+leak through the lint surface. Built-in rules are pure and deterministic; a rule that throws
+fails closed (a blocking error, never a silent pass). Red-teamed to Risk LOW. See the
+[content QA & linting guide](docs/content-qa.md).
+
 ### Auth
 
 - Scrypt password hashing and stateless, JWT-compatible tokens.

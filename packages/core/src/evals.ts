@@ -82,13 +82,16 @@ function uploadFieldNames(fields: ConfigField[]): string[] {
     .map((f) => f.name)
 }
 
-/** Depth-first walk over a richText node tree, visiting every node. */
-function walkRichText(node: unknown, visit: (n: Record<string, unknown>) => void): void {
-  if (!node || typeof node !== 'object') return
+/** Depth-first walk over a richText node tree, visiting every node. Bounded to MAX_WALK_DEPTH
+ *  levels so a hostile/over-nested tree can't blow the call stack (the richText sanitizer caps
+ *  nesting on write, but evals must stay robust even if handed unsanitized input). */
+const MAX_WALK_DEPTH = 100
+function walkRichText(node: unknown, visit: (n: Record<string, unknown>) => void, depth = 0): void {
+  if (!node || typeof node !== 'object' || depth > MAX_WALK_DEPTH) return
   const n = node as Record<string, unknown>
   visit(n)
   const children = n.children
-  if (Array.isArray(children)) for (const c of children) walkRichText(c, visit)
+  if (Array.isArray(children)) for (const c of children) walkRichText(c, visit, depth + 1)
 }
 
 /** Collapse a richText doc to plain text (used by length/term checks). */
@@ -345,6 +348,133 @@ export function brandEval(opts: BrandEvalOptions = {}): EvalRule {
       }
       if (findings.length === 0)
         findings.push({ ok: true, severity: 'info', message: 'All brand disclaimers present.' })
+      return findings
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// readability — flag prose that's hard to read (long sentences / long words).
+// ---------------------------------------------------------------------------
+
+export interface ReadabilityEvalOptions {
+  /** The text/richText fields to score. */
+  fields: string[]
+  /** Warn when the average sentence length exceeds this many words. Default 25. */
+  maxAvgSentenceWords?: number
+  /** Warn when more than this fraction of words are "long" (>= 13 chars). Default 0.20. */
+  maxLongWordRatio?: number
+}
+
+/** Readability eval: a non-blocking nudge when a field's prose runs long-winded (high average
+ *  sentence length or a high share of long words). Pure — reads only the declared fields. */
+export function readabilityEval(opts: ReadabilityEvalOptions): EvalRule {
+  const maxAvg = opts.maxAvgSentenceWords ?? 25
+  const maxLong = opts.maxLongWordRatio ?? 0.2
+  return {
+    name: 'readability',
+    blocking: false,
+    run({ doc, fields }) {
+      const findings: EvalFinding[] = []
+      const richNames = new Set(richTextFieldNames(fields ?? []))
+      for (const field of opts.fields) {
+        const value = doc[field]
+        const text = (richNames.has(field) ? richTextToText(value) : typeof value === 'string' ? value : '').trim()
+        if (text.length === 0) continue
+        const words = text.split(/\s+/).filter(Boolean)
+        if (words.length < 10) continue
+        const sentences = text
+          .split(/[.!?]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+        const avg = sentences.length > 0 ? words.length / sentences.length : words.length
+        if (avg > maxAvg) {
+          findings.push({
+            ok: false,
+            severity: 'warn',
+            message: `"${field}" averages ${avg.toFixed(0)} words/sentence (aim for ≤ ${maxAvg}). Shorter sentences read easier.`,
+            field,
+          })
+        }
+        const longWords = words.filter((w) => w.replace(/[^a-z]/gi, '').length >= 13).length
+        const ratio = longWords / words.length
+        if (ratio > maxLong) {
+          findings.push({
+            ok: false,
+            severity: 'warn',
+            message: `"${field}" is ${(ratio * 100).toFixed(0)}% long words (aim for ≤ ${(maxLong * 100).toFixed(0)}%).`,
+            field,
+          })
+        }
+      }
+      if (findings.length === 0) findings.push({ ok: true, severity: 'info', message: 'Readability looks good.' })
+      return findings
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// required-before-publish — certain fields must be present to publish.
+// ---------------------------------------------------------------------------
+
+/** Required-fields eval: BLOCKS the publish when any listed field is empty (a blank string,
+ *  an empty list, or null). For "you can't publish without a hero image / summary / category". */
+export function requiredFieldsEval(opts: { fields: string[] }): EvalRule {
+  return {
+    name: 'required-fields',
+    blocking: true,
+    run({ doc }) {
+      const findings: EvalFinding[] = []
+      const isEmpty = (v: unknown): boolean =>
+        v == null || (typeof v === 'string' && v.trim().length === 0) || (Array.isArray(v) && v.length === 0)
+      for (const field of opts.fields) {
+        if (isEmpty(doc[field])) {
+          findings.push({ ok: false, severity: 'error', message: `"${field}" is required before publishing.`, field })
+        }
+      }
+      if (findings.length === 0) findings.push({ ok: true, severity: 'info', message: 'All required fields present.' })
+      return findings
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// links — flag empty or malformed link targets in rich text.
+// ---------------------------------------------------------------------------
+
+/** Link eval: a non-blocking warning for rich-text links with an empty/placeholder href
+ *  (`#`, blank) or a malformed external URL. Pure — inspects the richText link nodes only. */
+export function linkEval(opts: { fields?: string[] } = {}): EvalRule {
+  return {
+    name: 'links',
+    blocking: false,
+    run({ doc, fields }) {
+      const findings: EvalFinding[] = []
+      const names = opts.fields ?? richTextFieldNames(fields ?? [])
+      for (const field of names) {
+        walkRichText(doc[field], (n) => {
+          if (n.type !== 'link') return
+          // The canonical rich-text link node keys its target as `url` (the sanitizer emits
+          // `{ type: 'link', url }`); tolerate a legacy `href` just in case.
+          const raw = typeof n.url === 'string' ? n.url : typeof n.href === 'string' ? n.href : ''
+          const href = raw.trim()
+          if (href === '' || href === '#') {
+            findings.push({ ok: false, severity: 'warn', message: `A link in "${field}" has an empty target.`, field })
+          } else if (/^https?:\/\//i.test(href)) {
+            try {
+              new URL(href)
+            } catch {
+              findings.push({
+                ok: false,
+                severity: 'warn',
+                message: `A link in "${field}" has a malformed URL "${href}".`,
+                field,
+              })
+            }
+          }
+        })
+      }
+      if (findings.length === 0) findings.push({ ok: true, severity: 'info', message: 'No broken links found.' })
       return findings
     },
   }
