@@ -304,7 +304,7 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Caching:** add `cache: memoryCache()` (or `dbCache()` / `redisCache()`) and mark a collection `cache: true`. Reads are served read-through and invalidated automatically on write.
 - **Search:** add `search: memorySearch()` and give a collection `search: { fields: ['title', 'body'] }`, then `kernel.searchDocs({ collection, query })`. Hits are loaded through the access-checked read path, so search never surfaces a document the caller cannot read.
 - **Semantic & hybrid search (RAG-native):** set a pluggable `embeddings: { embed }` (your OpenAI/Cohere/local model — no embedding dependency baked in) and mark a collection's search `semantic: true`. Fields are embedded on every write into a vector store, and `kernel.semanticSearch(...)` / `kernel.hybridSearch(...)` (Reciprocal Rank Fusion of full-text + vector) plus `GET /api/:collection/semantic` and `/hybrid` are served through the same access-checked read path. Your CMS becomes your RAG knowledge base — see the [semantic search guide](docs/semantic-search.md).
-- **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change; the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
+- **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change — inline best-effort or `durable: true` for at-least-once retry, with an SSRF egress guard and an admin delivery log (see [Outbound webhooks](#outbound-webhooks-with-durable-delivery)); the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
 - **Real-time change feed:** `realtime: { enabled: true }` turns on an access-filtered change feed — a durable pull feed for CDC and a live SSE push stream. See [Real-time](#real-time-change-feed-cdc--sse) below.
 - **Content analytics:** `analytics: { enabled: true, autoCapture: true }` records a content event per interaction (`kernel.track(...)`) and rolls them up (`kernel.insights(...)`) — including an `ai_retrieval_leaderboard` of what AI answer engines retrieve. Privacy-first: no third-party analytics, no PII at rest. See [Content analytics](#content-analytics--insights-incl-ai-retrieval-privacy-first) below.
 - **Payments & orders:** add the `commerce({ payment: stripePayment({ ... }) })` plugin and you get `products` + `orders` collections, a `POST /commerce/checkout` (totals recomputed server-side from real prices), and a signature-verified `POST /commerce/webhook` that transitions orders to paid/refunded. Stripe and a deterministic `testPayment()` adapter included.
@@ -995,6 +995,52 @@ failure never breaks the content write. *(Honest notes: the hook-based feed emit
 create/update/delete, so a publish currently reads as `update`; `seq` is per-node — single-node
 ordering, multi-node needs a shared sequence.)* Pairs with [workflows](docs/agentic-workflows.md)
 (react to a change) and search (live re-index). See the [real-time guide](docs/realtime.md).
+
+### Outbound webhooks (with durable delivery)
+
+Register `webhooks: [{ url, secret?, … }]` and every matching content write pushes a signed
+`POST` to an external URL — a downstream sync, a static-site rebuild, a Slack relay — without
+polling. Each delivery carries a small JSON payload and an HMAC signature the receiver verifies.
+Pick **inline** (best-effort, fires immediately) or **durable** (enqueued and retried) per endpoint.
+
+```ts
+export default defineConfig({
+  webhooks: [{
+    url: 'https://billing.internal.example.com/kernel',
+    secret: process.env.BILLING_SECRET, // HMAC-SHA256 signing key
+    collections: ['orders'],            // default: all non-system collections
+    events: ['create', 'update'],       // default: create, update, delete
+    durable: true,                      // survive a down receiver — retried, never dropped
+    maxAttempts: 5,                     // default 5; exponential backoff, capped at 1h
+  }],
+  collections: [/* … */],
+})
+```
+
+- **Inline vs. durable.** Inline (default) fires immediately and best-effort — a slow/down
+  receiver never fails the write, but the event is dropped if it's down. `durable: true`
+  enqueues to the `_webhook_deliveries` outbox and delivers at-least-once with retry + backoff.
+- **The cron drain.** `kernel.processWebhooks()` (wired into `kernel jobs:run`, or standalone
+  `kernel webhooks:run`) drains due durable deliveries — `pending → delivered`, or `failed`
+  while attempts remain, then `exhausted` after `maxAttempts`.
+- **Admin REST (admin-only).** `GET /api/_admin/webhooks` (redacted — never the secret/headers),
+  `GET /api/_admin/webhooks/deliveries?webhook=&status=&since=` (the delivery log),
+  `POST /api/_admin/webhooks/deliveries/:id/retry` (requeue a failed/exhausted delivery).
+- **SSRF guard.** A `url` must be `http(s)` and its host may not be loopback/private/link-local/
+  metadata — rejected at config load unless you set `allowPrivateNetwork: true` for a trusted host.
+
+```bash
+curl "http://localhost:3000/api/_admin/webhooks/deliveries?status=exhausted" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"                                       # the delivery log
+curl -X POST "http://localhost:3000/api/_admin/webhooks/deliveries/$ID/retry" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"                                       # requeue
+```
+
+**Egress is default-deny and secrets stay server-side:** the SSRF guard fences private/metadata
+hosts (explicit per-endpoint opt-in only), and the signing secret + custom headers are **never**
+returned by the admin surface or logged. Durable delivery is **at-least-once** with bounded
+retries — dedupe on `id` + `event` + `timestamp`. The `_webhook_deliveries` outbox is unreachable
+via generic CRUD, and management is admin-only. See the [webhooks guide](docs/webhooks.md).
 
 ### Edge delivery & CDN caching (cache tags + change-driven purge)
 

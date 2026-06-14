@@ -39,6 +39,7 @@ import { createCachedDb } from './cache'
 import { CACHE_SLUG, JOBS_SLUG } from './config'
 import { BadRequestError, isKernelError } from './errors'
 import { attachWebhooks } from './webhooks'
+import type { WebhookEnqueue } from './webhooks'
 import {
   attachChangeFeed,
   createChangeBus,
@@ -47,7 +48,7 @@ import {
   readChanges,
   type ChangeFeedCtx,
 } from './realtime'
-import { CHANGES_TABLE } from './schema'
+import { CHANGES_TABLE, WEBHOOK_DELIVERIES_TABLE } from './schema'
 import { appendAnalytics, buildAnalyticsRow, computeInsights, createAnalyticsSeq, type AnalyticsCtx } from './analytics'
 import { cacheTags as computeCacheTags, computePurge, purgeTagsForEvent } from './edge'
 import { createWorkflowEngine, attachWorkflowTriggers } from './workflows'
@@ -407,9 +408,29 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
   const resolved = await applyPlugins(config, logger)
   const sanitized = sanitizeConfig(resolved)
   // Outbound webhooks: attach firing hooks to targeted collections (excluding
-  // system tables) before operations are created.
-  if (sanitized.webhooks && sanitized.webhooks.length > 0) {
-    attachWebhooks(sanitized.collections, sanitized.webhooks, new Set([JOBS_SLUG, CACHE_SLUG]), logger)
+  // system tables) before operations are created. Durable endpoints enqueue to the
+  // `_webhook_deliveries` outbox (delivered later by `processWebhooks`); inline ones POST
+  // best-effort. The enqueue writes a `pending` row due immediately (`nextAttemptAt = now`).
+  if (sanitized.webhooks.length > 0) {
+    const enqueue: WebhookEnqueue = async (d) => {
+      await sanitized.db.create({
+        collection: WEBHOOK_DELIVERIES_TABLE,
+        data: {
+          id: randomUUID(),
+          webhook: d.webhook,
+          event: d.event,
+          collection: d.collection,
+          documentId: d.documentId,
+          payload: d.payload,
+          status: 'pending',
+          attempts: 0,
+          lastStatus: null,
+          nextAttemptAt: new Date().toISOString(),
+          deliveredAt: null,
+        },
+      })
+    }
+    attachWebhooks(sanitized.collections, sanitized.webhooks, new Set([JOBS_SLUG, CACHE_SLUG]), logger, enqueue)
   }
   // Real-time content: a per-kernel in-process bus + a change-feed ctx whose seq counter
   // is filled in after the adapter inits (it must read `_changes`). Attach the change-feed
@@ -895,6 +916,10 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     updateView: ops.updateView,
     deleteView: ops.deleteView,
     applyView: ops.applyView,
+    processWebhooks: ops.processWebhooks,
+    listWebhooks: ops.listWebhooks,
+    webhookDeliveries: ops.webhookDeliveries,
+    retryWebhookDelivery: ops.retryWebhookDelivery,
     createRelease: ops.createRelease,
     addToRelease: ops.addToRelease,
     removeFromRelease: ops.removeFromRelease,

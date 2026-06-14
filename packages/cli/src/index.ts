@@ -118,8 +118,9 @@ Commands:
   import             Import content OUT of another CMS — --from <source> (dry-run by default)
   import:json        Import a portable KernelCMS JSON export (--file)
   seed               Run the exported seed() function
-  jobs:run           Run due background jobs + drain scheduled publishes/releases + expire content (cron)
+  jobs:run           Run due background jobs + drain scheduled publishes/releases + expire content + deliver webhooks (cron)
   lifecycle:run      Retire expired content once — unpublish/archive/delete past-expiry docs (drive from a cron)
+  webhooks:run       Deliver the durable webhook outbox once — POST due deliveries with retry/backoff (drive from a cron)
   generate:types     Write generated TypeScript types for the content model
   generate:module    Scaffold a new module (collection + endpoint) — <name> [--out path]
   dev                Migrate, then start the REST API server (development)
@@ -479,9 +480,22 @@ export async function run(argv: string[]): Promise<void> {
       const { published } = await kernel.processScheduledPublishes()
       const releases = await kernel.processScheduledReleases()
       const { processed } = await kernel.processContentLifecycle()
+      const webhooks = await kernel.processWebhooks()
       console.log(
         `✓ Jobs: ${ran.length} ran, ${failed.length} failed; ` +
-          `${published.length} published, ${releases.published.length} releases, ${processed.length} expired.`,
+          `${published.length} published, ${releases.published.length} releases, ${processed.length} expired, ` +
+          `${webhooks.delivered.length} webhooks delivered (${webhooks.retried.length} retried, ${webhooks.exhausted.length} exhausted).`,
+      )
+      await kernel.destroy()
+      break
+    }
+
+    case 'webhooks:run': {
+      const { config } = await loadConfig(flags)
+      const kernel = await initKernel(config)
+      const { delivered, retried, exhausted } = await kernel.processWebhooks()
+      console.log(
+        `✓ Webhooks: ${delivered.length} delivered, ${retried.length} retried, ${exhausted.length} exhausted.`,
       )
       await kernel.destroy()
       break

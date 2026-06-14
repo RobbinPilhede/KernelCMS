@@ -1,0 +1,7 @@
+---
+"kernelcms": minor
+---
+
+Durable webhook delivery + SSRF hardening. The existing outbound-webhook feature gains an at-least-once durable mode: set `durable: true` on a webhook and content writes enqueue to a `_webhook_deliveries` outbox delivered by the cron drain `kernel.processWebhooks()` (wired into `kernel jobs:run`, or standalone `kernel webhooks:run`) with exponential backoff up to `maxAttempts` — so a slow or down receiver no longer drops events or slows the write. Inline best-effort delivery remains the default and is unchanged.
+
+Adds an **SSRF egress guard**: a webhook `url` must be `http(s)` and is rejected at config load if its host is loopback/private/link-local/CGNAT/cloud-metadata (including IPv4-mapped and NAT64 IPv6 forms like `[::ffff:169.254.169.254]`), unless the endpoint sets `allowPrivateNetwork: true`. Deliveries now use `redirect: 'manual'` so a receiver can't 3xx-redirect a POST into a private host after the guard. Adds an admin-only REST surface (`GET /api/_admin/webhooks` redacted config, `GET /api/_admin/webhooks/deliveries` log, `POST /api/_admin/webhooks/deliveries/:id/retry`) and the Local-API ops `kernel.processWebhooks`, `listWebhooks`, `webhookDeliveries`, `retryWebhookDelivery`. The signing secret and custom headers are never returned or logged; deliveries are audited (`webhook.deliver`/`webhook.fail`); the `_webhook_deliveries` outbox is unreachable via generic CRUD. Webhook config gains `slug`, `durable`, `maxAttempts`, and `allowPrivateNetwork`.

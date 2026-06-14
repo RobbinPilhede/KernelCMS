@@ -99,6 +99,13 @@ export const COMMENTS_TABLE = '_comments'
  *  access-checked `find`, so a stored filter can only narrow within the caller's access. */
 export const VIEWS_TABLE = '_views'
 
+/** Storage table backing the durable webhook outbox — one row per queued delivery
+ *  (`webhook` slug, event, target collection/documentId, JSON `payload`, `status`,
+ *  `attempts`, `lastStatus`, `nextAttemptAt`, `deliveredAt`). Provisioned only when at
+ *  least one `durable` webhook is configured. `status` + `nextAttemptAt` are indexed for
+ *  the cron drain scan. NEVER reachable via generic CRUD. */
+export const WEBHOOK_DELIVERIES_TABLE = '_webhook_deliveries'
+
 /** Storage table holding the durable workflow run log — one row per workflow run,
  *  recording its status, trigger, and per-step status/log. Provisioned only when
  *  `config.workflows` is set. The engine reads/writes it via the trusted (overrideAccess)
@@ -457,6 +464,31 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'columns', type: 'json', required: false, unique: false, indexed: false, localized: false },
         { name: 'ownerId', type: 'text', required: false, unique: false, indexed: true, localized: false },
         { name: 'shared', type: 'boolean', required: false, unique: false, indexed: true, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Durable webhook outbox, provisioned only when at least one configured webhook opts into
+  // `durable` delivery. One row per queued delivery; `status` + `nextAttemptAt` index the
+  // cron drain scan. Never reachable via generic CRUD; written only by the webhook enqueue
+  // hook + the drain (`processWebhooks`), both trusted/override.
+  if (config.webhooks.some((w) => w.durable)) {
+    tables.push({
+      table: WEBHOOK_DELIVERIES_TABLE,
+      slug: WEBHOOK_DELIVERIES_TABLE,
+      columns: [
+        { name: 'webhook', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'event', type: 'text', required: true, unique: false, indexed: false, localized: false },
+        { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'documentId', type: 'text', required: true, unique: false, indexed: false, localized: false },
+        { name: 'payload', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'status', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'attempts', type: 'integer', required: false, unique: false, indexed: false, localized: false },
+        { name: 'lastStatus', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'nextAttemptAt', type: 'timestamp', required: false, unique: false, indexed: true, localized: false },
+        { name: 'deliveredAt', type: 'timestamp', required: false, unique: false, indexed: false, localized: false },
       ],
       timestamps: true,
       singleton: false,

@@ -23,6 +23,7 @@ import type {
   SanitizedRealtime,
   SanitizedSigningConfig,
   SanitizedTenancy,
+  SanitizedWebhook,
   TranslationConfig,
   WorkflowDefinition,
 } from './types'
@@ -905,6 +906,111 @@ function sanitizeExperiments(
 }
 
 /**
+ * Whether a URL host is a literal loopback / private / link-local / cloud-metadata
+ * address that an outbound webhook must NOT reach by default (SSRF egress guard). Covers
+ * the common literal-IP and localhost cases; DNS-rebind (a public name resolving to a
+ * private IP at delivery time) is out of scope and documented as such.
+ */
+function isPrivateWebhookHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '') // strip IPv6 brackets
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
+    return true
+  }
+  // IPv6 loopback / unspecified / unique-local (fc00::/7) / link-local (fe80::/10).
+  if (host === '::1' || host === '::' || host.startsWith('fc') || host.startsWith('fd')) return true
+  if (/^fe[89ab]/.test(host)) return true // fe80::/10 (fe80–febf), not just fe8
+  // Any IPv6 form that embeds an IPv4 in its low 32 bits — IPv4-mapped (`::ffff:127.0.0.1`
+  // and the hex-compressed form Node emits, `::ffff:a9fe:a9fe`), IPv4-compatible (`::7f00:1`),
+  // or NAT64 (`64:ff9b::a9fe:a9fe`). Decode the embedded v4 and run the v4 check on it: a
+  // dotted-decimal-only tail check was the SSRF hole both red-teams found (`[::ffff:a9fe:a9fe]`
+  // = 169.254.169.254 metadata slipped through).
+  let target = host
+  const embedded = host.match(/^(?:::(?:ffff:)?|64:ff9b::)([0-9a-f.:]+)$/)
+  if (embedded) {
+    const tail = embedded[1]!
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tail)) {
+      target = tail // dotted form, e.g. ::ffff:127.0.0.1
+    } else if (/^[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*$/.test(tail)) {
+      // Hex groups — the embedded v4 is the last 32 bits (two 16-bit groups).
+      const groups = tail.split(':').filter(Boolean)
+      const hi = parseInt(groups[groups.length - 2] ?? '0', 16)
+      const lo = parseInt(groups[groups.length - 1] ?? '0', 16)
+      target = `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`
+    } else {
+      return true // an embedded-v4 form we can't confidently decode → deny by default
+    }
+  }
+  const m = target.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (!m) return false
+  const [a, b] = [Number(m[1]), Number(m[2])]
+  if (a === 127 || a === 10 || a === 0) return true // loopback / private / "this host"
+  if (a === 169 && b === 254) return true // link-local incl. 169.254.169.254 metadata
+  if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
+  if (a === 192 && b === 168) return true // 192.168.0.0/16
+  if (a === 100 && b >= 64 && b <= 127) return true // 100.64.0.0/10 CGNAT
+  return false
+}
+
+/**
+ * Normalize the configured outbound webhooks: validate each URL is a real `http(s)` URL,
+ * enforce the SSRF egress guard (reject private/loopback/metadata hosts unless the endpoint
+ * opts into `allowPrivateNetwork`), assign a unique stable `slug` (derived from the URL when
+ * absent), and default/clamp `maxAttempts`. Throws on a malformed or unsafe endpoint.
+ */
+function sanitizeWebhooks(
+  webhooks: KernelConfig['webhooks'],
+  collectionsBySlug: Record<string, unknown>,
+): SanitizedWebhook[] {
+  if (!webhooks || webhooks.length === 0) return []
+  const slugs = new Set<string>()
+  const out: SanitizedWebhook[] = []
+  for (const [i, w] of webhooks.entries()) {
+    let parsed: URL
+    try {
+      parsed = new URL(w.url)
+    } catch {
+      throw new Error(`KernelCMS config error: webhook ${i} has an invalid url "${w.url}".`)
+    }
+    assert(
+      parsed.protocol === 'http:' || parsed.protocol === 'https:',
+      `webhook ${i} url must be http(s), got "${parsed.protocol}".`,
+    )
+    if (!w.allowPrivateNetwork) {
+      assert(
+        !isPrivateWebhookHost(parsed.hostname),
+        `webhook ${i} url "${w.url}" targets a private/loopback host; set allowPrivateNetwork to permit it (SSRF guard).`,
+      )
+    }
+    if (w.collections) {
+      for (const slug of w.collections) {
+        assert(
+          Object.prototype.hasOwnProperty.call(collectionsBySlug, slug),
+          `webhook ${i} references unknown collection "${slug}".`,
+        )
+      }
+    }
+    // A stable slug: explicit, else derived from host+path so the delivery log is keyable.
+    let slug = w.slug
+    if (slug != null) {
+      assert(IDENT_RE.test(slug), `webhook slug "${slug}" must be ${NAMING_RULE}.`)
+    } else {
+      const base = `${parsed.hostname}${parsed.pathname}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+      slug = `wh_${base || 'endpoint'}`.slice(0, 60)
+    }
+    let unique = slug
+    let n = 2
+    while (slugs.has(unique)) unique = `${slug}_${n++}`
+    slugs.add(unique)
+    const maxAttempts = Math.min(Math.max(Math.trunc(w.maxAttempts ?? 5), 1), 20)
+    out.push({ ...w, slug: unique, maxAttempts })
+  }
+  return out
+}
+
+/**
  * Reject a field that is BOTH `localized` and `personalized`: they are parallel,
  * mutually-exclusive per-key storage models (one keyed by locale, one by segment) and a
  * single JSON column can't be both. Also reject a `personalized` field when no
@@ -1228,7 +1334,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     ...(config.image ? { image: config.image } : {}),
     ...(email ? { email } : {}),
     ...(config.cache ? { cache: config.cache } : {}),
-    ...(config.webhooks && config.webhooks.length > 0 ? { webhooks: config.webhooks } : {}),
+    webhooks: sanitizeWebhooks(config.webhooks, collectionsBySlug),
     ...(jobs.length > 0 ? { jobs } : {}),
     ...(endpoints.length > 0 ? { endpoints } : {}),
     ...(config.oauth && config.oauth.length > 0 ? { oauth: config.oauth } : {}),

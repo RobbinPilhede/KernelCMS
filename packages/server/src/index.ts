@@ -773,6 +773,40 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     // /_admin/audit): the future role-builder UI calls these. GET lists, POST creates,
     // PATCH /:name replaces, DELETE /:name removes. Each mutation persists to `_roles`
     // and updates the live store, so enforcement changes immediately.
+    // /_admin/webhooks -> outbound webhook config (redacted) + the durable delivery log.
+    // ADMIN-ONLY: webhook endpoints are sensitive egress infrastructure. Secrets/custom
+    // headers are never returned. The acting identity is the server-resolved `user`.
+    if (segments[1] === 'webhooks') {
+      if (!user) throw new UnauthorizedError()
+      if (!isAdmin(user)) throw new ForbiddenError('Webhook management requires an admin role.')
+      const q = url.searchParams
+
+      // GET /_admin/webhooks -> redacted config summaries.
+      if (segments.length === 2 && method === 'GET') {
+        return json({ webhooks: kernel.listWebhooks() })
+      }
+
+      // GET /_admin/webhooks/deliveries?webhook=&status=&since=&limit=&page= -> the delivery log.
+      if (segments.length === 3 && segments[2] === 'deliveries' && method === 'GET') {
+        return json(
+          await kernel.webhookDeliveries({
+            ...(q.get('webhook') ? { webhook: q.get('webhook')! } : {}),
+            ...(q.get('status') ? { status: q.get('status') as never } : {}),
+            ...(q.get('since') ? { since: q.get('since')! } : {}),
+            ...(toNum(q.get('limit')) !== undefined ? { limit: toNum(q.get('limit')) } : {}),
+            ...(toNum(q.get('page')) !== undefined ? { page: toNum(q.get('page')) } : {}),
+            req: { user },
+          }),
+        )
+      }
+
+      // POST /_admin/webhooks/deliveries/:id/retry -> requeue a failed/exhausted delivery.
+      if (segments.length === 5 && segments[2] === 'deliveries' && segments[4] === 'retry' && method === 'POST') {
+        return json(await kernel.retryWebhookDelivery({ deliveryId: decodeURIComponent(segments[3]!), req: { user } }))
+      }
+      return methodNotAllowed()
+    }
+
     if (segments[1] === 'roles') {
       if (!user) throw new UnauthorizedError()
       if (!isAdmin(user)) throw new ForbiddenError('Role management requires an admin role.')

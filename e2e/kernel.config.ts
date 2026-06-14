@@ -70,6 +70,19 @@ export default defineConfig({
   comments: true,
   // Saved views / smart collections: named query presets (where+sort) per collection.
   views: true,
+  // Outbound webhooks: a DURABLE endpoint — content writes enqueue to the `_webhook_deliveries`
+  // outbox (delivered by the `processWebhooks` cron drain with retry). The loopback target opts
+  // through the SSRF guard via `allowPrivateNetwork` (a dev/test affordance).
+  webhooks: [
+    {
+      slug: 'demo_sink',
+      url: 'http://127.0.0.1:3199/sink',
+      secret: 'demo-webhook-secret',
+      collections: ['articles'],
+      durable: true,
+      allowPrivateNetwork: true,
+    },
+  ],
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).

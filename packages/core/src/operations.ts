@@ -116,6 +116,13 @@ import type {
   UpdateViewOptions,
   DeleteViewOptions,
   ApplyViewOptions,
+  ProcessWebhooksOptions,
+  ProcessWebhooksResult,
+  WebhookDeliveryDoc,
+  WebhookDeliveriesOptions,
+  RetryWebhookDeliveryOptions,
+  WebhookSummary,
+  WebhookEvent,
 } from './types'
 import {
   BadRequestError,
@@ -156,6 +163,7 @@ import { ROLES_TABLE, cloneRoleDef, assertValidRoleDef } from './rbac'
 import { resolveTenant } from './tenancy'
 import { mergeTemplateData, TemplateMergeError } from './templates'
 import { matchesWhere, mergeWhere, parseSort } from './query'
+import { deliverWebhook, type WebhookPayload } from './webhooks'
 import {
   AUDIT_TABLE,
   COMMENTS_TABLE,
@@ -167,6 +175,7 @@ import {
   RELEASE_ITEMS_TABLE,
   REVIEWS_TABLE,
   VIEWS_TABLE,
+  WEBHOOK_DELIVERIES_TABLE,
   resolveVersions,
   tableForGlobal,
   tableForVersions,
@@ -2636,6 +2645,188 @@ export function createOperations(ctx: OperationCtx) {
       }
     }
     return { processed }
+  }
+
+  // -------------------------------------------------------------------------
+  // Durable webhook delivery (the outbox drain + admin surface)
+  // -------------------------------------------------------------------------
+
+  /** Back-off before the next attempt of a failed durable delivery: exponential in the
+   *  attempt count, capped at 1 hour. attempt 1 → 2s, 2 → 4s, … 12+ → 3600s. */
+  function webhookBackoffMs(attempts: number): number {
+    return Math.min(2 ** attempts, 3600) * 1000
+  }
+
+  /** A do-nothing logger for the drain when the kernel was created without one. */
+  const NOOP_LOGGER: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
+
+  function durableWebhooksConfigured(): boolean {
+    return config.webhooks.some((w) => w.durable)
+  }
+
+  /** Shape a raw `_webhook_deliveries` row into a public WebhookDeliveryDoc. */
+  function rowToDelivery(row: Row): WebhookDeliveryDoc {
+    return {
+      id: String(row.id),
+      webhook: String(row.webhook),
+      event: String(row.event) as WebhookEvent,
+      collection: String(row.collection),
+      documentId: String(row.documentId),
+      status: String(row.status) as WebhookDeliveryDoc['status'],
+      attempts: Number(row.attempts ?? 0),
+      lastStatus: row.lastStatus == null ? null : String(row.lastStatus),
+      nextAttemptAt: row.nextAttemptAt == null ? null : String(row.nextAttemptAt),
+      deliveredAt: row.deliveredAt == null ? null : String(row.deliveredAt),
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+    }
+  }
+
+  async function processWebhooks(opts: ProcessWebhooksOptions = {}): Promise<ProcessWebhooksResult> {
+    const result: ProcessWebhooksResult = { delivered: [], retried: [], exhausted: [] }
+    if (!durableWebhooksConfigured()) return result
+    const now = opts.now ?? new Date()
+    const nowIso = now.toISOString()
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), MAX_LIMIT)
+
+    // Due deliveries: still pending or in retry, with their next attempt time reached.
+    const due = await db.find({
+      collection: WEBHOOK_DELIVERIES_TABLE,
+      where: { and: [{ status: { in: ['pending', 'failed'] } }, { nextAttemptAt: { less_than_equal: nowIso } }] },
+      sort: [{ field: 'nextAttemptAt', direction: 'asc' }],
+      limit,
+      page: 1,
+    })
+
+    for (const row of due.docs) {
+      const id = String(row.id)
+      const cfg = config.webhooks.find((w) => w.slug === String(row.webhook))
+      // Endpoint removed from config since enqueue: retire the delivery (don't deliver to an
+      // unknown/possibly-reused target), mark exhausted.
+      if (!cfg) {
+        await db.update({
+          collection: WEBHOOK_DELIVERIES_TABLE,
+          id,
+          data: { status: 'exhausted', nextAttemptAt: null, lastStatus: 'webhook no longer configured' },
+        })
+        result.exhausted.push(id)
+        continue
+      }
+
+      const payload = (row.payload ?? {}) as WebhookPayload
+      let outcome: { ok: boolean; status?: number; error?: string }
+      try {
+        outcome = await deliverWebhook(cfg, payload, logger ?? NOOP_LOGGER)
+      } catch (err) {
+        // deliverWebhook never throws, but be defensive — a thrown error is a failed attempt.
+        outcome = { ok: false, error: err instanceof Error ? err.message : 'delivery threw' }
+      }
+      const attempts = Number(row.attempts ?? 0) + 1
+      const lastStatus = outcome.ok
+        ? String(outcome.status ?? 200)
+        : (outcome.error ?? String(outcome.status ?? 'error'))
+
+      if (outcome.ok) {
+        await db.update({
+          collection: WEBHOOK_DELIVERIES_TABLE,
+          id,
+          data: { status: 'delivered', attempts, lastStatus, deliveredAt: nowIso, nextAttemptAt: null },
+        })
+        result.delivered.push(id)
+        await recordAudit({
+          action: 'webhook.deliver',
+          collection: String(row.collection),
+          documentId: String(row.documentId),
+          overrideAccess: true,
+          meta: { webhook: cfg.slug, attempts, status: outcome.status ?? null },
+        })
+      } else if (attempts >= cfg.maxAttempts) {
+        await db.update({
+          collection: WEBHOOK_DELIVERIES_TABLE,
+          id,
+          data: { status: 'exhausted', attempts, lastStatus, nextAttemptAt: null },
+        })
+        result.exhausted.push(id)
+        await recordAudit({
+          action: 'webhook.fail',
+          collection: String(row.collection),
+          documentId: String(row.documentId),
+          overrideAccess: true,
+          meta: { webhook: cfg.slug, attempts, exhausted: true, lastStatus },
+        })
+      } else {
+        const next = new Date(now.getTime() + webhookBackoffMs(attempts)).toISOString()
+        await db.update({
+          collection: WEBHOOK_DELIVERIES_TABLE,
+          id,
+          data: { status: 'failed', attempts, lastStatus, nextAttemptAt: next },
+        })
+        result.retried.push(id)
+        await recordAudit({
+          action: 'webhook.fail',
+          collection: String(row.collection),
+          documentId: String(row.documentId),
+          overrideAccess: true,
+          meta: { webhook: cfg.slug, attempts, nextAttemptAt: next, lastStatus },
+        })
+      }
+    }
+    return result
+  }
+
+  /** REDACTED summaries of the configured webhooks — never the secret or custom headers. */
+  function listWebhooks(): WebhookSummary[] {
+    return config.webhooks.map((w) => ({
+      slug: w.slug,
+      url: w.url,
+      events: w.events ?? ['create', 'update', 'delete'],
+      collections: w.collections ?? null,
+      durable: w.durable === true,
+      signed: Boolean(w.secret),
+    }))
+  }
+
+  async function webhookDeliveries(
+    opts: WebhookDeliveriesOptions = {},
+  ): Promise<{ docs: WebhookDeliveryDoc[]; count: number }> {
+    if (!durableWebhooksConfigured()) return { docs: [], count: 0 }
+    const and: Where[] = []
+    if (opts.webhook != null) and.push({ webhook: { equals: String(opts.webhook) } })
+    if (opts.status != null) and.push({ status: { equals: String(opts.status) } })
+    if (opts.since != null) and.push({ createdAt: { greater_than: String(opts.since) } })
+    const where = and.length ? { and } : undefined
+    const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)
+    const page = Math.max(opts.page ?? 1, 1)
+    const res = await db.find({
+      collection: WEBHOOK_DELIVERIES_TABLE,
+      ...(where ? { where } : {}),
+      sort: [{ field: 'createdAt', direction: 'desc' }],
+      limit,
+      page,
+    })
+    const count = await db.count({ collection: WEBHOOK_DELIVERIES_TABLE, ...(where ? { where } : {}) })
+    return { docs: res.docs.map(rowToDelivery), count }
+  }
+
+  async function retryWebhookDelivery(opts: RetryWebhookDeliveryOptions): Promise<WebhookDeliveryDoc> {
+    if (!durableWebhooksConfigured()) {
+      throw new BadRequestError('No durable webhooks are configured.')
+    }
+    const { deliveryId } = opts
+    if (typeof deliveryId !== 'string' || deliveryId.length === 0 || COMMENT_FORBIDDEN_KEYS.has(deliveryId)) {
+      throw new BadRequestError('A valid `deliveryId` is required.')
+    }
+    const row = await db.findByID({ collection: WEBHOOK_DELIVERIES_TABLE, id: deliveryId })
+    if (!row) throw new NotFoundError()
+    // Requeue: due immediately, status pending. Keeps the attempt count (history), so a
+    // manually-retried delivery still respects maxAttempts on the next drain.
+    await db.update({
+      collection: WEBHOOK_DELIVERIES_TABLE,
+      id: String(row.id),
+      data: { status: 'pending', nextAttemptAt: new Date().toISOString(), deliveredAt: null },
+    })
+    const saved = await db.findByID({ collection: WEBHOOK_DELIVERIES_TABLE, id: String(row.id) })
+    return rowToDelivery(saved ?? row)
   }
 
   async function unpublish<T extends Doc = Doc>(opts: PublishOptions): Promise<T | null> {
@@ -5510,6 +5701,10 @@ export function createOperations(ctx: OperationCtx) {
     updateView,
     deleteView,
     applyView,
+    processWebhooks,
+    listWebhooks,
+    webhookDeliveries,
+    retryWebhookDelivery,
     createRelease,
     addToRelease,
     removeFromRelease,

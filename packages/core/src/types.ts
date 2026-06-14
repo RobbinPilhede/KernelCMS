@@ -677,7 +677,13 @@ export interface AssignVariantResult {
 export type WebhookEvent = 'create' | 'update' | 'delete'
 
 export interface WebhookConfig {
-  /** Destination URL for the POST. */
+  /** Stable identifier for this endpoint — keys the durable delivery log and the admin
+   *  retry route. Optional; when omitted a stable slug is derived from the URL. Must be
+   *  unique across the configured webhooks. */
+  slug?: string
+  /** Destination URL for the POST. Must be `http(s)`; a URL whose host is a loopback /
+   *  private / link-local / cloud-metadata address is REJECTED at config load unless
+   *  `allowPrivateNetwork` is set (SSRF egress guard). */
   url: string
   /** HMAC-SHA256 signing secret. When set, an `x-kernel-signature: sha256=<hex>`
    *  header lets the receiver verify the body. Read from env; never hardcode. */
@@ -690,6 +696,94 @@ export interface WebhookConfig {
   headers?: Record<string, string>
   /** Abort the delivery after this many ms. Default 5000. */
   timeoutMs?: number
+  /** Durable delivery: instead of a best-effort inline POST on the write, enqueue the
+   *  event to the `_webhook_deliveries` outbox and deliver it from the cron drain
+   *  (`kernel.processWebhooks`, wired into `jobs:run`) with retry + backoff. A slow or
+   *  down receiver no longer drops events or slows the write. Default false (inline). */
+  durable?: boolean
+  /** Max delivery attempts before a durable delivery is marked `exhausted`. Default 5,
+   *  clamped 1–20. Only meaningful with `durable`. */
+  maxAttempts?: number
+  /** Allow a destination on a loopback/private/link-local network (disables the SSRF
+   *  guard for THIS endpoint). For trusted internal receivers / local dev only. */
+  allowPrivateNetwork?: boolean
+}
+
+/** A configured webhook after normalization: a guaranteed unique `slug`, defaulted
+ *  `maxAttempts`, and the SSRF guard already enforced at config load. */
+export interface SanitizedWebhook extends WebhookConfig {
+  slug: string
+  maxAttempts: number
+}
+
+/** Status of one durable webhook delivery in the `_webhook_deliveries` outbox. */
+export type WebhookDeliveryStatus = 'pending' | 'delivered' | 'failed' | 'exhausted'
+
+/** A row of the durable webhook delivery log. */
+export interface WebhookDeliveryDoc extends Row {
+  id: string
+  /** The target webhook's slug. */
+  webhook: string
+  event: WebhookEvent
+  collection: string
+  documentId: string
+  status: WebhookDeliveryStatus
+  /** How many delivery attempts have been made. */
+  attempts: number
+  /** The last HTTP status code or a short error string (never the secret). */
+  lastStatus: string | null
+  /** When the next attempt is due (ISO). Null once delivered/exhausted. */
+  nextAttemptAt: string | null
+  /** When the delivery succeeded (ISO), else null. */
+  deliveredAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProcessWebhooksOptions {
+  /** Treat "now" as this instant (defaults to the current time). */
+  now?: Date
+  /** Max deliveries to attempt this drain. Default 50, clamped 1–1000. */
+  limit?: number
+}
+
+export interface ProcessWebhooksResult {
+  /** Deliveries that succeeded this drain (their ids). */
+  delivered: string[]
+  /** Deliveries that failed this drain and will be retried (their ids). */
+  retried: string[]
+  /** Deliveries that hit `maxAttempts` and were marked exhausted (their ids). */
+  exhausted: string[]
+}
+
+export interface WebhookDeliveriesOptions {
+  /** Filter to one webhook slug. */
+  webhook?: string
+  /** Filter to one status. */
+  status?: WebhookDeliveryStatus
+  /** Return rows created after this ISO time. */
+  since?: string
+  limit?: number
+  page?: number
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface RetryWebhookDeliveryOptions {
+  deliveryId: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+/** A redacted view of a configured webhook for the admin surface — never includes the
+ *  signing secret or custom headers (which may carry credentials). */
+export interface WebhookSummary {
+  slug: string
+  url: string
+  events: WebhookEvent[]
+  collections: string[] | null
+  durable: boolean
+  signed: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -1397,8 +1491,9 @@ export interface SanitizedConfig {
   cacheTtlBySlug: Record<string, number>
   /** Default cache TTL (ms). */
   cacheDefaultTtl: number
-  /** Configured outbound webhooks. */
-  webhooks?: WebhookConfig[]
+  /** Configured outbound webhooks (normalized: each has a unique slug + defaulted
+   *  maxAttempts; the SSRF guard ran at load). Empty array when none configured. */
+  webhooks: SanitizedWebhook[]
   /** Resolved real-time setting. `enabled` provisions the `_changes` outbox + change-feed
    *  hooks + the in-process bus; disabled by default (opt-in). */
   realtime: SanitizedRealtime
@@ -1928,6 +2023,8 @@ export type AuditAction =
   | 'view.create'
   | 'view.update'
   | 'view.delete'
+  | 'webhook.deliver'
+  | 'webhook.fail'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -3060,6 +3157,19 @@ export interface Kernel {
    *  `where`+`sort` (re-validated), optionally narrowed by an extra `where`. The result can
    *  only ever be within the caller's read access — a view never widens visibility. */
   applyView<T extends Doc = Doc>(opts: ApplyViewOptions): Promise<PaginatedResult<T>>
+  /** Drain the durable webhook outbox: deliver due `_webhook_deliveries` (POST + sign),
+   *  marking each delivered, retried (with backoff), or exhausted. A trusted cron op (like
+   *  `processContentLifecycle`); wired into `kernel jobs:run` / `webhooks:run`. Returns the
+   *  per-status id lists. A no-op when no durable webhooks are configured. */
+  processWebhooks(opts?: ProcessWebhooksOptions): Promise<ProcessWebhooksResult>
+  /** List the configured webhooks as REDACTED summaries (never the secret or custom
+   *  headers). Admin-only surface. */
+  listWebhooks(): WebhookSummary[]
+  /** Query the durable webhook delivery log (newest-first), optionally by webhook/status. */
+  webhookDeliveries(opts?: WebhookDeliveriesOptions): Promise<{ docs: WebhookDeliveryDoc[]; count: number }>
+  /** Requeue a failed/exhausted delivery for an immediate retry (resets it to pending,
+   *  due now). Admin-only. */
+  retryWebhookDelivery(opts: RetryWebhookDeliveryOptions): Promise<WebhookDeliveryDoc>
   /** Create an empty, `open` content release — a named bundle of drafts to publish as a
    *  unit. Requires `config.releases`. The name is untrusted (length-bounded). */
   createRelease(opts: CreateReleaseOptions): Promise<Release>
