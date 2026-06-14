@@ -1,5 +1,13 @@
 # kernelcms
 
+## 0.38.0
+
+### Minor Changes
+
+- 8d1baf8: Saved-search alerts / content subscriptions. Opt in with `subscriptions: true` (requires `realtime: { enabled: true }` and a configured `webhooks` target) and an editor can subscribe to a standing query — a collection plus an optional `where` — and be notified via a webhook when matching content changes. `kernel.createSubscription({ collection, where?, webhook })`, `listSubscriptions`, `deleteSubscription`, and the cron drain `kernel.processSubscriptions()` (wired into `kernel jobs:run`, or standalone `kernel subscriptions:run`). REST (owner-scoped, auth-required): `GET/POST /api/_admin/subscriptions`, `DELETE /api/_admin/subscriptions/:id`.
+
+  The drain reads the change feed since each subscription's cursor and **re-evaluates every change as the OWNER** — an access-checked document reload plus the `where` match — so an alert never fires for content the owner can't currently read, and the delivered payload is field-access-stripped and encrypted-field-redacted exactly like a normal read. A subscription is owned by its creator (recorded from the principal, never client input); only the owner or an admin can manage it; the delivery target must be a configured webhook slug (so a subscriber can never aim an alert at an arbitrary URL — the webhook URLs are SSRF-guarded at config load). The cursor starts at "now" (no history backfill), deletes don't alert, the per-drain scan is bounded, and `_subscriptions` is unreachable via generic CRUD. Create/delete are audited. Tip: give a subscription-only webhook `collections: []` so it never also fires on content writes (no double-send).
+
 ## 0.37.0
 
 ### Minor Changes
