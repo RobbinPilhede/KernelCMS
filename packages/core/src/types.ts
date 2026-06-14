@@ -869,6 +869,78 @@ export interface ProcessSubscriptionsResult {
 }
 
 // ---------------------------------------------------------------------------
+// Content branches (git-for-content)
+//
+// A branch is a named workspace. Edits made on a branch are STAGED as a copy-on-write
+// overlay in `_branch_docs` (the live document is untouched) and previewed/diffed; merging a
+// branch replays each staged change through the normal access-checked update (so the publish
+// gate, field access, and validation all apply), and discarding drops the overlay.
+// ---------------------------------------------------------------------------
+
+export type BranchStatus = 'open' | 'merged' | 'discarded'
+
+export interface BranchDoc extends Row {
+  id: string
+  name: string
+  status: BranchStatus
+  createdBy: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** One staged change in a branch's overlay. */
+export interface BranchChangeDoc extends Row {
+  id: string
+  branch: string
+  collection: string
+  documentId: string
+  /** The staged field values (deep-merged over the live document on preview/merge). */
+  data: Row
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateBranchOptions extends OperationBase {
+  name: string
+}
+
+export interface ListBranchesOptions extends OperationBase {
+  status?: BranchStatus
+}
+
+export interface BranchRef extends OperationBase {
+  branch: string
+}
+
+export interface StageChangeOptions extends OperationBase {
+  branch: string
+  collection: string
+  id: string
+  /** Field edits to stage (merged over the live doc). */
+  data: Row
+}
+
+export interface PreviewBranchOptions extends OperationBase {
+  branch: string
+  collection: string
+  id: string
+}
+
+export interface BranchDiffEntry {
+  collection: string
+  documentId: string
+  /** The field names this branch changes for the document. */
+  fields: string[]
+}
+
+export interface MergeBranchResult {
+  /** `${collection}:${id}` of each staged change successfully merged. */
+  merged: string[]
+  /** Staged changes that failed to merge (e.g. access/validation), with the reason. */
+  failed: Array<{ collection: string; documentId: string; reason: string }>
+}
+
+// ---------------------------------------------------------------------------
 // Real-time content: change feed (CDC, pull) + in-process bus + SSE (push)
 //
 // Every content change on a non-system collection emits a METADATA-ONLY event —
@@ -1327,6 +1399,13 @@ export interface KernelConfig {
    *  match is re-evaluated AS THE OWNER (access-checked doc reload + `where` match), so an
    *  alert never fires for content the owner can't read. */
   subscriptions?: boolean
+  /** Content branches (git-for-content): a named workspace where edits are STAGED as a
+   *  copy-on-write overlay (in `_branches` + `_branch_docs`) instead of touching live
+   *  documents — preview the branch, diff it, then merge it (each staged change applied
+   *  through the normal access-checked update + publish gate) or discard it. OPT-IN, disabled
+   *  by default. The live read/write path is untouched; branch ops are a separate, reviewer-
+   *  gated surface. */
+  branches?: boolean
   /** Content releases: stage a coordinated set of draft documents and publish them as
    *  one unit, optionally on a schedule. Provisions `_releases` + `_release_items` system
    *  tables and enables the release ops (`createRelease`/`publishRelease`/…) + the
@@ -1634,6 +1713,9 @@ export interface SanitizedConfig {
   /** Resolved saved-search-alerts setting. `enabled` provisions the `_subscriptions` table
    *  and the subscription ops; disabled by default (opt-in). */
   subscriptions: { enabled: boolean }
+  /** Resolved content-branches setting. `enabled` provisions the `_branches` +
+   *  `_branch_docs` tables and the branch ops; disabled by default (opt-in). */
+  branches: { enabled: boolean }
   /** Resolved content-releases setting. `enabled` provisions the `_releases` +
    *  `_release_items` tables and the release ops; disabled by default (opt-in). */
   releases: { enabled: boolean }
@@ -2176,6 +2258,9 @@ export type AuditAction =
   | 'webhook.fail'
   | 'subscription.create'
   | 'subscription.delete'
+  | 'branch.create'
+  | 'branch.merge'
+  | 'branch.discard'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -3336,6 +3421,25 @@ export interface Kernel {
    *  AS THE OWNER (access-checked reload + `where`), and enqueue a webhook delivery per match.
    *  A trusted cron op (wired into `kernel jobs:run` / `subscriptions:run`). */
   processSubscriptions(opts?: ProcessSubscriptionsOptions): Promise<ProcessSubscriptionsResult>
+  /** Create a content branch — a named workspace for staged edits. Reviewer-gated. Requires
+   *  `config.branches`. */
+  createBranch(opts: CreateBranchOptions): Promise<BranchDoc>
+  /** List branches (optionally by status), newest-first. */
+  listBranches(opts?: ListBranchesOptions): Promise<BranchDoc[]>
+  /** Stage an edit to a document on a branch (a copy-on-write overlay; the live doc is
+   *  untouched). The caller must be able to UPDATE the target document. */
+  stageChange(opts: StageChangeOptions): Promise<BranchChangeDoc>
+  /** Preview a document as it would look ON the branch — the live (access-checked) doc with
+   *  the branch's staged overlay applied. */
+  previewBranch<T extends Doc = Doc>(opts: PreviewBranchOptions): Promise<T | null>
+  /** The set of staged changes on a branch (collection + documentId + changed fields). */
+  diffBranch(opts: BranchRef): Promise<BranchDiffEntry[]>
+  /** Merge a branch: replay every staged change through the normal access-checked update
+   *  (publish gate + field access + validation apply), then mark it merged. Reviewer-gated,
+   *  resilient per change. */
+  mergeBranch(opts: BranchRef): Promise<MergeBranchResult>
+  /** Discard a branch: drop its staged overlay and mark it discarded. Reviewer-gated. */
+  discardBranch(opts: BranchRef): Promise<{ name: string }>
   /** Drain the durable webhook outbox: deliver due `_webhook_deliveries` (POST + sign),
    *  marking each delivered, retried (with backoff), or exhausted. A trusted cron op (like
    *  `processContentLifecycle`); wired into `kernel jobs:run` / `webhooks:run`. Returns the

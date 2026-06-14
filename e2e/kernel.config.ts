@@ -97,6 +97,8 @@ export default defineConfig({
   ],
   // Saved-search alerts: subscribe to a query; matches deliver via the `alerts` webhook.
   subscriptions: true,
+  // Content branches: stage edits on a named branch, preview/diff, then merge or discard.
+  branches: true,
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).

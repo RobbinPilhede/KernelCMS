@@ -628,6 +628,11 @@ function sanitizeViews(views: KernelConfig['views']): { enabled: boolean } {
   return { enabled: views === true }
 }
 
+/** Resolve the content-branches setting. OPT-IN, disabled by default. */
+function sanitizeBranches(branches: KernelConfig['branches']): { enabled: boolean } {
+  return { enabled: branches === true }
+}
+
 /**
  * Resolve the saved-search-alerts setting. OPT-IN, disabled by default. When enabled it
  * requires the real-time change feed (the source it drains) and at least one configured
@@ -1443,6 +1448,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     comments: sanitizeComments(config.comments),
     views: sanitizeViews(config.views),
     subscriptions: sanitizeSubscriptions(config),
+    branches: sanitizeBranches(config.branches),
     releases: sanitizeReleases(config.releases),
     lifecycle: sanitizeLifecycle(config.lifecycle, collectionsBySlug, SYSTEM_SLUGS),
     signing: sanitizeSigning(config.signing),

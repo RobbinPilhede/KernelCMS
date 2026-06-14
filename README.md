@@ -780,6 +780,54 @@ release), and scheduled releases are gate-checked at schedule time and re-checke
 drain. Best-effort atomic on a mid-publish fault; red-teamed to Risk LOW. See the
 [content releases guide](docs/releases.md).
 
+### Content branches (git-for-content)
+
+Opt into `branches` and you get a named workspace where edits are **staged** as a
+copy-on-write overlay — the live document is never touched — so you can prepare a set of
+changes, preview and diff them, then **merge** the branch or discard it. The key provisions
+two system tables (`_branches` + `_branch_docs`) that hold the overlay; they're unreachable
+through generic CRUD.
+
+```ts
+export default defineConfig({
+  branches: true, // provisions _branches + _branch_docs (the copy-on-write overlay)
+  collections: [/* … */],
+})
+
+// open → stage → preview/diff → merge, all on the Local API:
+const branch = await kernel.createBranch({ name: 'autumn-pricing' })
+await kernel.stageChange({ branch: branch.name, collection: 'products', id, data: { price: 1900 } }) // live doc untouched
+const preview = await kernel.previewBranch({ branch: branch.name, collection: 'products', id })       // live + staged overlay
+const changes = await kernel.diffBranch({ branch: branch.name })                                      // [{ collection, documentId, fields }]
+const result = await kernel.mergeBranch({ branch: branch.name })                                      // → { merged, failed }
+// …or kernel.discardBranch({ branch: branch.name }) to throw the change set away
+```
+
+- **Stage** field edits onto a branch — copy-on-write, the live doc is never written;
+  re-staging the same doc deep-merges. Staging requires **update access to the target**.
+- **Preview** the live (access-checked) doc with the branch's staged overlay applied, and
+  **diff** the whole change set before it touches anything.
+- **Merge** replays each staged change through the **normal, access-checked update** (so the
+  publish gate, field-level access, and validation all apply); a change that fails lands in
+  `failed[]`. **Discard** just drops the overlay.
+- Branch management (create/stage/preview/diff/merge/discard) is **reviewer-gated**
+  (admin/editor); create/merge/discard are audited.
+
+```bash
+curl -X POST "http://localhost:3000/api/_admin/branches" -H "Authorization: Bearer $TOKEN" -d '{"name":"autumn-pricing"}'
+curl -X POST "http://localhost:3000/api/_admin/branches/autumn-pricing/stage" \
+  -H "Authorization: Bearer $TOKEN" -d '{"collection":"products","id":"<id>","data":{"price":1900}}'
+curl -X POST "http://localhost:3000/api/_admin/branches/autumn-pricing/merge" -H "Authorization: Bearer $TOKEN"
+```
+
+**The same-gate guarantee:** the live read/write path is untouched (branch edits live in a
+separate `_branches` + `_branch_docs` overlay), staging requires update access to the target,
+and merge replays through the access-checked update — so a branch can **never** bypass the
+publish gate, field access, or validation. Management is reviewer-gated, the overlay is
+unreachable via generic CRUD, and create/merge/discard are audited. This is field-level
+staged overlays plus a replayed merge — not git-style three-way merge with conflict
+resolution. Red-teamed to Risk LOW. See the [content branches guide](docs/content-branches.md).
+
 ### Content lifecycle (auto-expire, archive & delete)
 
 Scheduled publish makes a draft go live at a future instant; **content lifecycle** is the

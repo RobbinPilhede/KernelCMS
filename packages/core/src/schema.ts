@@ -113,6 +113,13 @@ export const WEBHOOK_DELIVERIES_TABLE = '_webhook_deliveries'
  *  drain scan. NEVER reachable via generic CRUD. */
 export const SUBSCRIPTIONS_TABLE = '_subscriptions'
 
+/** Storage tables for content branches: `_branches` (one row per named workspace — name,
+ *  status, createdBy) and `_branch_docs` (the copy-on-write overlay — one row per staged
+ *  document edit: branch, collection, documentId, JSON data). Provisioned only when
+ *  `config.branches` is enabled. NEVER reachable via generic CRUD. */
+export const BRANCHES_TABLE = '_branches'
+export const BRANCH_DOCS_TABLE = '_branch_docs'
+
 /** Storage table holding the durable workflow run log — one row per workflow run,
  *  recording its status, trigger, and per-step status/log. Provisioned only when
  *  `config.workflows` is set. The engine reads/writes it via the trusted (overrideAccess)
@@ -520,6 +527,34 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'webhook', type: 'text', required: true, unique: false, indexed: false, localized: false },
         { name: 'active', type: 'boolean', required: false, unique: false, indexed: true, localized: false },
         { name: 'lastSeq', type: 'integer', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Content branches: the named workspaces + their copy-on-write overlay. Provisioned only
+  // when enabled. Never reachable via generic CRUD; written only by the branch ops.
+  if (config.branches.enabled) {
+    tables.push({
+      table: BRANCHES_TABLE,
+      slug: BRANCHES_TABLE,
+      columns: [
+        { name: 'name', type: 'text', required: true, unique: true, indexed: true, localized: false },
+        { name: 'status', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'createdBy', type: 'text', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+    tables.push({
+      table: BRANCH_DOCS_TABLE,
+      slug: BRANCH_DOCS_TABLE,
+      columns: [
+        { name: 'branch', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'documentId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'data', type: 'json', required: false, unique: false, indexed: false, localized: false },
       ],
       timestamps: true,
       singleton: false,

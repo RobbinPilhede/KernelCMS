@@ -134,6 +134,15 @@ import type {
   DeleteSubscriptionOptions,
   ProcessSubscriptionsOptions,
   ProcessSubscriptionsResult,
+  BranchDoc,
+  BranchChangeDoc,
+  CreateBranchOptions,
+  ListBranchesOptions,
+  StageChangeOptions,
+  PreviewBranchOptions,
+  BranchRef,
+  BranchDiffEntry,
+  MergeBranchResult,
 } from './types'
 import {
   BadRequestError,
@@ -191,6 +200,8 @@ import {
   WEBHOOK_DELIVERIES_TABLE,
   SUBSCRIPTIONS_TABLE,
   CHANGES_TABLE,
+  BRANCHES_TABLE,
+  BRANCH_DOCS_TABLE,
   resolveVersions,
   tableForGlobal,
   tableForVersions,
@@ -5869,6 +5880,281 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   // -------------------------------------------------------------------------
+  // Content branches (git-for-content) — a copy-on-write overlay store
+  //
+  // Branch edits are STAGED in `_branch_docs` (the live document is never touched). Preview
+  // overlays the staged edits on the access-checked live doc; merge replays each staged change
+  // through the normal access-checked `update` (publish gate + field access + validation all
+  // apply); discard drops the overlay. create/merge/discard are reviewer-gated.
+  // -------------------------------------------------------------------------
+
+  const BRANCH_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,79}$/i
+
+  function rowToBranch(row: Row): BranchDoc {
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      status: String(row.status) as BranchDoc['status'],
+      createdBy: row.createdBy == null ? null : String(row.createdBy),
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+    }
+  }
+
+  function rowToBranchChange(row: Row): BranchChangeDoc {
+    return {
+      id: String(row.id),
+      branch: String(row.branch),
+      collection: String(row.collection),
+      documentId: String(row.documentId),
+      data: (row.data ?? {}) as Row,
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+    }
+  }
+
+  async function branchByName(name: string): Promise<Row | null> {
+    if (typeof name !== 'string' || name.length === 0 || COMMENT_FORBIDDEN_KEYS.has(name)) {
+      throw new BadRequestError('A valid branch `name` is required.')
+    }
+    const res = await db.find({ collection: BRANCHES_TABLE, where: { name: { equals: name } }, limit: 1, page: 1 })
+    return res.docs[0] ?? null
+  }
+
+  function assertBranchReviewer(req: RequestContext, override: boolean): void {
+    if (!override && !isReviewerPrincipal(req)) {
+      throw new ForbiddenError('Managing content branches requires an admin or editor role.')
+    }
+  }
+
+  /** The caller may UPDATE this document (collection rule + row-scope) — the gate for staging
+   *  an edit on a branch. Mirrors the live update access check. */
+  async function assertCanUpdateDoc(
+    collection: CollectionConfig,
+    id: string,
+    req: RequestContext,
+    override: boolean,
+  ): Promise<Row> {
+    const row = await db.findByID({ collection: collection.slug, id })
+    if (!row) throw new NotFoundError()
+    if (override) return row
+    const access = await evalAccess(collection.access?.update, { req, id, data: {} })
+    if (!isAllowed(access)) throw new ForbiddenError()
+    const scope = asWhere(access)
+    if (scope && !matchesWhere(row, scope)) throw new ForbiddenError()
+    return row
+  }
+
+  async function createBranch(opts: CreateBranchOptions): Promise<BranchDoc> {
+    if (!config.branches.enabled) throw new BadRequestError('Content branches are not enabled (set `config.branches`).')
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    assertBranchReviewer(req, override)
+    const name = String(opts.name ?? '')
+    if (!BRANCH_NAME_RE.test(name)) {
+      throw new BadRequestError('A branch name must be 1–80 chars of letters, digits, dot, dash, or underscore.')
+    }
+    if (await branchByName(name)) throw new ConflictError(`A branch named "${name}" already exists.`)
+    const created = await db.create({
+      collection: BRANCHES_TABLE,
+      data: { id: randomUUID(), name, status: 'open', createdBy: override ? null : principalOf(req).id },
+    })
+    await recordAudit({
+      action: 'branch.create',
+      documentId: String(created.id),
+      req,
+      overrideAccess: override,
+      meta: { branch: name },
+    })
+    return rowToBranch(created)
+  }
+
+  async function listBranches(opts: ListBranchesOptions = {}): Promise<BranchDoc[]> {
+    if (!config.branches.enabled) return []
+    const and: Where[] = []
+    if (opts.status != null) and.push({ status: { equals: String(opts.status) } })
+    const res = await db.find({
+      collection: BRANCHES_TABLE,
+      where: and.length ? { and } : undefined,
+      sort: [{ field: 'createdAt', direction: 'desc' }],
+      limit: MAX_LIMIT,
+      page: 1,
+    })
+    return res.docs.map(rowToBranch)
+  }
+
+  async function openBranchOrThrow(name: string): Promise<Row> {
+    const row = await branchByName(name)
+    if (!row) throw new NotFoundError('Branch not found.')
+    if (row.status !== 'open') throw new BadRequestError(`Branch "${name}" is ${String(row.status)}, not open.`)
+    return row
+  }
+
+  async function stageChange(opts: StageChangeOptions): Promise<BranchChangeDoc> {
+    if (!config.branches.enabled) throw new BadRequestError('Content branches are not enabled (set `config.branches`).')
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    await openBranchOrThrow(opts.branch)
+    const collection = collectionOrThrow(opts.collection)
+    // The caller must be able to UPDATE the target document to stage an edit to it.
+    await assertCanUpdateDoc(collection, String(opts.id), req, override)
+    if (!opts.data || typeof opts.data !== 'object' || Array.isArray(opts.data)) {
+      throw new BadRequestError('`data` must be an object of field edits.')
+    }
+    // Validate the edited fields against the collection (proto-guard + real fields only).
+    const storage = new Set(storageFields(collection.fields).map((f) => f.name))
+    const clean: Row = {}
+    for (const [k, v] of Object.entries(opts.data)) {
+      if (COMMENT_FORBIDDEN_KEYS.has(k)) throw new BadRequestError(`Illegal field "${k}".`)
+      if (!storage.has(k)) throw new BadRequestError(`Unknown field "${k}" of "${collection.slug}".`)
+      clean[k] = v
+    }
+
+    const docId = String(opts.id)
+    const existing = await db.find({
+      collection: BRANCH_DOCS_TABLE,
+      where: {
+        and: [
+          { branch: { equals: opts.branch } },
+          { collection: { equals: collection.slug } },
+          { documentId: { equals: docId } },
+        ],
+      },
+      limit: 1,
+      page: 1,
+    })
+    if (existing.docs[0]) {
+      const merged = { ...((existing.docs[0]!.data ?? {}) as Row), ...clean }
+      await db.update({ collection: BRANCH_DOCS_TABLE, id: String(existing.docs[0]!.id), data: { data: merged } })
+      const saved = await db.findByID({ collection: BRANCH_DOCS_TABLE, id: String(existing.docs[0]!.id) })
+      return rowToBranchChange(saved ?? existing.docs[0]!)
+    }
+    const created = await db.create({
+      collection: BRANCH_DOCS_TABLE,
+      data: { id: randomUUID(), branch: opts.branch, collection: collection.slug, documentId: docId, data: clean },
+    })
+    return rowToBranchChange(created)
+  }
+
+  async function previewBranch<T extends Doc = Doc>(opts: PreviewBranchOptions): Promise<T | null> {
+    if (!config.branches.enabled) throw new BadRequestError('Content branches are not enabled (set `config.branches`).')
+    const collection = collectionOrThrow(opts.collection)
+    // The live doc through the normal access-checked read (null if the caller can't read it).
+    const live = await findByID<T>({
+      collection: collection.slug,
+      id: opts.id,
+      req: opts.req,
+      overrideAccess: opts.overrideAccess,
+      draft: true,
+    })
+    if (!live) return null
+    const staged = await db.find({
+      collection: BRANCH_DOCS_TABLE,
+      where: {
+        and: [
+          { branch: { equals: opts.branch } },
+          { collection: { equals: collection.slug } },
+          { documentId: { equals: String(opts.id) } },
+        ],
+      },
+      limit: 1,
+      page: 1,
+    })
+    if (!staged.docs[0]) return live
+    // Overlay the staged field edits on the access-checked live doc (field-level merge).
+    return { ...live, ...((staged.docs[0]!.data ?? {}) as Row) } as T
+  }
+
+  async function diffBranch(opts: BranchRef): Promise<BranchDiffEntry[]> {
+    if (!config.branches.enabled) return []
+    // Reviewer-gated at the op layer too (defence in depth): a diff reveals which documents a
+    // branch touches + their changed field names — reviewer-only, like the rest of the surface.
+    assertBranchReviewer(buildReq(opts.req), opts.overrideAccess ?? false)
+    const res = await db.find({
+      collection: BRANCH_DOCS_TABLE,
+      where: { branch: { equals: opts.branch } },
+      sort: [{ field: 'createdAt', direction: 'asc' }],
+      limit: MAX_LIMIT,
+      page: 1,
+    })
+    return res.docs.map((r) => ({
+      collection: String(r.collection),
+      documentId: String(r.documentId),
+      fields: Object.keys((r.data ?? {}) as Row),
+    }))
+  }
+
+  async function mergeBranch(opts: BranchRef): Promise<MergeBranchResult> {
+    if (!config.branches.enabled) throw new BadRequestError('Content branches are not enabled (set `config.branches`).')
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    assertBranchReviewer(req, override)
+    const branchRow = await openBranchOrThrow(opts.branch)
+
+    const changes = await db.find({
+      collection: BRANCH_DOCS_TABLE,
+      where: { branch: { equals: opts.branch } },
+      sort: [{ field: 'createdAt', direction: 'asc' }],
+      limit: MAX_LIMIT,
+      page: 1,
+    })
+    const result: MergeBranchResult = { merged: [], failed: [] }
+    for (const ch of changes.docs) {
+      const collection = String(ch.collection)
+      const documentId = String(ch.documentId)
+      try {
+        // Replay through the NORMAL access-checked update — publish gate, field access, and
+        // validation all apply, as the merging principal. A staged change can never bypass them.
+        await update({
+          collection,
+          id: documentId,
+          data: (ch.data ?? {}) as Row,
+          req: opts.req,
+          overrideAccess: override,
+        })
+        result.merged.push(`${collection}:${documentId}`)
+      } catch (err) {
+        result.failed.push({ collection, documentId, reason: err instanceof Error ? err.message : 'merge failed' })
+      }
+    }
+    // Mark merged + drop the overlay (it's been applied).
+    await db.update({ collection: BRANCHES_TABLE, id: String(branchRow.id), data: { status: 'merged' } })
+    for (const ch of changes.docs) await db.delete({ collection: BRANCH_DOCS_TABLE, id: String(ch.id) })
+    await recordAudit({
+      action: 'branch.merge',
+      documentId: String(branchRow.id),
+      req,
+      overrideAccess: override,
+      meta: { branch: opts.branch, merged: result.merged.length, failed: result.failed.length },
+    })
+    return result
+  }
+
+  async function discardBranch(opts: BranchRef): Promise<{ name: string }> {
+    if (!config.branches.enabled) throw new BadRequestError('Content branches are not enabled (set `config.branches`).')
+    const req = buildReq(opts.req)
+    const override = opts.overrideAccess ?? false
+    assertBranchReviewer(req, override)
+    const branchRow = await openBranchOrThrow(opts.branch)
+    const changes = await db.find({
+      collection: BRANCH_DOCS_TABLE,
+      where: { branch: { equals: opts.branch } },
+      limit: MAX_LIMIT,
+      page: 1,
+    })
+    for (const ch of changes.docs) await db.delete({ collection: BRANCH_DOCS_TABLE, id: String(ch.id) })
+    await db.update({ collection: BRANCHES_TABLE, id: String(branchRow.id), data: { status: 'discarded' } })
+    await recordAudit({
+      action: 'branch.discard',
+      documentId: String(branchRow.id),
+      req,
+      overrideAccess: override,
+      meta: { branch: opts.branch },
+    })
+    return { name: opts.branch }
+  }
+
+  // -------------------------------------------------------------------------
   // Provenance + content credentials (read/verify surface)
   // -------------------------------------------------------------------------
 
@@ -6179,6 +6465,13 @@ export function createOperations(ctx: OperationCtx) {
     listSubscriptions,
     deleteSubscription,
     processSubscriptions,
+    createBranch,
+    listBranches,
+    stageChange,
+    previewBranch,
+    diffBranch,
+    mergeBranch,
+    discardBranch,
     processWebhooks,
     listWebhooks,
     webhookDeliveries,

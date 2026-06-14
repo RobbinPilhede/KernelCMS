@@ -936,6 +936,63 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     // who can read its collection). The acting/owner identity is the server-resolved `user`
     // ONLY — the client body never names the owner. Applying a view runs the normal
     // access-checked find, so it can never widen visibility. 404 when views are disabled.
+    // /_admin/branches -> content branches (git-for-content). REVIEWER-gated (admin/editor).
+    if (segments[1] === 'branches') {
+      if (!kernel.config.branches.enabled) {
+        return json({ error: { code: 'NOT_FOUND', message: 'Content branches are not enabled.' } }, 404)
+      }
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Content branches require an admin or editor role.')
+      const q = url.searchParams
+
+      // GET /_admin/branches?status= , POST /_admin/branches { name }
+      if (segments.length === 2) {
+        if (method === 'GET') {
+          const status = q.get('status')
+          return json({
+            branches: await kernel.listBranches({ ...(status ? { status: status as never } : {}), req: { user } }),
+          })
+        }
+        if (method === 'POST') {
+          const body = await readBody(request)
+          return json(await kernel.createBranch({ name: String(body.name ?? ''), req: { user } }), 201)
+        }
+        return methodNotAllowed()
+      }
+
+      const branch = decodeURIComponent(segments[2]!)
+      // GET /_admin/branches/:name/diff , /preview?collection=&id= ; POST /stage , /merge , /discard
+      if (segments.length === 4) {
+        const action = segments[3]
+        if (action === 'diff' && method === 'GET')
+          return json({ changes: await kernel.diffBranch({ branch, req: { user } }) })
+        if (action === 'preview' && method === 'GET') {
+          const collection = q.get('collection') ?? ''
+          const id = q.get('id') ?? ''
+          const doc = await kernel.previewBranch({ branch, collection, id, req: { user } })
+          if (!doc) throw new NotFoundError()
+          return json(doc)
+        }
+        if (action === 'stage' && method === 'POST') {
+          const body = await readBody(request)
+          return json(
+            await kernel.stageChange({
+              branch,
+              collection: String(body.collection ?? ''),
+              id: String(body.id ?? ''),
+              data: (body.data ?? {}) as Row,
+              req: { user },
+            }),
+            201,
+          )
+        }
+        if (action === 'merge' && method === 'POST') return json(await kernel.mergeBranch({ branch, req: { user } }))
+        if (action === 'discard' && method === 'POST')
+          return json(await kernel.discardBranch({ branch, req: { user } }))
+      }
+      return methodNotAllowed()
+    }
+
     // /_admin/subscriptions -> saved-search alerts. AUTH-REQUIRED; owner-scoped (you manage
     // only your OWN subscriptions). The owner identity is the server-resolved `user`.
     if (segments[1] === 'subscriptions') {
