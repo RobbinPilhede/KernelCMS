@@ -107,13 +107,17 @@ publish gate for every member**:
 If **any** member would fail, it publishes **none**. The call returns
 `{ status: 'failed', failed: [...] }` with the reasons, and the release **stays `open`**
 so you can fix and retry — there is no partial go-live. Only when *all* members pass does
-it publish each one through the normal `publish` op.
+it publish them — and that apply runs **inside a single database transaction**.
 
-> **Best-effort atomic, not a transaction.** The pre-flight is a full dry-run, so the
-> common failures are caught before anything goes live. A fault that only surfaces
-> *mid-publish* (after the dry-run passed) leaves the release in `failed` with whatever
-> published so far recorded — it is not rolled back. Treat `failed` as "inspect and
-> re-run", not "nothing happened".
+> **Genuinely all-or-nothing — pre-flight _and_ transaction.** The pre-flight is a full
+> dry-run, so the common failures are caught before anything goes live. The apply that
+> follows is then wrapped in **one transaction**: every member publish, its version
+> snapshot, its content credential, and the release status flip commit together. A fault
+> that only surfaces *mid-publish* (one the dry-run could not predict) **rolls the entire
+> release back** — the members already applied revert to draft, the release is marked
+> `failed`, and nothing is left half-live. (On a database adapter without transaction
+> support the engine falls back to the historical best-effort apply; the bundled SQLite
+> and Postgres adapters both support transactions.)
 
 ## Scheduling (the cron drain)
 

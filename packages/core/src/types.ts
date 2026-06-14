@@ -980,6 +980,14 @@ export interface ListBranchesOptions extends OperationBase {
 
 export interface BranchRef extends OperationBase {
   branch: string
+  /**
+   * Merge only. When true, the whole merge runs in ONE transaction: if ANY staged change
+   * fails (access, validation, publish gate), every change already applied rolls back and
+   * the branch stays open — true all-or-nothing. When false/omitted (the default, for
+   * backward compatibility), each change is applied independently and failures are
+   * collected in `failed[]` while the rest proceed. Ignored by diff/discard.
+   */
+  atomic?: boolean
 }
 
 export interface StageChangeOptions extends OperationBase {
@@ -1068,6 +1076,14 @@ export interface SyncContentOptions extends OperationBase {
   bundle: ContentBundle
   /** When true, compute the plan (what would change) WITHOUT writing anything. */
   dryRun?: boolean
+  /**
+   * When true, apply the whole bundle in ONE transaction: if ANY document fails, every
+   * document already applied rolls back and the sync writes nothing — the bundle lands
+   * whole or not at all. When false/omitted (the default, for backward compatibility), each
+   * document is applied independently and failures are collected in `failed[]` while the
+   * rest proceed. Ignored when `dryRun` is set (a dry run never writes).
+   */
+  atomic?: boolean
 }
 
 /** One document's planned/applied disposition during a sync. */

@@ -20,7 +20,9 @@ unless you prefer to stay anonymous.
 ## Supported versions
 
 KernelCMS is pre-1.0 and moving fast. Security fixes target the latest `main` and the
-most recent published release.
+most recent published release. For what "pre-1.0" means for the API you build on — what a
+version bump can change, the deprecation policy, and the road to 1.0 — see
+[STABILITY.md](./STABILITY.md).
 
 ## Hardening checklist for operators
 
