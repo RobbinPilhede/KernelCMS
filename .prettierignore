@@ -7,3 +7,7 @@ playwright-report/
 packages/server/src/admin-assets.generated.ts
 packages/create-kernel/template/
 *.svg
+# Prose docs are hand-authored with illustrative (non-runnable) code snippets that
+# Prettier would mangle (expanding `[/* … */]` placeholders, etc.). Format code, not prose.
+*.md
+

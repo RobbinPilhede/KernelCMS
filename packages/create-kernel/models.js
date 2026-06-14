@@ -44,7 +44,14 @@ export const MODELS = {
     label: 'Blog',
     description: 'Posts, authors, categories — the classic editorial model',
     keywords: ['blog', 'post', 'article', 'news', 'editorial', 'writing', 'magazine', 'cms'],
-    view: { primary: 'posts', settings: 'site_settings', title: 'title', excerpt: 'excerpt', date: 'published_at', slug: 'slug' },
+    view: {
+      primary: 'posts',
+      settings: 'site_settings',
+      title: 'title',
+      excerpt: 'excerpt',
+      date: 'published_at',
+      slug: 'slug',
+    },
     collections: [
       {
         slug: 'authors',
@@ -127,7 +134,14 @@ export const MODELS = {
     label: 'Shop',
     description: 'Products, collections, orders — a small commerce catalog',
     keywords: ['shop', 'store', 'commerce', 'ecommerce', 'product', 'catalog', 'order', 'cart', 'retail', 'sell'],
-    view: { primary: 'products', settings: 'site_settings', title: 'title', excerpt: 'description', date: 'created_at', slug: 'slug' },
+    view: {
+      primary: 'products',
+      settings: 'site_settings',
+      title: 'title',
+      excerpt: 'description',
+      date: 'created_at',
+      slug: 'slug',
+    },
     collections: [
       {
         slug: 'product_collections',
@@ -150,7 +164,13 @@ export const MODELS = {
           { name: 'currency', type: 'select', options: ['USD', 'EUR', 'GBP'], defaultValue: 'USD' },
           { name: 'sku', type: 'text', unique: true },
           { name: 'stock', type: 'number', integer: true, min: 0, defaultValue: 0 },
-          { name: 'status', type: 'select', options: ['draft', 'active', 'archived'], defaultValue: 'active', index: true },
+          {
+            name: 'status',
+            type: 'select',
+            options: ['draft', 'active', 'archived'],
+            defaultValue: 'active',
+            index: true,
+          },
           { name: 'collection', type: 'relationship', relationTo: 'product_collections' },
           { name: 'created_at', type: 'date' },
         ],
@@ -161,7 +181,13 @@ export const MODELS = {
         fields: [
           { name: 'reference', type: 'text', required: true, unique: true, index: true },
           { name: 'email', type: 'email', required: true },
-          { name: 'status', type: 'select', options: ['pending', 'paid', 'shipped', 'cancelled'], defaultValue: 'pending', index: true },
+          {
+            name: 'status',
+            type: 'select',
+            options: ['pending', 'paid', 'shipped', 'cancelled'],
+            defaultValue: 'pending',
+            index: true,
+          },
           { name: 'total_cents', type: 'number', required: true, integer: true, min: 0 },
           { name: 'product', type: 'relationship', relationTo: 'products' },
           { name: 'quantity', type: 'number', integer: true, min: 1, defaultValue: 1 },
@@ -221,7 +247,14 @@ export const MODELS = {
     label: 'Docs',
     description: 'Documentation pages with sections and ordered navigation',
     keywords: ['docs', 'documentation', 'guide', 'manual', 'handbook', 'wiki', 'knowledge', 'reference', 'help'],
-    view: { primary: 'doc_pages', settings: 'site_settings', title: 'title', excerpt: 'summary', date: 'updated_at', slug: 'slug' },
+    view: {
+      primary: 'doc_pages',
+      settings: 'site_settings',
+      title: 'title',
+      excerpt: 'summary',
+      date: 'updated_at',
+      slug: 'slug',
+    },
     collections: [
       {
         slug: 'doc_sections',
@@ -292,7 +325,14 @@ export const MODELS = {
     label: 'Portfolio',
     description: 'Projects and an about page — a personal/agency site',
     keywords: ['portfolio', 'project', 'showcase', 'agency', 'personal', 'work', 'case study', 'studio', 'design'],
-    view: { primary: 'projects', settings: 'site_settings', title: 'title', excerpt: 'summary', date: 'completed_at', slug: 'slug' },
+    view: {
+      primary: 'projects',
+      settings: 'site_settings',
+      title: 'title',
+      excerpt: 'summary',
+      date: 'completed_at',
+      slug: 'slug',
+    },
     collections: [
       {
         slug: 'projects',
@@ -348,7 +388,11 @@ export const MODELS = {
       ],
       _globals: {
         site_settings: { site_name: 'Kernel Studio', tagline: 'Selected work, built with KernelCMS' },
-        about: { headline: 'We build things on the web.', body: 'A small studio shipping fast, durable software.', email: 'hello@example.com' },
+        about: {
+          headline: 'We build things on the web.',
+          body: 'A small studio shipping fast, durable software.',
+          email: 'hello@example.com',
+        },
       },
     },
   },
@@ -394,7 +438,8 @@ function resolveRow(row, refs) {
   for (const [key, value] of Object.entries(row)) {
     if (key === '_ref') continue
     if (typeof value === 'string' && value.startsWith('@')) out[key] = refs[value.slice(1)]
-    else if (Array.isArray(value)) out[key] = value.map((v) => (typeof v === 'string' && v.startsWith('@') ? refs[v.slice(1)] : v))
+    else if (Array.isArray(value))
+      out[key] = value.map((v) => (typeof v === 'string' && v.startsWith('@') ? refs[v.slice(1)] : v))
     else out[key] = value
   }
   return out
@@ -413,7 +458,7 @@ export async function runSeed(kernel, model) {
       if (row._ref) refs[row._ref] = created.id
     }
   }
-  const globals = (seed._globals || {})
+  const globals = seed._globals || {}
   for (const slug of Object.keys(globals)) {
     await kernel.updateGlobal({ slug, data: globals[slug], ...sys })
   }
@@ -546,4 +591,3 @@ export async function seed(kernel: Kernel): Promise<void> {
 }
 `
 }
-
