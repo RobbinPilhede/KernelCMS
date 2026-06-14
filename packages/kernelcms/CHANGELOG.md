@@ -1,5 +1,11 @@
 # kernelcms
 
+## 0.37.0
+
+### Minor Changes
+
+- 2dd54b6: Document activity timeline. `kernel.documentActivity({ collection, id, types?, limit? })` (and REST `GET /api/:collection/:id/activity`) returns one merged, newest-first feed of everything that happened to a document — version snapshots, editorial comments, review decisions, and audit-log entries — instead of querying four sources separately. Each event is `{ type, at, actor, action, data }`. The whole feed is gated on the document's read access (a caller who can't read it gets Forbidden/NotFound), and each source keeps its own rules: version + comment events are shown to any reader, while the reviewer-only sources (review, audit) are included only for an admin/editor principal — a non-reviewer gets `includesReviewerEvents: false` and no audit/review detail (the `types` filter can't bypass that gate). Field-access stripping is inherited (a read-denied field never appears in `changedFields`), each source is skipped cleanly when its feature is off, and `limit` is clamped (default 100, max 500). Read-only — it performs no writes.
+
 ## 0.36.0
 
 ### Minor Changes
