@@ -1,6 +1,6 @@
 {
   "name": "kernelcms",
-  "version": "0.40.0",
+  "version": "0.41.0",
   "description": "The TanStack-native, adapter-based, end-to-end type-safe headless CMS. Config-as-code, self-hosted.",
   "type": "module",
   "license": "MIT",
