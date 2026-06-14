@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.29.0
+
+### Minor Changes
+
+- **Content intelligence: related-content recommendations and near-duplicate detection, straight from your embeddings.** The vectors you already index for semantic search power two more things content teams want.
+  - **More like this.** `kernel.relatedContent({ collection, id })` returns the documents most semantically similar to a given one (the seed is re-embedded from its current content, excluding itself) — perfect for "related articles", internal linking, and recommendation rails. Over REST: `GET /api/:collection/:id/related?limit=`.
+  - **Find redundant content.** `kernel.findDuplicates({ collection, threshold })` returns pairs of documents whose embeddings are near-identical (default cosine ≥ 0.9, with scores) — surface accidental re-publishes, overlapping pages to consolidate, and stale duplicates for a content-quality cleanup. Over REST (admin/editor): `GET /api/_admin/duplicates?collection=&threshold=`.
+  - **Access-checked and bounded.** Every result goes through the normal access-control read path: a related document you can't read is dropped, and a duplicate pair is returned only when you can read **both** documents — so dedup can never reveal the id or even the existence of hidden content. The scan is bounded (it caps the documents compared and pairs returned — it's an admin operation, not a hot path), `threshold` is clamped to `[0,1]`, filters are validated, and the embedding provider's key/text never leaks. Red-teamed exhaustively (including the duplicate-pair leak angle) — **Risk: LOW, zero leaks** — verified by a live harness and a Playwright end-to-end test.
+
+  Builds on the semantic-search layer (configure `embeddings`); read-only and fully backward-compatible.
+
 ## 0.28.0
 
 ### Minor Changes
