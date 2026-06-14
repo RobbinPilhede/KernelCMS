@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.31.0
+
+### Minor Changes
+
+- **Content templates: a "New from template" that pre-fills a document in one click.** Define reusable document skeletons — a landing-page layout, a standard article shell, a press-release format — and editors start from them instead of a blank screen, with all your access rules and validation intact.
+  - **Define skeletons in config.** `templates: [{ slug: 'landing', collection: 'pages', name: 'Landing page', data: { title: 'Untitled', layout: [{ blockType: 'hero', heading: 'Headline' }] } }]`. The `data` is the document's default field values — including a full blocks `layout` — and it's deep-frozen, so one instantiation can never alter the next.
+  - **Instantiate in one call.** `kernel.createFromTemplate({ template: 'landing', data })` deep-merges the template defaults with any overrides you pass (your `data` wins on conflicts) and creates the document. `kernel.listTemplates({ collection })` lists the available templates (metadata only — never the raw defaults). Over REST: `GET /api/_admin/templates` and `POST /api/:collection/from-template`.
+  - **It's a normal, governed create.** Creating from a template goes through the exact create pipeline as any write — a caller who can't create can't use it, out-of-scope fields are stripped for a scoped agent, and the agent draft-only brake holds (a template that sets `_status: 'published'` never publishes for an agent). The caller's override `data` is prototype-pollution-guarded, and a template can only ever create into its configured collection (the route's `:collection` is authoritative). Red-teamed exhaustively — **Risk: LOW** — verified by a live harness and a Playwright end-to-end test.
+
+  Opt-in via `templates`; fully backward-compatible.
+
 ## 0.30.0
 
 ### Minor Changes
