@@ -1,5 +1,16 @@
 # kernelcms
 
+## 0.26.0
+
+### Minor Changes
+
+- **Edge delivery: cache hard at the CDN, purge exactly what changed.** Cache your content at the edge for instant global delivery, and invalidate precisely the affected pages the moment anything changes — provider-agnostically.
+  - **Surrogate cache tags on every public read.** Turn on `edge: { enabled: true, cacheControl: 'public, s-maxage=31536000, stale-while-revalidate=60' }` and `GET /api/:collection/:id` (and list reads) carry your `Cache-Control` plus a `Surrogate-Key` header tagging the response (`<collection>`, `<collection>:<id>`, and — by default — the documents it references, so changing an author purges their posts). Your CDN caches by those keys.
+  - **Change-driven purge feed.** `kernel.purgeFeed({ since })` maps recent content changes (from the real-time change feed) to the exact cache tags to invalidate — including documents that _reference_ a changed one — and returns a cursor to poll from. A small CDN worker polls `GET /api/_edge/purge` (admin-gated) and purges those surrogate keys, or subscribe in-process with `kernel.onPurge(fn)`. Works with Cloudflare cache-tags, Fastly surrogate keys, etc.
+  - **Private content is NEVER cached at the edge.** This is the make-or-break, and it's enforced by construction: only an anonymous, published, non-time-travel read gets a public `Cache-Control` + surrogate key. Every authenticated, access-scoped, draft, `asOf`, or override response gets `Cache-Control: private, no-store` and no cache tag — so a CDN can never serve one user's private content to another. Cache tags only ever contain ids from the access-checked returned documents, header values are sanitized against injection, and the purge feed is admin-gated and bounded. Red-teamed exhaustively across every auth/draft/scope/override combination — **Risk: LOW, zero leaks** — verified by a live harness and a Playwright end-to-end test.
+
+  Opt-in via `edge` (the purge feed also needs `realtime`); the CDN wiring is yours; fully backward-compatible.
+
 ## 0.25.0
 
 ### Minor Changes
