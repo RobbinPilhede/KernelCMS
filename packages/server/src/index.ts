@@ -936,6 +936,40 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
     // who can read its collection). The acting/owner identity is the server-resolved `user`
     // ONLY — the client body never names the owner. Applying a view runs the normal
     // access-checked find, so it can never widen visibility. 404 when views are disabled.
+    // /_admin/federation -> content export/sync between environments. ADMIN-ONLY.
+    if (segments[1] === 'federation') {
+      if (!kernel.config.federation.enabled) {
+        return json({ error: { code: 'NOT_FOUND', message: 'Content federation is not enabled.' } }, 404)
+      }
+      if (!user) throw new UnauthorizedError()
+      if (!isAdmin(user)) throw new ForbiddenError('Content federation requires an admin role.')
+      const q = url.searchParams
+      // GET /_admin/federation/export?collection=&ids=&draft= -> a portable bundle.
+      if (segments.length === 3 && segments[2] === 'export' && method === 'GET') {
+        const idsParam = q.get('ids')
+        return json(
+          await kernel.exportContent({
+            collection: q.get('collection') ?? '',
+            ...(idsParam ? { ids: idsParam.split(',') } : {}),
+            ...(q.get('draft') === 'true' ? { draft: true } : {}),
+            req: { user },
+          }),
+        )
+      }
+      // POST /_admin/federation/sync { bundle, dryRun? } -> apply (or plan) a bundle.
+      if (segments.length === 3 && segments[2] === 'sync' && method === 'POST') {
+        const body = await readBody(request)
+        return json(
+          await kernel.syncContent({
+            bundle: body.bundle as never,
+            ...(body.dryRun === true ? { dryRun: true } : {}),
+            req: { user },
+          }),
+        )
+      }
+      return methodNotAllowed()
+    }
+
     // /_admin/branches -> content branches (git-for-content). REVIEWER-gated (admin/editor).
     if (segments[1] === 'branches') {
       if (!kernel.config.branches.enabled) {

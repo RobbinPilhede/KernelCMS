@@ -143,6 +143,11 @@ import type {
   BranchRef,
   BranchDiffEntry,
   MergeBranchResult,
+  ContentBundle,
+  ExportContentOptions,
+  SyncContentOptions,
+  SyncContentResult,
+  SyncEntry,
 } from './types'
 import {
   BadRequestError,
@@ -2954,7 +2959,21 @@ export function createOperations(ctx: OperationCtx) {
     })
     // Strict: a newly-written locale must satisfy required localized fields for itself.
     assertLocaleRequired(collection, row, [localeWritten])
-    row.id = randomUUID()
+    // A caller-provided id (content sync / import) preserves identity across environments;
+    // otherwise generate one. The id is validated and a duplicate fails on the PK insert.
+    if (opts.id !== undefined) {
+      if (
+        typeof opts.id !== 'string' ||
+        opts.id.length === 0 ||
+        opts.id.length > 200 ||
+        COMMENT_FORBIDDEN_KEYS.has(opts.id)
+      ) {
+        throw new BadRequestError('A provided `id` must be a non-empty string.')
+      }
+      row.id = opts.id
+    } else {
+      row.id = randomUUID()
+    }
     let bornPublished = false
     let evalFindings: import('./types').EvalFinding[] = []
     if (draftsOn(collection)) {
@@ -6155,6 +6174,122 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   // -------------------------------------------------------------------------
+  // Content federation / sync (portable bundles between environments)
+  //
+  // Export reads a collection's documents through the normal access-checked find and emits a
+  // deterministic bundle keyed by stable id. Sync applies a bundle by id (create-or-update),
+  // routing each document through the normal access-checked create/update — so a synced
+  // document can never bypass access, validation, or the publish gate; `dryRun` plans only.
+  // -------------------------------------------------------------------------
+
+  async function exportContent(opts: ExportContentOptions): Promise<ContentBundle> {
+    if (!config.federation.enabled)
+      throw new BadRequestError('Content federation is not enabled (set `config.federation`).')
+    const collection = collectionOrThrow(opts.collection)
+    const and: Where[] = []
+    if (opts.where) and.push(opts.where)
+    if (Array.isArray(opts.ids) && opts.ids.length > 0) and.push({ id: { in: opts.ids.map(String) } })
+    const where = and.length === 1 ? and[0] : and.length > 1 ? { and } : undefined
+    const limit = Math.min(Math.max(opts.limit ?? MAX_LIMIT, 1), MAX_LIMIT)
+    const res = await find({
+      collection: collection.slug,
+      ...(where ? { where } : {}),
+      ...(opts.draft !== undefined ? { draft: opts.draft } : {}),
+      limit,
+      page: 1,
+      req: opts.req,
+      overrideAccess: opts.overrideAccess,
+    })
+    const names = storageFields(collection.fields).map((f) => f.name)
+    const includeStatus = draftsOn(collection)
+    const documents = res.docs
+      .map((d) => {
+        const doc = d as Row
+        const data: Row = {}
+        for (const n of names) if (n in doc) data[n] = doc[n]
+        if (includeStatus && '_status' in doc) data._status = doc._status
+        return { collection: collection.slug, id: String(doc.id), data }
+      })
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    return { version: 1, documents }
+  }
+
+  async function syncContent(opts: SyncContentOptions): Promise<SyncContentResult> {
+    if (!config.federation.enabled)
+      throw new BadRequestError('Content federation is not enabled (set `config.federation`).')
+    const bundle = opts.bundle
+    if (!bundle || bundle.version !== 1 || !Array.isArray(bundle.documents)) {
+      throw new BadRequestError('A valid content bundle (`version: 1`, `documents: []`) is required.')
+    }
+    // Bound the work per call (also caps a Local-API caller, which has no HTTP body limit).
+    if (bundle.documents.length > MAX_LIMIT) {
+      throw new BadRequestError(`A content bundle is limited to ${MAX_LIMIT} documents per sync.`)
+    }
+    const dryRun = opts.dryRun === true
+    const result: SyncContentResult = { created: 0, updated: 0, unchanged: 0, failed: [], plan: [], dryRun }
+
+    for (const entry of bundle.documents) {
+      const collectionSlug = String(entry?.collection ?? '')
+      const id = String(entry?.id ?? '')
+      try {
+        const collection = collectionOrThrow(collectionSlug)
+        if (id.length === 0 || COMMENT_FORBIDDEN_KEYS.has(id))
+          throw new BadRequestError('A valid document `id` is required.')
+        const data = (entry.data ?? {}) as Row
+        // Reject prototype-pollution keys in the staged data up front (downstream create/update
+        // only iterate declared fields, so this is defence in depth + a clean per-entry error).
+        for (const k of Object.keys(data)) {
+          if (COMMENT_FORBIDDEN_KEYS.has(k)) throw new BadRequestError(`Illegal field "${k}".`)
+        }
+        // Detect existence through the access-checked read (drafts included). A missing id
+        // routes to create; an existing-but-unreadable doc throws Forbidden here → it lands in
+        // `failed[]` (the apply never runs), so a sync never silently overwrites a doc the
+        // caller can't see.
+        const existing = await findByID({
+          collection: collection.slug,
+          id,
+          req: opts.req,
+          overrideAccess: opts.overrideAccess,
+          draft: true,
+        })
+        if (existing) {
+          // Unchanged if every incoming field already matches the existing document.
+          const changed = Object.keys(data).some(
+            (k) => JSON.stringify((existing as Row)[k]) !== JSON.stringify(data[k]),
+          )
+          const action: SyncEntry['action'] = changed ? 'update' : 'unchanged'
+          result.plan.push({ collection: collection.slug, id, action })
+          if (action === 'unchanged') {
+            result.unchanged++
+          } else {
+            if (!dryRun)
+              await update({
+                collection: collection.slug,
+                id,
+                data,
+                req: opts.req,
+                overrideAccess: opts.overrideAccess,
+              })
+            result.updated++
+          }
+        } else {
+          result.plan.push({ collection: collection.slug, id, action: 'create' })
+          if (!dryRun)
+            await create({ collection: collection.slug, id, data, req: opts.req, overrideAccess: opts.overrideAccess })
+          result.created++
+        }
+      } catch (err) {
+        result.failed.push({
+          collection: collectionSlug,
+          id,
+          reason: err instanceof Error ? err.message : 'sync failed',
+        })
+      }
+    }
+    return result
+  }
+
+  // -------------------------------------------------------------------------
   // Provenance + content credentials (read/verify surface)
   // -------------------------------------------------------------------------
 
@@ -6472,6 +6607,8 @@ export function createOperations(ctx: OperationCtx) {
     diffBranch,
     mergeBranch,
     discardBranch,
+    exportContent,
+    syncContent,
     processWebhooks,
     listWebhooks,
     webhookDeliveries,

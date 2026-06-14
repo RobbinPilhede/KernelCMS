@@ -99,6 +99,8 @@ export default defineConfig({
   subscriptions: true,
   // Content branches: stage edits on a named branch, preview/diff, then merge or discard.
   branches: true,
+  // Content federation: export a content set as a portable bundle + sync it into another env.
+  federation: true,
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).

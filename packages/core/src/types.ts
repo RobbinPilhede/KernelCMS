@@ -941,6 +941,56 @@ export interface MergeBranchResult {
 }
 
 // ---------------------------------------------------------------------------
+// Content federation / sync (portable bundles between environments)
+// ---------------------------------------------------------------------------
+
+/** A portable, deterministic content bundle — the unit of cross-environment sync. */
+export interface ContentBundle {
+  /** Bundle format version. */
+  version: 1
+  /** ISO time the bundle was produced (set by the caller after export, for provenance). */
+  exportedAt?: string
+  /** The exported documents, each with its STABLE id and portable field data. */
+  documents: Array<{ collection: string; id: string; data: Row }>
+}
+
+export interface ExportContentOptions extends OperationBase {
+  collection: string
+  /** Narrow the export with a filter. */
+  where?: Where
+  /** Export only these document ids. */
+  ids?: string[]
+  /** Include drafts (default exports the published view). */
+  draft?: boolean
+  limit?: number
+}
+
+export interface SyncContentOptions extends OperationBase {
+  bundle: ContentBundle
+  /** When true, compute the plan (what would change) WITHOUT writing anything. */
+  dryRun?: boolean
+}
+
+/** One document's planned/applied disposition during a sync. */
+export interface SyncEntry {
+  collection: string
+  id: string
+  action: 'create' | 'update' | 'unchanged'
+}
+
+export interface SyncContentResult {
+  created: number
+  updated: number
+  unchanged: number
+  /** Documents that failed to apply (access/validation/unknown collection), with the reason. */
+  failed: Array<{ collection: string; id: string; reason: string }>
+  /** The per-document plan (always present; on a dry run nothing is written). */
+  plan: SyncEntry[]
+  /** Whether this was a dry run (no writes). */
+  dryRun: boolean
+}
+
+// ---------------------------------------------------------------------------
 // Real-time content: change feed (CDC, pull) + in-process bus + SSE (push)
 //
 // Every content change on a non-system collection emits a METADATA-ONLY event —
@@ -1406,6 +1456,12 @@ export interface KernelConfig {
    *  by default. The live read/write path is untouched; branch ops are a separate, reviewer-
    *  gated surface. */
   branches?: boolean
+  /** Content federation / sync: export a set of documents as a portable, deterministic bundle
+   *  (`kernel.exportContent`) and apply it into another environment by id — create-or-update —
+   *  with a dry-run diff (`kernel.syncContent`). Each applied document goes through the normal
+   *  access-checked create/update (so access, validation, and the publish gate apply). OPT-IN,
+   *  disabled by default. */
+  federation?: boolean
   /** Content releases: stage a coordinated set of draft documents and publish them as
    *  one unit, optionally on a schedule. Provisions `_releases` + `_release_items` system
    *  tables and enables the release ops (`createRelease`/`publishRelease`/…) + the
@@ -1716,6 +1772,9 @@ export interface SanitizedConfig {
   /** Resolved content-branches setting. `enabled` provisions the `_branches` +
    *  `_branch_docs` tables and the branch ops; disabled by default (opt-in). */
   branches: { enabled: boolean }
+  /** Resolved content-federation setting. `enabled` exposes the export/sync ops; disabled by
+   *  default (opt-in). No table — export reads, sync writes through the normal pipeline. */
+  federation: { enabled: boolean }
   /** Resolved content-releases setting. `enabled` provisions the `_releases` +
    *  `_release_items` tables and the release ops; disabled by default (opt-in). */
   releases: { enabled: boolean }
@@ -1951,6 +2010,10 @@ export interface FindByIDOptions extends OperationBase {
 export interface CreateOptions extends OperationBase {
   collection: string
   data: Row
+  /** Create the document with THIS id instead of a generated one — used to preserve identity
+   *  across environments (content sync) and on import. Validated (a non-empty, non-prototype
+   *  string); a duplicate id is a conflict. Omit for the normal generated-id behavior. */
+  id?: string
 }
 
 export interface UploadFileInput {
@@ -3440,6 +3503,13 @@ export interface Kernel {
   mergeBranch(opts: BranchRef): Promise<MergeBranchResult>
   /** Discard a branch: drop its staged overlay and mark it discarded. Reviewer-gated. */
   discardBranch(opts: BranchRef): Promise<{ name: string }>
+  /** Export documents of a collection as a portable, deterministic bundle (access-checked —
+   *  only documents the caller can read). Requires `config.federation`. */
+  exportContent(opts: ExportContentOptions): Promise<ContentBundle>
+  /** Apply a content bundle into THIS environment by id (create-or-update); `dryRun` returns
+   *  the plan without writing. Each document goes through the normal access-checked create/
+   *  update (access + validation + publish gate apply). Requires `config.federation`. */
+  syncContent(opts: SyncContentOptions): Promise<SyncContentResult>
   /** Drain the durable webhook outbox: deliver due `_webhook_deliveries` (POST + sign),
    *  marking each delivered, retried (with backoff), or exhausted. A trusted cron op (like
    *  `processContentLifecycle`); wired into `kernel jobs:run` / `webhooks:run`. Returns the

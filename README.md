@@ -828,6 +828,56 @@ unreachable via generic CRUD, and create/merge/discard are audited. This is fiel
 staged overlays plus a replayed merge — not git-style three-way merge with conflict
 resolution. Red-teamed to Risk LOW. See the [content branches guide](docs/content-branches.md).
 
+### Content federation (sync between environments)
+
+Opt into `federation` and you can **export** a collection's documents as a portable,
+deterministic **bundle** and **sync** it into another instance by id — create-or-update, with
+a dry-run diff first. It's how you promote content from staging to production, or keep two
+instances in sync. Export is **access-checked** (you only export what you can read) and
+**id-preserving**; sync replays every apply through the **normal access-checked pipeline**, so
+it can't bypass access, validation, or the publish gate.
+
+```ts
+export default defineConfig({
+  federation: true, // unlocks exportContent / syncContent + the admin routes
+  collections: [/* … */],
+})
+
+// export from the source, sync into the target — all on the Local API:
+const bundle = await kernel.exportContent({ collection: 'posts', draft: true })
+// -> ContentBundle { version: 1, documents: [{ collection, id, data }, …] }  (sorted by id)
+const plan = await kernel.syncContent({ bundle, dryRun: true }) // the diff, writes nothing
+const result = await kernel.syncContent({ bundle })            // create-or-update by id
+// -> { created, updated, unchanged, failed, plan, dryRun }
+```
+
+- **Export** a collection's documents — `data` is the stored field values (`+ _status` for
+  drafts collections), so identity (the id) and publish state **round-trip**. Only documents
+  the caller can **read** are exported; output is sorted by id (deterministic).
+- **Sync** applies a bundle keyed on id: create it (preserving the id) if missing, update it
+  if a field differs, leave it if identical. Every apply goes through the normal
+  `create`/`update` op — **access + validation + the publish gate all apply** — so anything
+  that fails lands in `failed[]` while the rest apply. Re-syncing is **idempotent**.
+- **Dry run** (`dryRun: true`) returns the full plan **without writing**, so you review the
+  diff before you commit.
+- `kernel.create` now takes an optional `id` to preserve identity on import; a duplicate id
+  is a conflict.
+
+```bash
+curl "http://staging/api/_admin/federation/export?collection=posts&draft=true" \
+  -H "Authorization: Bearer $STAGING_TOKEN" > bundle.json
+curl -X POST "http://prod/api/_admin/federation/sync" -H "Authorization: Bearer $PROD_TOKEN" \
+  -d "{\"bundle\": $(cat bundle.json), \"dryRun\": true}"   # diff first, then drop dryRun to apply
+```
+
+**The same-gate guarantee:** export is access-checked (you only export what you can read) and
+sync replays every create/update through the **access-checked, validated, publish-gated**
+pipeline — a sync **can't elevate**. Ids round-trip stably (export from A, sync into B keeps
+the same ids), a dry run shows the diff before you commit, re-syncing is idempotent, and both
+REST routes are **admin-only**. This is a deterministic upsert-by-id sync with a diff — not
+real-time replication (last-write-wins per field on update). Red-teamed to Risk LOW. See the
+[content federation guide](docs/content-federation.md).
+
 ### Content lifecycle (auto-expire, archive & delete)
 
 Scheduled publish makes a draft go live at a future instant; **content lifecycle** is the

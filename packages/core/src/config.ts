@@ -633,6 +633,11 @@ function sanitizeBranches(branches: KernelConfig['branches']): { enabled: boolea
   return { enabled: branches === true }
 }
 
+/** Resolve the content-federation setting. OPT-IN, disabled by default. */
+function sanitizeFederation(federation: KernelConfig['federation']): { enabled: boolean } {
+  return { enabled: federation === true }
+}
+
 /**
  * Resolve the saved-search-alerts setting. OPT-IN, disabled by default. When enabled it
  * requires the real-time change feed (the source it drains) and at least one configured
@@ -1449,6 +1454,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     views: sanitizeViews(config.views),
     subscriptions: sanitizeSubscriptions(config),
     branches: sanitizeBranches(config.branches),
+    federation: sanitizeFederation(config.federation),
     releases: sanitizeReleases(config.releases),
     lifecycle: sanitizeLifecycle(config.lifecycle, collectionsBySlug, SYSTEM_SLUGS),
     signing: sanitizeSigning(config.signing),
