@@ -71,6 +71,15 @@ the cutting-edge RAG technique — straight from the relationships you already m
 Every node is loaded through the same access-checked read path, and a node the caller
 can't read (and the edge to it) is simply omitted.
 
+And those embeddings power **content intelligence** beyond search. `kernel.relatedContent(...)`
+returns the documents semantically most like a given one — built-in "more like this" for
+internal-linking and recommendations — and `kernel.findDuplicates(...)` surfaces
+near-duplicate / redundant pairs for content-quality and dedupe cleanups, straight from the
+vectors you already index. Both run through the **same access-checked read path**: a related
+or duplicate result never surfaces (or even implies the existence of) a document the caller
+can't read, a duplicate pair touching a hidden doc is dropped whole, and the dedup scan is
+bounded — an admin operation, not a hot path.
+
 And the same content engine is **AI-discoverable**. Opt into `discoverability` and KernelCMS
 serves `llms.txt`, a full-text corpus, retrieval-ready content chunks, and per-document
 GEO markdown with provenance-backed citations — so answer engines (ChatGPT, Claude,
@@ -122,6 +131,30 @@ as a direct publish (a caller can only publish a release whose every member they
 publish directly; an agent can never publish one), so coordinated launches stay as safe
 as a single edit. This is the practical heart of *content environments*.
 
+And content starts from **templates**. Opt into `templates` and you define reusable
+document skeletons — a landing-page block `layout`, a standard article shell, a pre-filled
+campaign brief — and give editors a "New from template" that pre-fills a fresh document in
+one click. `kernel.createFromTemplate({ template, data })` deep-merges the template's
+defaults with the caller's overrides (caller wins) and creates the document through the
+**normal create pipeline** — so it is exactly a create: access control, field scope,
+validation, and the agent draft-only brake all apply. A caller who can't create can't use
+a template, an agent's result is still a draft (a template setting `_status: 'published'`
+never publishes for an agent), out-of-scope fields are stripped, the caller's override is
+prototype-pollution-guarded, the frozen config can't be mutated between instantiations, and
+a template only ever creates into its configured collection. Skeletons, not a side door.
+Red-teamed to Risk LOW.
+
+And content has a **lifecycle**. The inverse of scheduled publish: opt into `lifecycle`,
+put an expiry date on a published document, and when it passes the next cron drain
+automatically retires it — `unpublish` back to draft, `archive` (draft + a server-managed
+`_archived_at` that hides it from public reads and marks it as archived, not merely
+unpublished), or `delete`. Embargoes, time-limited campaigns, retention/compliance, and
+stale-content cleanup, on autopilot. The drain (`kernel.processContentLifecycle(...)`) is a
+**trusted, cron-only** maintenance op like `processScheduledPublishes` — there is no HTTP
+trigger, so it runs safely under override — and `_archived_at` is **client-immutable**: a
+normal caller can never set it (fake-archive) or clear it (un-archive); only the drain
+writes it. Each retire is audited (`content.expire`).
+
 And content can **personalize**. Opt into `audiences` and any field becomes
 `personalized: true` — it stores audience variants the way `localized` stores locales,
 resolving per request (`?audience=vip` or `req.audience`) to that segment, then the default,
@@ -132,6 +165,19 @@ hash of the key is ever stored (no PII at rest). Variants still pass field read-
 untrusted audience is honored only if it's a configured segment, and per-segment writes
 merge without clobbering each other — micro-experiences and experiments from the same typed
 model, no separate personalization platform.
+
+And content **translates itself**. Configure a pluggable `translation` provider — DeepL,
+OpenAI, Google, or a local model; KernelCMS has no hard translation dependency — and
+`kernel.translateDocument(...)` / `kernel.translateMissing(...)` auto-fill the missing
+locales of your localized fields with the provider of your choice. A translation is a
+**normal access-checked write**, not a side door: it goes through update access (the
+caller must be able to edit the doc), strict-mode per-locale required validation still
+applies, the agent draft-only brake still holds (a translation never auto-publishes), and
+it merges — other locales are never clobbered (fills only MISSING values unless you pass
+`overwrite`). The provider closure may hold an API key; its text and errors **never leak**
+(a failure surfaces a generic message, source/target text is never logged) and a provider
+fault can't corrupt the doc (no partial write). Pairs with localization strict mode and
+the translation-status dashboard. Red-teamed to Risk LOW.
 
 And content comes with **analytics**. Opt into `analytics` and KernelCMS records a
 content event for every view, search, conversion, and — uniquely — every AI retrieval,
@@ -369,6 +415,111 @@ that is persisted at write time and therefore sortable and filterable:
 - Conditional fields, default values, validation, read-only and hidden flags, and
   sidebar field positioning.
 
+### Content templates (reusable document skeletons)
+
+Opt into `templates` and you define reusable **document skeletons** — a landing-page
+block `layout`, a standard article shell, a pre-filled brief — that editors instantiate
+with one "New from template" click. Each template names a target `collection` and a `data`
+object of default field values (which may include a blocks `layout`, default text, etc.).
+It is opt-in; `data` is **deep-frozen**, so one instantiation can never mutate the defaults
+for the next.
+
+```ts
+export default defineConfig({
+  templates: [
+    {
+      slug: 'landing_page',        // unique, snake_case
+      collection: 'pages',
+      name: 'Landing page',
+      description: 'Hero + feature grid + CTA',
+      data: {
+        title: 'Untitled landing page',
+        layout: [
+          { blockType: 'hero', heading: 'Headline goes here' },
+          { blockType: 'features', items: [] },
+          { blockType: 'cta', label: 'Get started', href: '/signup' },
+        ],
+      },
+    },
+  ],
+  collections: [/* … a `pages` collection with a blocks `layout` field … */],
+})
+```
+
+- **List templates (metadata only).** `kernel.listTemplates({ collection? })` returns
+  template **metadata** — `slug`, `collection`, `name`, `description`, optionally filtered
+  by collection — and **never** the raw `data`. REST: `GET /api/_admin/templates?collection=`
+  (admin/editor-gated).
+- **Create from a template.** `kernel.createFromTemplate({ template, data?, req })` looks up
+  the template, **deep-merges** its defaults with the caller's `data` (the caller wins on
+  conflicts; nested objects merge), and creates the document through the **normal create
+  pipeline**. Returns the created document. REST: `POST /api/:collection/from-template` with
+  body `{ template, data? }`, created as the request principal — and the route's
+  `:collection` **must match** the template's `collection`.
+
+```ts
+const page = await kernel.createFromTemplate({
+  template: 'landing_page',
+  data: { title: 'Spring launch' }, // overrides the template default; layout is inherited
+  req,
+})
+```
+
+```bash
+curl "http://localhost:3000/api/_admin/templates?collection=pages"             # metadata only
+curl -X POST "http://localhost:3000/api/pages/from-template" \
+  -d '{"template":"landing_page","data":{"title":"Spring launch"}}'            # :collection must match
+```
+
+**The normal-create guarantee:** create-from-template is a create, not a side door. A
+caller who can't create in the collection can't use a template; an agent's result is still
+a **draft** (a template setting `_status: 'published'` never publishes for an agent);
+out-of-scope fields are stripped by field scope; validation runs. The caller's `data`
+override is **prototype-pollution-guarded**, the template's config is **frozen** (one
+instantiation can't change the next), and a template only ever creates into its configured
+collection. Red-teamed to Risk LOW. See the
+[content templates guide](docs/content-templates.md).
+
+### Editorial comments (threaded review annotations)
+
+Set `comments: true` and editors can leave **threaded review comments** on a document —
+anchored to a field or left document-level — instead of trading feedback in a separate
+tool. Comments are gated by the **target document's read access**: you can only see or add
+comments on a document you can already read, the author is recorded from the **authenticated
+principal** (never the client body), and resolve/delete are limited to the author or a
+reviewer/admin. Enabling it registers a private `_comments` system table, unreachable through
+generic CRUD.
+
+```ts
+export default defineConfig({ comments: true, collections: [/* … */] })
+```
+
+- **Add / reply.** `kernel.addComment({ collection, id, body, field?, parentId?, req })` adds
+  a comment (or a threaded reply via `parentId`, validated to the same document) to a document
+  you can read. `body` is trimmed and length-bounded; `field` must name a real field. Returns
+  the `CommentDoc` with `authorId` from the principal.
+- **List / count.** `kernel.listComments({ collection, id, field?, includeResolved?, req })`
+  returns comments oldest → newest (resolved hidden unless `includeResolved`);
+  `kernel.commentCount({ collection, id, req })` powers an "N comments" badge.
+- **Resolve / delete.** `kernel.resolveComment({ commentId, resolved?, req })` (author or a
+  reviewer — `admin`/`editor`) and `kernel.deleteComment({ commentId, req })` (author or
+  `admin`).
+
+```bash
+curl -X POST "http://localhost:3000/api/articles/$ID/comments" \
+  -H "Authorization: Bearer $TOKEN" -d '{"body":"ready to publish?","field":"summary"}'
+curl -X PATCH "http://localhost:3000/api/_admin/comments/$COMMENT_ID" \
+  -H "Authorization: Bearer $TOKEN" -d '{"resolved":true}'
+```
+
+**The read-gate guarantee:** every op checks the target document's `access.read` rule **and**
+row-scope before returning a comment, a count, or mutating — including the anonymous Local-API
+path (a null-user caller is held to the read rule, no "no user = trusted" shortcut). Every REST
+route requires auth up front (anonymous → `401`). Resolve/delete re-gate on the live document
+before the author/role check; threading stays within one document; ids are
+prototype-pollution-guarded; create/resolve/delete are audited. Red-teamed to Risk LOW. See the
+[editorial comments guide](docs/content-comments.md).
+
 ### Data and APIs
 
 - Collection-level and field-level access control that returns a boolean or a row-level
@@ -468,6 +619,61 @@ release), and scheduled releases are gate-checked at schedule time and re-checke
 drain. Best-effort atomic on a mid-publish fault; red-teamed to Risk LOW. See the
 [content releases guide](docs/releases.md).
 
+### Content lifecycle (auto-expire, archive & delete)
+
+Scheduled publish makes a draft go live at a future instant; **content lifecycle** is the
+inverse — give a published document an expiry and KernelCMS retires it automatically when
+that date passes. Opt into `lifecycle` per collection for embargoes, time-limited
+campaigns, retention/compliance, and stale-content cleanup. Each `slug` must be a real,
+**drafts-enabled** collection, and the `expireField` must already be a declared `date`
+field on it — you own the schema; KernelCMS never adds the column for you.
+
+```ts
+export default defineConfig({
+  lifecycle: {
+    collections: [
+      { slug: 'promos', expireField: 'expire_at', onExpire: 'unpublish' }, // back to draft
+      { slug: 'press',  expireField: 'embargo_until', onExpire: 'archive' }, // draft + _archived_at
+      { slug: 'tmp',    onExpire: 'delete' }, // expireField defaults to 'expire_at'
+    ],
+  },
+  collections: [
+    { slug: 'promos', versions: { drafts: true },
+      fields: [/* … */ { name: 'expire_at', type: 'date' }] }, // YOU declare the date field
+    // …
+  ],
+})
+
+// the drain (cron-driven; runs under override like processScheduledPublishes):
+const { processed } = await kernel.processContentLifecycle({ now, limit })
+// processed: Array<{ collection, id, action }>
+```
+
+`expireField` defaults to `'expire_at'` and `onExpire` to `'unpublish'`. When a published
+document's `expireField` date has passed, the next drain retires it: **`unpublish`** →
+back to draft; **`archive`** → draft plus a server-managed `_archived_at` timestamp
+(hidden from public reads, and distinguishable from a plain draft); **`delete`** → removed.
+The `expireField` is an ordinary editor field, so you can only set an expiry on content you
+can write.
+
+Run the drain from a cron — either the dedicated `kernel lifecycle:run`, or `kernel
+jobs:run`, which now also drains scheduled publishes and releases. There is **no HTTP
+trigger**: the drain is a trusted, operator-only maintenance operation, which is exactly
+why it can run under `overrideAccess` safely. It is bounded by `limit`, resilient
+per-document, and **only ever touches the configured lifecycle collections**; `now`/`limit`
+are validated and clamped, and each action is audited (`content.expire`).
+
+```bash
+* * * * * cd /app && npx kernel lifecycle:run   # or: kernel jobs:run (drains everything due)
+```
+
+**The trusted-drain, client-immutable guarantee:** the lifecycle drain is cron/operator-only
+and never exposed to untrusted callers, so running it under override is safe. The
+server-managed `_archived_at` is **client-immutable** — a normal user can never set it (to
+fake an archive) or clear it (to un-archive) through the API; only the trusted drain writes
+it. The `expireField` itself is a plain field gated by normal write access. See the
+[content lifecycle guide](docs/content-lifecycle.md).
+
 ### Personalization & A/B experiments
 
 `personalized` fields are the audience-keyed twin of localization: where a `localized` field
@@ -507,6 +713,62 @@ curl -X POST  "http://localhost:3000/api/_experiments/cta/assign" -d '{"key":"vi
 is stripped for every audience; per-segment writes merge (no variant lost); and bucketing is
 deterministic over an FNV hash of the visitor `key` — **only the hash is recorded, no PII at
 rest**. Red-teamed to Risk LOW. See the [personalization guide](docs/personalization.md).
+
+### AI-assisted translation (auto-fill every locale)
+
+Configure a pluggable `translation` provider and KernelCMS auto-translates your localized
+content into every locale — with the provider of *your* choice, while keeping access
+control, strict-mode validation, and your human-review workflow intact. It requires
+`localization` and is off until you add the block; the provider is yours (DeepL, OpenAI,
+Google, a local model — no hard translation dependency in the core).
+
+```ts
+export default defineConfig({
+  localization: { locales: ['en', 'sv', 'de'], defaultLocale: 'en' },
+  translation: {
+    // N source strings (all in `from`) → N translations in `to`, in order. Bring any provider.
+    translate: async ({ texts, from, to }) => {
+      const res = await deepl.translateText(texts, from, to)
+      return res.map((r) => r.text)
+    },
+  },
+  collections: [/* … localized fields … */],
+})
+```
+
+- **Translate one document.** `kernel.translateDocument({ collection, id, from, to, fields?,
+  overwrite?, req })` reads the document's `from`-locale values for its localized text
+  fields (the listed `fields`, or all of them), translates them through the provider, and
+  **merges** the results into the `to` locale — other locales are never touched. By default
+  it fills only **missing** `to` values; `overwrite: true` replaces existing ones. Returns
+  the updated doc (or `null`).
+- **Bulk-fill a collection.** `kernel.translateMissing({ collection, to, from?, fields?,
+  limit? })` finds documents missing the `to` locale (via the translation-status data) and
+  translates each, returning `{ translated, skipped }`. `from` defaults to the default
+  locale; `limit` is bounded (default 50).
+
+```ts
+await kernel.translateDocument({ collection: 'posts', id, from: 'en', to: 'sv', req }) // fill missing sv
+await kernel.translateDocument({ collection: 'posts', id, from: 'en', to: 'sv', overwrite: true, req })
+const { translated, skipped } = await kernel.translateMissing({ collection: 'posts', to: 'de' })
+```
+
+```bash
+curl -X POST "http://localhost:3000/api/posts/<id>/translate" -d '{"from":"en","to":"sv"}'
+curl -X POST "http://localhost:3000/api/_admin/translate-missing" -d '{"collection":"posts","to":"de"}' # admin/editor-gated
+```
+
+**The access-checked-write guarantee:** a translation is a **write through the normal
+pipeline**, never a side door. It goes through update access (the caller must be able to
+update the doc), strict-mode per-locale required validation still applies, and the **agent
+draft-only brake still holds** — a translation never auto-publishes. `from`/`to` must be
+configured locales (unknown / `__proto__` are rejected), and a read-denied localized field
+is never sent to the provider or written. The provider closure may hold an API key: its
+text and errors **never leak** (a provider failure surfaces a generic message; source and
+target text are never logged), and a provider fault can't corrupt the doc (no partial
+write). Per-field input is bounded. Pairs with localization strict mode and the
+translation-status dashboard. Red-teamed to Risk LOW. See the
+[AI translation guide](docs/ai-translation.md).
 
 ### Search (full-text, semantic & hybrid)
 
@@ -601,6 +863,48 @@ path. A node the caller can't read is dropped **and the edge to it is omitted**,
 relationship's very existence never leaks; read-denied fields never appear in a `label` or
 `context`. The bounds (`depth`, `maxNodes`, fan-out, de-dupe) make traversal DoS-safe.
 This is retrieval only — see the [knowledge graph guide](docs/knowledge-graph.md).
+
+### Content intelligence (related content & near-duplicate detection)
+
+The same embeddings that power semantic search also power **content intelligence**:
+"more like this" recommendations and automatic near-duplicate detection, straight from
+the vectors you already index. Both **require `embeddings`** + a vector store (the
+semantic-search setup) — they build on it.
+
+- **Related content (more-like-this).** `kernel.relatedContent({ collection, id, limit?,
+  filter?, req })` → `{ docs }` re-embeds a seed document from its current content and
+  returns the others most semantically similar to it (the seed itself excluded). Great for
+  internal-linking and "you might also like". `limit` and `filter` behave exactly as in
+  `semanticSearch`. REST: `GET /api/:collection/:id/related?limit=`.
+- **Near-duplicate detection.** `kernel.findDuplicates({ collection, threshold?, limit?,
+  req })` → `{ pairs: Array<{ a, b, score }> }` returns pairs of documents whose
+  embeddings are at least `threshold` cosine-similar (default `0.9`, clamped to `[0, 1]`)
+  — for content-QA and dedupe cleanups. Similarity is computed over the last-indexed
+  content within a **bounded scan** (caps the docs scanned and pairs returned — an admin
+  operation, not a hot path). REST: `GET /api/_admin/duplicates?collection=&threshold=&limit=`
+  (**admin/editor-gated**).
+
+```ts
+// Local API — documents most like this one, access-checked:
+const { docs } = await kernel.relatedContent({ collection: 'posts', id, limit: 5, req })
+
+// Near-duplicate pairs across a collection (admin operation, bounded scan):
+const { pairs } = await kernel.findDuplicates({ collection: 'posts', threshold: 0.92, req })
+```
+
+```bash
+curl "http://localhost:3000/api/posts/<id>/related?limit=5"
+curl "http://localhost:3000/api/_admin/duplicates?collection=posts&threshold=0.92&limit=50"  # admin/editor-gated
+```
+
+**The access & bounds guarantee:** every result goes through the **same access-checked
+read path** — a related or duplicate result never surfaces (or implies the existence of)
+a document the caller can't read. A duplicate **pair is returned only when the caller can
+read both documents**, so a pair touching a hidden doc is dropped whole — it never reveals
+a hidden doc's id or existence. `threshold` is clamped to `[0, 1]`, `limit` is clamped, and
+`filter` is validated to real columns (no injection); the dedup scan is bounded; and the
+embedding provider's key and text never leak. Red-teamed to Risk LOW. See the
+[content intelligence guide](docs/content-intelligence.md).
 
 ### Real-time change feed (CDC & SSE)
 

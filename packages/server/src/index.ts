@@ -855,6 +855,33 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       return methodNotAllowed()
     }
 
+    // /_admin/comments/:commentId -> resolve / delete an editorial comment. AUTH-REQUIRED
+    // only here; the AUTHORIZATION is enforced in core against the server-resolved principal:
+    // PATCH (resolve/unresolve) requires the comment's author OR a reviewer (admin/editor);
+    // DELETE requires the author OR an admin. Both re-check the target document's read access.
+    // The client body never names the principal. 404 when comments are disabled.
+    if (segments[1] === 'comments' && segments.length === 3) {
+      if (!kernel.config.comments.enabled) {
+        return json({ error: { code: 'NOT_FOUND', message: 'Comments are not enabled.' } }, 404)
+      }
+      if (!user) throw new UnauthorizedError()
+      const commentId = segments[2]!
+      if (method === 'PATCH') {
+        const body = await readBody(request)
+        return json(
+          await kernel.resolveComment({
+            commentId,
+            ...(typeof body.resolved === 'boolean' ? { resolved: body.resolved } : {}),
+            req: { user },
+          }),
+        )
+      }
+      if (method === 'DELETE') {
+        return json(await kernel.deleteComment({ commentId, req: { user } }))
+      }
+      return methodNotAllowed()
+    }
+
     // /_admin/releases -> content releases (a named bundle of drafts published as a unit).
     // REVIEWER-gated (admin OR editor; never an agent): the same trusted-human gate as the
     // review inbox. The acting identity is the server-resolved `user` ONLY — the client
@@ -1638,6 +1665,46 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
         ...base,
       })
       return json(result)
+    }
+    // /:collection/:id/comments -> editorial comments / annotations on a document.
+    // AUTH-REQUIRED and gated by the document's READ access in core: a caller who can't read
+    // the document gets Forbidden/NotFound (never the comments). The author is recorded from
+    // the server-resolved principal ONLY — the client body never names the author.
+    //   GET  ?field=&includeResolved= -> the document's comments, oldest -> newest
+    //   POST { body, field?, parentId? } -> add a comment (or threaded reply)
+    if (segments[2] === 'comments') {
+      if (!kernel.config.comments.enabled) {
+        return json({ error: { code: 'NOT_FOUND', message: 'Comments are not enabled.' } }, 404)
+      }
+      if (!user) throw new UnauthorizedError()
+      if (method === 'GET') {
+        const field = url.searchParams.get('field')
+        const includeResolved = url.searchParams.get('includeResolved') === 'true'
+        return json({
+          comments: await kernel.listComments({
+            collection,
+            id,
+            ...(field ? { field } : {}),
+            ...(includeResolved ? { includeResolved: true } : {}),
+            req: { user },
+          }),
+        })
+      }
+      if (method === 'POST') {
+        const body = await readBody(request)
+        return json(
+          await kernel.addComment({
+            collection,
+            id,
+            body: typeof body.body === 'string' ? body.body : '',
+            ...(typeof body.field === 'string' ? { field: body.field } : {}),
+            ...(typeof body.parentId === 'string' ? { parentId: body.parentId } : {}),
+            req: { user },
+          }),
+          201,
+        )
+      }
+      return methodNotAllowed()
     }
     return methodNotAllowed()
   }

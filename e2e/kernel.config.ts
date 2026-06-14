@@ -66,6 +66,8 @@ export default defineConfig({
       data: { title: 'Untitled article', summary: 'Start writing…' },
     },
   ],
+  // Editorial comments: threaded review annotations on documents, gated by doc read access.
+  comments: true,
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).

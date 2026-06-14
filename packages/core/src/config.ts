@@ -542,6 +542,16 @@ function sanitizeReview(review: KernelConfig['review'], hasAgents: boolean): { e
 }
 
 /**
+ * Resolve the editorial-comments setting. OPT-IN and disabled by default — `true`
+ * provisions the `_comments` table and enables the comment ops; anything else (absent /
+ * `false`) stays off, fully backward-compatible (no table, the ops throw a clean
+ * "disabled" error / return empty, exactly like releases/review when off).
+ */
+function sanitizeComments(comments: KernelConfig['comments']): { enabled: boolean } {
+  return { enabled: comments === true }
+}
+
+/**
  * Resolve the content-releases setting. OPT-IN and disabled by default — `true`
  * provisions the `_releases` + `_release_items` tables and the release ops; anything
  * else (absent / `false`) stays off, fully backward-compatible (no tables, ops throw a
@@ -1189,6 +1199,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     rbacStore,
     tenancy,
     review: sanitizeReview(config.review, agents.length > 0),
+    comments: sanitizeComments(config.comments),
     releases: sanitizeReleases(config.releases),
     lifecycle: sanitizeLifecycle(config.lifecycle, collectionsBySlug, SYSTEM_SLUGS),
     signing: sanitizeSigning(config.signing),

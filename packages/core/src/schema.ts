@@ -83,6 +83,14 @@ export const CHANGES_TABLE = '_changes'
  *  Never reachable via generic CRUD (like `_audit`/`_changes`). */
 export const ANALYTICS_TABLE = '_analytics'
 
+/** Storage table holding editorial comments / annotations — one row per comment on a
+ *  content document (with an optional field-name anchor + threaded `parentId`).
+ *  Provisioned only when `config.comments` is enabled. `(collection, documentId)` is the
+ *  per-document lookup the list scan uses; `documentId` alone is indexed for the
+ *  per-comment ops. NEVER reachable via generic CRUD (like `_audit`); access is gated by
+ *  the target DOCUMENT's read access, so a comment can't leak content a caller can't see. */
+export const COMMENTS_TABLE = '_comments'
+
 /** Storage table holding the durable workflow run log — one row per workflow run,
  *  recording its status, trigger, and per-step status/log. Provisioned only when
  *  `config.workflows` is set. The engine reads/writes it via the trusted (overrideAccess)
@@ -392,6 +400,31 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'variant', type: 'text', required: false, unique: false, indexed: true, localized: false },
         { name: 'value', type: 'real', required: false, unique: false, indexed: false, localized: false },
         { name: 'meta', type: 'json', required: false, unique: false, indexed: false, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Editorial comments / annotations, provisioned only when `config.comments` is enabled.
+  // A flat row keyed by `(collection, documentId)` (both indexed for the per-document list
+  // scan); `field` is an optional field-name anchor and `parentId` threads replies. The
+  // author (`authorId`/`authorType`) is recorded from the trusted principal at write time.
+  // Never reachable via generic CRUD (like `_audit`); access is gated by the target
+  // document's read access in the comment ops.
+  if (config.comments.enabled) {
+    tables.push({
+      table: COMMENTS_TABLE,
+      slug: COMMENTS_TABLE,
+      columns: [
+        { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'documentId', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'field', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'parentId', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'body', type: 'text', required: true, unique: false, indexed: false, localized: false },
+        { name: 'authorId', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'authorType', type: 'text', required: false, unique: false, indexed: false, localized: false },
+        { name: 'resolved', type: 'boolean', required: false, unique: false, indexed: true, localized: false },
       ],
       timestamps: true,
       singleton: false,

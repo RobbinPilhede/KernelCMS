@@ -480,6 +480,46 @@ instantiation can't change the next), and a template only ever creates into its 
 collection. Red-teamed to Risk LOW. See the
 [content templates guide](docs/content-templates.md).
 
+### Editorial comments (threaded review annotations)
+
+Set `comments: true` and editors can leave **threaded review comments** on a document —
+anchored to a field or left document-level — instead of trading feedback in a separate
+tool. Comments are gated by the **target document's read access**: you can only see or add
+comments on a document you can already read, the author is recorded from the **authenticated
+principal** (never the client body), and resolve/delete are limited to the author or a
+reviewer/admin. Enabling it registers a private `_comments` system table, unreachable through
+generic CRUD.
+
+```ts
+export default defineConfig({ comments: true, collections: [/* … */] })
+```
+
+- **Add / reply.** `kernel.addComment({ collection, id, body, field?, parentId?, req })` adds
+  a comment (or a threaded reply via `parentId`, validated to the same document) to a document
+  you can read. `body` is trimmed and length-bounded; `field` must name a real field. Returns
+  the `CommentDoc` with `authorId` from the principal.
+- **List / count.** `kernel.listComments({ collection, id, field?, includeResolved?, req })`
+  returns comments oldest → newest (resolved hidden unless `includeResolved`);
+  `kernel.commentCount({ collection, id, req })` powers an "N comments" badge.
+- **Resolve / delete.** `kernel.resolveComment({ commentId, resolved?, req })` (author or a
+  reviewer — `admin`/`editor`) and `kernel.deleteComment({ commentId, req })` (author or
+  `admin`).
+
+```bash
+curl -X POST "http://localhost:3000/api/articles/$ID/comments" \
+  -H "Authorization: Bearer $TOKEN" -d '{"body":"ready to publish?","field":"summary"}'
+curl -X PATCH "http://localhost:3000/api/_admin/comments/$COMMENT_ID" \
+  -H "Authorization: Bearer $TOKEN" -d '{"resolved":true}'
+```
+
+**The read-gate guarantee:** every op checks the target document's `access.read` rule **and**
+row-scope before returning a comment, a count, or mutating — including the anonymous Local-API
+path (a null-user caller is held to the read rule, no "no user = trusted" shortcut). Every REST
+route requires auth up front (anonymous → `401`). Resolve/delete re-gate on the live document
+before the author/role check; threading stays within one document; ids are
+prototype-pollution-guarded; create/resolve/delete are audited. Red-teamed to Risk LOW. See the
+[editorial comments guide](docs/content-comments.md).
+
 ### Data and APIs
 
 - Collection-level and field-level access control that returns a boolean or a row-level

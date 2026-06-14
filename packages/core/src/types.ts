@@ -1125,6 +1125,13 @@ export interface KernelConfig {
    *  on, `false` to force it off. When disabled, the review ops return empty / throw
    *  cleanly (like `findRoles` with RBAC off) — fully backward-compatible. */
   review?: boolean
+  /** Editorial comments / annotations: threaded review feedback on documents (with an
+   *  optional field-name anchor). Provisions a `_comments` system table and enables the
+   *  comment ops (`addComment`/`listComments`/`resolveComment`/`deleteComment`) + the
+   *  `/api/:collection/:id/comments` routes. OPT-IN, disabled by default — `true` turns it
+   *  on. A caller can only comment on / see comments for a document they can READ; the
+   *  author is recorded from the authenticated principal (never client input). */
+  comments?: boolean
   /** Content releases: stage a coordinated set of draft documents and publish them as
    *  one unit, optionally on a schedule. Provisions `_releases` + `_release_items` system
    *  tables and enables the release ops (`createRelease`/`publishRelease`/…) + the
@@ -1417,6 +1424,9 @@ export interface SanitizedConfig {
   /** Resolved agent-review setting. `enabled` provisions the `_reviews` table and the
    *  review queue/decision ops; defaults to on when `agents` are configured. */
   review: { enabled: boolean }
+  /** Resolved editorial-comments setting. `enabled` provisions the `_comments` table and
+   *  the comment ops; disabled by default (opt-in). */
+  comments: { enabled: boolean }
   /** Resolved content-releases setting. `enabled` provisions the `_releases` +
    *  `_release_items` tables and the release ops; disabled by default (opt-in). */
   releases: { enabled: boolean }
@@ -1898,6 +1908,9 @@ export type AuditAction =
   | 'workflow.awaiting_review'
   | 'experiment.assign'
   | 'content.expire'
+  | 'comment.create'
+  | 'comment.resolve'
+  | 'comment.delete'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -1998,6 +2011,91 @@ export interface SubmitReviewOptions {
 export interface SubmitReviewResult {
   decision: ReviewDecision
   documentId: string
+}
+
+// ---------------------------------------------------------------------------
+// Editorial comments / annotations
+//
+// Threaded review feedback on content documents, with an optional field-name anchor.
+// Persisted in a `_comments` system table — never on the document itself, and never
+// reachable via generic CRUD (like `_audit`). Access is gated by the target DOCUMENT's
+// read access: you can only comment on / see comments for a document you can READ, so a
+// comment can't leak content (body/author/existence) a caller could not otherwise see.
+// The author is recorded from the authenticated principal, never from client input.
+// ---------------------------------------------------------------------------
+
+/** A single persisted comment row from the `_comments` table. */
+export interface CommentDoc extends Row {
+  id: string
+  collection: string
+  documentId: string
+  /** Optional field-name anchor (a real field of the collection), or null for a
+   *  document-level comment. */
+  field: string | null
+  /** Parent comment id for a threaded reply (same document only), or null for a root. */
+  parentId: string | null
+  body: string
+  /** The author's principal id, recorded from the authenticated principal (never client
+   *  input). Null only for a (trusted) system-authored comment. */
+  authorId: string | null
+  authorType: 'user' | 'agent' | 'system'
+  resolved: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AddCommentOptions {
+  collection: string
+  /** The target document id — the caller must be able to READ it. */
+  id: string
+  /** The comment text (required, trimmed, length-bounded). */
+  body: string
+  /** Optional field-name anchor; validated to be a real field of the collection. */
+  field?: string
+  /** Optional parent comment id for a threaded reply; validated to belong to the SAME
+   *  document (no cross-document/cross-collection threading). */
+  parentId?: string
+  /** Request context — its principal authors the comment and gates document read access.
+   *  The author identity comes from the server `user`, NEVER the client body. */
+  req?: Partial<RequestContext>
+  /** Trusted server call: skip the document-read gate and record a system-authored comment.
+   *  Never set from an untrusted boundary — the REST route always passes the principal. */
+  overrideAccess?: boolean
+}
+
+export interface ListCommentsOptions {
+  collection: string
+  /** The target document id — the caller must be able to READ it (else Forbidden/empty). */
+  id: string
+  /** Narrow to comments anchored to a specific field. */
+  field?: string
+  /** Include resolved comments (default false — resolved are hidden). */
+  includeResolved?: boolean
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface ResolveCommentOptions {
+  commentId: string
+  /** Mark resolved (default true) or unresolved (false). */
+  resolved?: boolean
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface DeleteCommentOptions {
+  commentId: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface CommentCountOptions {
+  collection: string
+  id: string
+  /** Include resolved comments in the count (default false). */
+  includeResolved?: boolean
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -2813,6 +2911,26 @@ export interface Kernel {
    *  keeps it a draft and records the note. Both decisions persist to `_reviews` and
    *  are audited. */
   submitReview(opts: SubmitReviewOptions): Promise<SubmitReviewResult>
+  /** Add an editorial comment / annotation to a document. The caller MUST be able to READ
+   *  the target document (else Forbidden/NotFound — no existence leak). `body` is required,
+   *  trimmed, and length-bounded; an optional `field` anchor is validated to be a real field
+   *  of the collection; an optional `parentId` must be an existing comment on the SAME
+   *  document. The author is recorded from the authenticated principal (never client input);
+   *  anonymous principals cannot comment. Requires `config.comments`. */
+  addComment(opts: AddCommentOptions): Promise<CommentDoc>
+  /** List a document's comments oldest→newest. The caller MUST be able to READ the document
+   *  (else Forbidden — never leaks comment bodies/authors/existence). Optionally filtered by
+   *  `field` and excluding resolved comments (the default). Returns `[]` when comments are
+   *  disabled. */
+  listComments(opts: ListCommentsOptions): Promise<CommentDoc[]>
+  /** Mark a comment resolved/unresolved. Only the comment's AUTHOR or an admin/editor
+   *  (reviewer) may resolve it; document read access is re-checked. */
+  resolveComment(opts: ResolveCommentOptions): Promise<CommentDoc>
+  /** Delete a comment. Only the comment's AUTHOR or an admin may delete it. */
+  deleteComment(opts: DeleteCommentOptions): Promise<{ id: string }>
+  /** Count a document's comments (resolved excluded by default). The caller must be able to
+   *  READ the document. Returns 0 when comments are disabled. */
+  commentCount(opts: CommentCountOptions): Promise<number>
   /** Create an empty, `open` content release — a named bundle of drafts to publish as a
    *  unit. Requires `config.releases`. The name is untrusted (length-bounded). */
   createRelease(opts: CreateReleaseOptions): Promise<Release>
