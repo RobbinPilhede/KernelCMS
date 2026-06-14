@@ -133,6 +133,19 @@ untrusted audience is honored only if it's a configured segment, and per-segment
 merge without clobbering each other — micro-experiences and experiments from the same typed
 model, no separate personalization platform.
 
+And content **translates itself**. Configure a pluggable `translation` provider — DeepL,
+OpenAI, Google, or a local model; KernelCMS has no hard translation dependency — and
+`kernel.translateDocument(...)` / `kernel.translateMissing(...)` auto-fill the missing
+locales of your localized fields with the provider of your choice. A translation is a
+**normal access-checked write**, not a side door: it goes through update access (the
+caller must be able to edit the doc), strict-mode per-locale required validation still
+applies, the agent draft-only brake still holds (a translation never auto-publishes), and
+it merges — other locales are never clobbered (fills only MISSING values unless you pass
+`overwrite`). The provider closure may hold an API key; its text and errors **never leak**
+(a failure surfaces a generic message, source/target text is never logged) and a provider
+fault can't corrupt the doc (no partial write). Pairs with localization strict mode and
+the translation-status dashboard. Red-teamed to Risk LOW.
+
 And content comes with **analytics**. Opt into `analytics` and KernelCMS records a
 content event for every view, search, conversion, and — uniquely — every AI retrieval,
 then rolls them up into aggregate insights (`top_content`, `top_queries`,
@@ -507,6 +520,62 @@ curl -X POST  "http://localhost:3000/api/_experiments/cta/assign" -d '{"key":"vi
 is stripped for every audience; per-segment writes merge (no variant lost); and bucketing is
 deterministic over an FNV hash of the visitor `key` — **only the hash is recorded, no PII at
 rest**. Red-teamed to Risk LOW. See the [personalization guide](docs/personalization.md).
+
+### AI-assisted translation (auto-fill every locale)
+
+Configure a pluggable `translation` provider and KernelCMS auto-translates your localized
+content into every locale — with the provider of *your* choice, while keeping access
+control, strict-mode validation, and your human-review workflow intact. It requires
+`localization` and is off until you add the block; the provider is yours (DeepL, OpenAI,
+Google, a local model — no hard translation dependency in the core).
+
+```ts
+export default defineConfig({
+  localization: { locales: ['en', 'sv', 'de'], defaultLocale: 'en' },
+  translation: {
+    // N source strings (all in `from`) → N translations in `to`, in order. Bring any provider.
+    translate: async ({ texts, from, to }) => {
+      const res = await deepl.translateText(texts, from, to)
+      return res.map((r) => r.text)
+    },
+  },
+  collections: [/* … localized fields … */],
+})
+```
+
+- **Translate one document.** `kernel.translateDocument({ collection, id, from, to, fields?,
+  overwrite?, req })` reads the document's `from`-locale values for its localized text
+  fields (the listed `fields`, or all of them), translates them through the provider, and
+  **merges** the results into the `to` locale — other locales are never touched. By default
+  it fills only **missing** `to` values; `overwrite: true` replaces existing ones. Returns
+  the updated doc (or `null`).
+- **Bulk-fill a collection.** `kernel.translateMissing({ collection, to, from?, fields?,
+  limit? })` finds documents missing the `to` locale (via the translation-status data) and
+  translates each, returning `{ translated, skipped }`. `from` defaults to the default
+  locale; `limit` is bounded (default 50).
+
+```ts
+await kernel.translateDocument({ collection: 'posts', id, from: 'en', to: 'sv', req }) // fill missing sv
+await kernel.translateDocument({ collection: 'posts', id, from: 'en', to: 'sv', overwrite: true, req })
+const { translated, skipped } = await kernel.translateMissing({ collection: 'posts', to: 'de' })
+```
+
+```bash
+curl -X POST "http://localhost:3000/api/posts/<id>/translate" -d '{"from":"en","to":"sv"}'
+curl -X POST "http://localhost:3000/api/_admin/translate-missing" -d '{"collection":"posts","to":"de"}' # admin/editor-gated
+```
+
+**The access-checked-write guarantee:** a translation is a **write through the normal
+pipeline**, never a side door. It goes through update access (the caller must be able to
+update the doc), strict-mode per-locale required validation still applies, and the **agent
+draft-only brake still holds** — a translation never auto-publishes. `from`/`to` must be
+configured locales (unknown / `__proto__` are rejected), and a read-denied localized field
+is never sent to the provider or written. The provider closure may hold an API key: its
+text and errors **never leak** (a provider failure surfaces a generic message; source and
+target text are never logged), and a provider fault can't corrupt the doc (no partial
+write). Per-field input is bounded. Pairs with localization strict mode and the
+translation-status dashboard. Red-teamed to Risk LOW. See the
+[AI translation guide](docs/ai-translation.md).
 
 ### Search (full-text, semantic & hybrid)
 

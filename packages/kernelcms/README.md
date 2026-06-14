@@ -133,6 +133,41 @@ untrusted audience is honored only if it's a configured segment, and per-segment
 merge without clobbering each other — micro-experiences and experiments from the same typed
 model, no separate personalization platform.
 
+And content comes with **analytics**. Opt into `analytics` and KernelCMS records a
+content event for every view, search, conversion, and — uniquely — every AI retrieval,
+then rolls them up into aggregate insights (`top_content`, `top_queries`,
+`variant_performance`, `activity`, and an `ai_retrieval_leaderboard`). With
+`autoCapture`, semantic/hybrid/graph search and `assignVariant` emit those signals
+themselves, so you see not just how your content performs but **how AI answer engines
+retrieve it**, from the same model. It is **privacy-first**: no third-party analytics and
+**no PII** — the event row has no user/IP/visitor/email column at all, the principal is
+never recorded, and `track` strips PII-ish keys from `meta`. Insights are aggregates only,
+filtered to collections the caller can read. Red-teamed to Risk LOW.
+
+And content is built for the **edge**. Opt into `edge` and a public, published read carries
+the cache headers a CDN needs — your configured `Cache-Control` plus a `Surrogate-Key` listing
+the response's **cache tags** (`<collection>`, `<collection>:<id>`, and, by default, the docs it
+references). A change-driven **purge feed** (`kernel.purgeFeed(...)`) maps recent writes — and the
+docs that *reference* them — back to exactly those tags, so a CDN worker invalidates only the
+content that actually changed, provider-agnostically (you emit the tags + purge list; wire it to
+Cloudflare/Fastly/Vercel). Safe by construction: a private, authenticated, scoped, draft, or
+time-travel response is **never** handed a public/`s-maxage` `Cache-Control` or a surrogate key —
+it gets `private, no-store` — so private content is never cached at the edge. Cache aggressively,
+invalidate precisely. Red-teamed to Risk LOW.
+
+And it runs **multi-tenant**. Opt into `tenancy` and one KernelCMS instance hosts many
+clients, sites, or workspaces with **airtight per-tenant data isolation — and zero
+per-collection access boilerplate**. KernelCMS auto-adds a server-managed `tenant` field to
+each scoped collection and AND-combines a tenant scope into its access rules (it never
+widens yours), so every find/update/delete/count is automatically filtered to the caller's
+tenant. The headline is *where the tenant comes from*: it is resolved from the
+**authenticated principal** (`req.user.tenant`), **never** a client query param, body field,
+or header — so a tenant A principal can never read, list, count, update, or delete (or
+populate, or move a document into) tenant B's content, a tenant-less principal sees nothing
+(fail-closed), and only `overrideAccess`/system code (migrations, admin tooling) bypasses it.
+The SaaS-on-KernelCMS and agency enabler. Red-teamed across 35 cross-tenant attacks to Risk
+LOW, zero leaks.
+
 ---
 
 ## Quickstart
@@ -225,6 +260,7 @@ Everything is opt-in on the same config. A few one-liners unlock a lot:
 - **Semantic & hybrid search (RAG-native):** set a pluggable `embeddings: { embed }` (your OpenAI/Cohere/local model — no embedding dependency baked in) and mark a collection's search `semantic: true`. Fields are embedded on every write into a vector store, and `kernel.semanticSearch(...)` / `kernel.hybridSearch(...)` (Reciprocal Rank Fusion of full-text + vector) plus `GET /api/:collection/semantic` and `/hybrid` are served through the same access-checked read path. Your CMS becomes your RAG knowledge base — see the [semantic search guide](docs/semantic-search.md).
 - **Webhooks + rate limiting:** `webhooks: [{ url, secret }]` fires signed HTTP POSTs on change; the server rate-limits every endpoint (stricter on auth) and sends HSTS / Permissions-Policy headers.
 - **Real-time change feed:** `realtime: { enabled: true }` turns on an access-filtered change feed — a durable pull feed for CDC and a live SSE push stream. See [Real-time](#real-time-change-feed-cdc--sse) below.
+- **Content analytics:** `analytics: { enabled: true, autoCapture: true }` records a content event per interaction (`kernel.track(...)`) and rolls them up (`kernel.insights(...)`) — including an `ai_retrieval_leaderboard` of what AI answer engines retrieve. Privacy-first: no third-party analytics, no PII at rest. See [Content analytics](#content-analytics--insights-incl-ai-retrieval-privacy-first) below.
 - **Payments & orders:** add the `commerce({ payment: stripePayment({ ... }) })` plugin and you get `products` + `orders` collections, a `POST /commerce/checkout` (totals recomputed server-side from real prices), and a signature-verified `POST /commerce/webhook` that transitions orders to paid/refunded. Stripe and a deterministic `testPayment()` adapter included.
 - **AI agents (MCP):** register `agents: [{ id, token, roles, fieldScope }]` and serve your kernel over the Model Context Protocol — `npx kernel mcp` (stdio, for Claude Desktop / Cursor) or `kernel mcp --http` (multi-agent, per-request scoped tokens). Tools are auto-generated from the same model that builds the OpenAPI spec (CRUD, count, version history, your opt-in `defineEndpoint` business logic, plus `kernel://schema` resources to introspect), and every call runs through the in-process Local API as a scoped principal — so an agent goes through the **same access pipeline as a human**: it only touches the fields you allow, **cannot publish** (drafts only, enforced by the engine), and is attributed in version history. The MCP layer enforces nothing on its own. Import from `kernelcms/mcp`; the MCP SDK is an optional peer dependency.
 - **Agentic workflows:** define `workflows: [{ slug, agent, trigger, steps }]` and an agent runs an autonomous content pipeline (draft → quality gate → human review) under the same guardrails as MCP. Triggers (`on: 'create' | 'update'`) enqueue a **durable** run via the jobs queue, so a slow agent step never blocks the content write; `runWorkflow(...)` / `POST /api/_admin/workflows/:slug/run` run a `manual` one. Content advances only through `ctx.evalGate(...)` (your content-CI evals) and `ctx.requestReview(...)` (human approval in the inbox) — the agent itself physically cannot publish. See [agentic workflows](docs/agentic-workflows.md).
@@ -615,6 +651,101 @@ create/update/delete, so a publish currently reads as `update`; `seq` is per-nod
 ordering, multi-node needs a shared sequence.)* Pairs with [workflows](docs/agentic-workflows.md)
 (react to a change) and search (live re-index). See the [real-time guide](docs/realtime.md).
 
+### Edge delivery & CDN caching (cache tags + change-driven purge)
+
+Opt into `edge` and KernelCMS turns public reads into edge-cacheable responses with
+**cache tags**, then emits a **change-driven purge feed** so a CDN worker invalidates
+*exactly* the content that changed — provider-agnostically. You emit the tags and the
+purge list; you wire them to Cloudflare, Fastly, or Vercel. It is off by default and the
+purge feed requires `realtime`.
+
+```ts
+export default defineConfig({
+  realtime: { enabled: true }, // the purge feed reads the change feed
+  edge: {
+    enabled: true,
+    // the Cache-Control sent on a cacheable read:
+    cacheControl: 'public, s-maxage=31536000, stale-while-revalidate=60',
+    tagHeader: 'Surrogate-Key',   // surrogate-key header name (default 'Surrogate-Key')
+    includeRelationships: true,   // also tag a doc with its relationship targets (default true)
+  },
+  collections: [/* … */],
+})
+```
+
+- **Cache headers on public reads.** With `edge.enabled`, `GET /api/:collection/:id` and
+  `GET /api/:collection` add the configured `Cache-Control` plus a `Surrogate-Key` header
+  listing the response's cache tags (`<collection>`, `<collection>:<id>`, and — with
+  `includeRelationships` — its relationship targets) — but **only for a cacheable
+  response**: an *anonymous, published, non-time-travel* read. Any authenticated /
+  access-scoped / draft / `asOf` / `overrideAccess` read instead gets
+  `Cache-Control: private, no-store` and **no** surrogate key.
+- **Cache tags.** `kernel.cacheTags({ collection, id?, doc?, docs? })` returns the surrogate
+  keys for a doc or response (own + collection + relationship-target tags), sanitized to
+  CDN-safe tokens.
+- **Purge feed (change-driven).** `kernel.purgeFeed({ since? })` → `{ tags, cursor }` maps
+  recent changes to the cache tags to invalidate — **including the tags of docs that
+  reference a changed doc** (bounded), so changing a referenced doc purges the docs that
+  embed it. A CDN worker polls it and purges those surrogate keys. REST:
+  `GET /api/_edge/purge?since=` (**admin-gated** — it reveals changed ids).
+  `kernel.onPurge(fn)` pushes tags over the realtime bus.
+
+**The never-cache-private guarantee:** a private, authenticated, access-scoped, draft,
+time-travel (`asOf`), or `overrideAccess` response is **never** given a public/`s-maxage`
+`Cache-Control` or a surrogate key — a wrong header would cache private content at the
+edge, so it is the make-or-break property. Cache tags only ever contain ids from the
+access-checked returned docs (no leak), tag and header values are sanitized (no header
+injection), and the purge feed is admin-gated and bounded. CDN integration is yours.
+Red-teamed to Risk LOW. See the [edge delivery guide](docs/edge-delivery.md).
+
+### Content analytics & insights (incl. AI-retrieval, privacy-first)
+
+Opt into `analytics` and KernelCMS records a content event per interaction and rolls
+them up into aggregate insights — including, uniquely, **how AI answer engines retrieve
+your content**, from the same model. It is off by default; `retain` (default ~100k,
+clamped) bounds the event table, and `autoCapture` (default `false`) turns on the
+zero-touch AI-retrieval and experiment signals.
+
+```ts
+export default defineConfig({
+  analytics: { enabled: true, retain: 100000, autoCapture: true }, // all opt-in
+  collections: [/* … */],
+})
+```
+
+- **Capture.** `kernel.track({ type, collection?, documentId?, query?, experiment?,
+  variant?, value?, meta? })` records one event; `type` is `'view' | 'search' |
+  'ai_retrieval' | 'citation' | 'variant_impression' | 'conversion' | 'custom'`. It is
+  **resilient** — a tracking failure is logged and never throws into the caller. REST:
+  `POST /api/_analytics/track` (auth required unless the server sets `publicTrack`).
+- **Auto-capture (`autoCapture: true`).** `semanticSearch` / `hybridSearch` /
+  `graphSearch` emit an `ai_retrieval` event per returned (access-checked) document with
+  the search terms as `query`, and `assignVariant` emits a `variant_impression`.
+  Fire-and-forget, **zero added latency**, a complete no-op when off.
+- **Insights.** `kernel.insights({ metric, collection?, type?, from?, to?, limit? })` →
+  `top_content`, `top_queries`, `variant_performance`, `activity`, and
+  `ai_retrieval_leaderboard`. REST: `GET /api/_admin/insights?metric=…` (admin/editor-gated).
+
+```ts
+await kernel.track({ type: 'view', collection: 'posts', documentId })           // capture
+const board = await kernel.insights({ metric: 'ai_retrieval_leaderboard', limit: 20 }) // roll-up
+```
+
+```bash
+curl -X POST http://localhost:3000/api/_analytics/track -d '{"type":"view","collection":"posts","documentId":"<id>"}'
+curl "http://localhost:3000/api/_admin/insights?metric=top_content&from=2026-06-01&limit=20"
+```
+
+**The privacy-first, no-PII guarantee:** there is **no user/IP/visitor/email/token
+column** on the event row — only content/event metadata — and the authenticated principal
+is **never recorded**; `track` strips PII-ish + prototype-pollution keys from `meta`
+(keeping only scalar non-PII dimensions). `track` can only ever write `_analytics`
+(`collection` is inert data, not a write target). Insights are **aggregates only**,
+filtered to collections the caller can read (a hidden collection's counts never leak), and
+the route is admin/editor-gated; retention, scan, and result size are bounded. No
+third-party analytics, no PII. Red-teamed to Risk LOW. See the
+[analytics guide](docs/analytics.md).
+
 ### AI discoverability (llms.txt & GEO)
 
 - **GEO-native.** Opt into `discoverability` and KernelCMS exposes your content to AI
@@ -804,6 +935,55 @@ re-fire its workflow.
   version-history, global, and opt-in custom-endpoint tools are auto-generated from the
   same descriptor as the OpenAPI spec and gated by your access rules. See
   [Go further](#go-further) for the CLI and transports.
+
+### Multi-tenancy (one instance, many tenants, airtight isolation)
+
+Opt into `tenancy` and one KernelCMS instance hosts many clients, sites, or workspaces
+with **airtight per-tenant data isolation and no per-collection access boilerplate**. For
+each scoped collection, KernelCMS auto-adds a server-managed `tenant` field and
+**AND-combines** a tenant scope into its read/create/update/delete access — it never
+widens your own rules. Every `find` / `findByID` / `update` / `delete` / `count` is then
+automatically filtered to the caller's tenant through the existing access pipeline; on
+create the `tenant` is auto-stamped from the caller, and on update it is immutable.
+
+```ts
+export default defineConfig({
+  tenancy: {
+    // all opt-in; these are the defaults:
+    field: 'tenant',          // the server-managed scope field
+    // collections: ['posts'], // default: every non-system, non-auth collection
+    requireTenant: true,      // a principal with no tenant claim is denied scoped content (fail-closed)
+    resolve: (req) => req.user?.tenant ?? null, // how the ACTING tenant is derived (this is the default)
+  },
+  collections: [
+    {
+      slug: 'users',
+      auth: true,
+      // put a tenant on each user — it flows into req.user.tenant on auth:
+      fields: [{ name: 'tenant', type: 'text', required: true }],
+    },
+    {
+      // scoped automatically — no per-collection tenant field or access rule needed:
+      slug: 'posts',
+      access: { read: ({ req }) => Boolean(req.user) },
+      fields: [{ name: 'title', type: 'text', required: true }],
+    },
+  ],
+})
+```
+
+**The principal-derived, fail-closed isolation guarantee:** the acting tenant is resolved
+from the **authenticated principal** (`req.user.tenant` by default) — **never** a client
+query param, body field, or header. A tenant A principal can never read, list, count,
+update, or delete tenant B's content (cross-tenant access resolves to nothing /
+`NotFound`); a client can never create or move a document into another tenant (the tenant
+is stamped on create and stripped on update); a tenant-less principal sees **nothing** in
+scoped collections (fail-closed) unless `overrideAccess`. Cross-tenant content is never
+leaked through relationship `populate` (it is access-filtered to a bare id). The only
+bypass is `overrideAccess`/system code (migrations, admin tooling). A custom `resolve`
+(e.g. a verified subdomain → tenant mapping) must derive from trusted/authenticated state,
+never raw client input. Red-teamed across 35 cross-tenant attacks to Risk LOW, zero leaks.
+See the [multi-tenancy guide](docs/multi-tenancy.md).
 
 ### Media
 

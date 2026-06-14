@@ -68,6 +68,8 @@ import type {
   UpdateOptions,
   TranslationStatusOptions,
   TranslationStatusListOptions,
+  TranslateDocumentOptions,
+  TranslateMissingOptions,
   UploadConfig,
   UploadDocOptions,
   VersionDoc,
@@ -179,6 +181,8 @@ const DEFAULT_LIMIT = 25
 // Bounds on agent/MCP-reachable review surfaces (storage-growth guard, not auth).
 const MAX_COMPOSE_BLOCKS = 200
 const MAX_REVIEW_NOTE = 10_000
+// Per-field cap for AI translation input (the provider is billed/external).
+const MAX_TRANSLATE_CHARS = 50_000
 
 // Hard cap on relationship populate recursion. `depth` flows uncapped from the
 // Local API / REST / MCP into the recursive populate; an unbounded value over a
@@ -2979,6 +2983,201 @@ export function createOperations(ctx: OperationCtx) {
   }
 
   // -------------------------------------------------------------------------
+  // AI-assisted translation (pluggable provider)
+  //
+  // Auto-fill untranslated locales of a document's LOCALIZED text fields. The source
+  // values are read through the NORMAL access-checked read (so a read-denied field is
+  // never sent to the provider), the provider maps them to the target locale, and the
+  // results are written back via `updateLocales` — i.e. the NORMAL access-checked update,
+  // so field/doc access, strict per-locale required validation, and the agent draft-only
+  // brake all apply and a translation NEVER auto-publishes. A provider failure throws a
+  // GENERIC error (the closure may hold an API key; its message/inputs/outputs are never
+  // logged or surfaced) and writes nothing — the doc is left unchanged on any failure.
+  // -------------------------------------------------------------------------
+
+  /** Resolve + validate a single locale code against the configured set, guarding against
+   *  prototype-pollution keys. Throws a 400 for an unknown/illegal code. */
+  function assertLocale(code: unknown, label: string): string {
+    if (typeof code !== 'string' || code.length === 0) throw new BadRequestError(`\`${label}\` is required.`)
+    if (FORBIDDEN_LOCALE_KEYS.has(code)) throw new BadRequestError(`Illegal locale key "${code}".`)
+    if (loc === false || !loc.locales.includes(code)) {
+      const configured = loc === false ? '(none)' : loc.locales.join(', ')
+      throw new BadRequestError(`Unknown locale "${code}". Configured: ${configured}.`)
+    }
+    return code
+  }
+
+  /** Run the pluggable translate provider, converting ANY thrown error into a generic one.
+   *  The provider closure may hold an API key and its message could carry it (or the source
+   *  text) — so the original error is never propagated to the request boundary (which logs
+   *  it). Also validates the provider returned one translation per input string. */
+  async function runTranslate(texts: string[], from: string, to: string): Promise<string[]> {
+    const provider = config.translation
+    if (!provider) throw new BadRequestError('Translation is not enabled (set `config.translation`).')
+    // Bound the input handed to the (billed, external) provider so a pathological
+    // field value can't blow up cost/latency. The cap is generous for real content.
+    if (texts.some((t) => t.length > MAX_TRANSLATE_CHARS)) {
+      throw new BadRequestError(`A field exceeds the ${MAX_TRANSLATE_CHARS}-character translation limit.`)
+    }
+    let out: string[]
+    try {
+      out = await provider.translate({ texts, from, to })
+    } catch {
+      throw new Error('Translation provider failed.')
+    }
+    // A well-behaved provider returns exactly N strings. Reject anything else rather
+    // than stringifying garbage (e.g. a number/null) into stored content.
+    if (!Array.isArray(out) || out.length !== texts.length || out.some((s) => typeof s !== 'string')) {
+      throw new Error('Translation provider returned an unexpected result.')
+    }
+    return out
+  }
+
+  /** Core translate: returns the resulting doc plus whether a write actually happened.
+   *  `wrote` is false when there was no source text to translate (or every target was
+   *  already filled and `overwrite` is off) — no provider call, no write. */
+  async function doTranslate<T extends Doc = Doc>(
+    opts: TranslateDocumentOptions,
+  ): Promise<{ doc: T | null; wrote: boolean }> {
+    const collection = collectionOrThrow(opts.collection)
+    if (loc === false) throw new BadRequestError('Localization is not enabled (set `config.localization`).')
+    if (!config.translation) throw new BadRequestError('Translation is not enabled (set `config.translation`).')
+    const from = assertLocale(opts.from, 'from')
+    const to = assertLocale(opts.to, 'to')
+    if (from === to) throw new BadRequestError('`from` and `to` must be different locales.')
+
+    const localized = new Set(localizedFields(collection))
+    if (localized.size === 0) return { doc: null, wrote: false }
+    // Restrict to the requested fields when given; an unknown/non-localized name is simply
+    // ignored (translation only ever touches real localized fields).
+    const targetFields = opts.fields ? opts.fields.filter((f) => localized.has(f)) : [...localized]
+
+    // Read EVERY locale through the access-checked read path. `locale:'all'` returns the
+    // full per-locale maps; read-field-access has already stripped any field the caller may
+    // not read, so a read-denied field is never present here (and thus never translated /
+    // sent to the provider). Drafts included so an editor can translate work-in-progress.
+    const all = await findByID<Doc>({
+      collection: opts.collection,
+      id: opts.id,
+      req: { ...opts.req, locale: 'all' },
+      overrideAccess: opts.overrideAccess,
+      draft: true,
+    })
+    if (!all) throw new NotFoundError()
+
+    // Collect the source strings to translate: a field is eligible when its `from` value is
+    // a non-empty string AND (overwrite OR the `to` value is missing/empty). Non-text and
+    // empty source values are skipped. Order is fixed so provider outputs map back 1:1.
+    const names: string[] = []
+    const sources: string[] = []
+    for (const name of targetFields) {
+      const map = all[name]
+      if (!map || typeof map !== 'object' || Array.isArray(map)) continue
+      const src = (map as Record<string, unknown>)[from]
+      if (typeof src !== 'string' || src.length === 0) continue
+      const dst = (map as Record<string, unknown>)[to]
+      const hasTarget = typeof dst === 'string' && dst.length > 0
+      if (hasTarget && !opts.overwrite) continue
+      names.push(name)
+      sources.push(src)
+    }
+    // Nothing to translate → no provider call, no write. Return the current doc unchanged.
+    if (names.length === 0) {
+      const doc = await findByID<T>({
+        collection: opts.collection,
+        id: opts.id,
+        req: opts.req,
+        overrideAccess: opts.overrideAccess,
+        depth: opts.depth,
+        draft: true,
+      })
+      return { doc: doc ?? null, wrote: false }
+    }
+
+    // Provider call BEFORE any write — if it throws (wrapped generic), nothing is persisted.
+    const translated = await runTranslate(sources, from, to)
+
+    // Write the target locale via the NORMAL access-checked update (merge — other locales
+    // untouched). Strict per-locale required validation + the agent draft-only brake apply.
+    const partial: Row = {}
+    for (let i = 0; i < names.length; i++) partial[names[i]!] = translated[i]
+    const doc = await updateLocales<T>({
+      collection: opts.collection,
+      id: opts.id,
+      locales: { [to]: partial },
+      req: opts.req,
+      overrideAccess: opts.overrideAccess,
+      depth: opts.depth,
+    })
+    return { doc, wrote: true }
+  }
+
+  /**
+   * Translate one document's localized text fields from `from` into `to` and write the
+   * results through the normal access-checked update. Returns the updated doc, or — when
+   * there is nothing to translate (no source text, or every target already filled and
+   * `overwrite` is off) — the current doc unchanged (no write, no provider call).
+   */
+  async function translateDocument<T extends Doc = Doc>(opts: TranslateDocumentOptions): Promise<T | null> {
+    return (await doTranslate<T>(opts)).doc
+  }
+
+  /**
+   * Batch-fill a collection's missing `to`-locale translations from a source locale.
+   * Reuses `translationStatusList` (access-scoped — only docs the caller can READ are
+   * considered) to find documents whose `to` locale is incomplete, then `translateDocument`
+   * each (which enforces WRITE access). Bounded by `limit`. Reports translated vs skipped.
+   */
+  async function translateMissing(opts: TranslateMissingOptions): Promise<import('./types').TranslateMissingResult> {
+    const collection = collectionOrThrow(opts.collection)
+    if (loc === false) throw new BadRequestError('Localization is not enabled (set `config.localization`).')
+    if (!config.translation) throw new BadRequestError('Translation is not enabled (set `config.translation`).')
+    const to = assertLocale(opts.to, 'to')
+    const from = assertLocale(opts.from ?? loc.defaultLocale, 'from')
+    if (from === to) throw new BadRequestError('`from` and `to` must be different locales.')
+
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), MAX_LIMIT)
+    const list = await translationStatusList({
+      collection: opts.collection,
+      limit,
+      req: opts.req,
+      overrideAccess: opts.overrideAccess,
+    })
+
+    const translated: string[] = []
+    const skipped: string[] = []
+    for (const item of list.docs) {
+      // Skip docs whose `to` locale is already complete (every required localized field set).
+      if (item.status[to]?.complete && !item.incompleteLocales.includes(to)) {
+        skipped.push(item.id)
+        continue
+      }
+      try {
+        const { wrote } = await doTranslate({
+          collection: opts.collection,
+          id: item.id,
+          from,
+          to,
+          ...(opts.fields ? { fields: opts.fields } : {}),
+          req: opts.req,
+          overrideAccess: opts.overrideAccess,
+        })
+        // `doTranslate` reports whether a write actually happened — a doc with no source
+        // text to translate writes nothing and is counted as skipped, not translated.
+        if (wrote) translated.push(item.id)
+        else skipped.push(item.id)
+      } catch (err) {
+        // A per-doc access/validation failure (e.g. the caller can read but not WRITE this
+        // doc, or strict required validation rejects it) skips that doc without aborting the
+        // batch. A provider failure has already been wrapped generic by `runTranslate`.
+        if (isKernelError(err)) skipped.push(item.id)
+        else throw err
+      }
+    }
+    return { translated, skipped }
+  }
+
+  // -------------------------------------------------------------------------
   // Referential integrity (onDelete)
   //
   // No adapter enforces real FK constraints — relationship ids live in TEXT/JSON
@@ -4485,6 +4684,8 @@ export function createOperations(ctx: OperationCtx) {
     updateLocales,
     translationStatus,
     translationStatusList,
+    translateDocument,
+    translateMissing,
     updateMany,
     delete: deleteOne,
     deleteMany,

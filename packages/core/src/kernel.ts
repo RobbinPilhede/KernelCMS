@@ -764,6 +764,8 @@ export async function initKernel(config: KernelConfig, options: InitOptions = {}
     updateLocales: ops.updateLocales,
     translationStatus: ops.translationStatus,
     translationStatusList: ops.translationStatusList,
+    translateDocument: ops.translateDocument,
+    translateMissing: ops.translateMissing,
     updateMany: ops.updateMany,
     delete: ops.delete,
     deleteMany: ops.deleteMany,

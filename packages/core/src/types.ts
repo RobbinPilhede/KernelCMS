@@ -985,6 +985,19 @@ export interface EmbeddingsConfig {
   dimensions?: number
 }
 
+/** A pluggable, provider-agnostic machine-translation provider: maps N source strings
+ *  (all in locale `from`) to N translations in locale `to`, IN ORDER. The user supplies
+ *  it — DeepL, OpenAI, Google, a local model — KernelCMS has no hard dependency on any.
+ *  The closure may hold an API key; KernelCMS NEVER logs its inputs/outputs and wraps any
+ *  thrown error in a generic message at the request boundary. */
+export type TranslateFn = (opts: { texts: string[]; from: string; to: string }) => Promise<string[]>
+
+/** AI-assisted translation config. See {@link KernelConfig.translation}. Requires
+ *  `localization` to be configured (a translation targets a configured locale). */
+export interface TranslationConfig {
+  translate: TranslateFn
+}
+
 export interface KernelConfig {
   serverURL?: string
   db: DatabaseAdapter
@@ -1071,6 +1084,14 @@ export interface KernelConfig {
    *  `embeddings` is set (mirrors how `search` works). Swap for a pgvector-backed
    *  adapter in production — it implements the same `VectorAdapter` contract. */
   vector?: VectorAdapter
+  /** Pluggable, provider-agnostic AI-assisted translation. `translate` maps N source
+   *  strings (locale `from`) to N translations (locale `to`) — you supply the provider
+   *  (DeepL/OpenAI/Google/local; no hard dependency). When set, `kernel.translateDocument`
+   *  / `kernel.translateMissing` auto-fill untranslated locales of localized fields.
+   *  Requires `localization`. Translation WRITES go through the normal access-checked
+   *  update (strict per-locale validation + the agent draft-only brake all apply). The
+   *  closure may hold an API key — KernelCMS NEVER logs its inputs/outputs. */
+  translation?: TranslationConfig
   /** Default cache TTL in ms applied to cached collections that don't set their own.
    *  0 (default) means entries live until invalidated by a write. */
   cacheDefaults?: { ttl?: number }
@@ -1363,6 +1384,9 @@ export interface SanitizedConfig {
   embeddings?: EmbeddingsConfig
   /** Resolved vector store adapter, when semantic search is active. */
   vector?: VectorAdapter
+  /** Resolved AI-translation provider, when configured (`config.translation`). Requires
+   *  `localization`; validated to a `translate` function at sanitize. */
+  translation?: TranslationConfig
   /** Per-collection field names embedded for semantic search (subset of
    *  `searchableFields` whose collection set `search.semantic: true`). */
   semanticFields: Record<string, string[]>
@@ -1576,6 +1600,44 @@ export interface TranslationStatusListOptions extends OperationBase {
   where?: Where
   limit?: number
   page?: number
+}
+
+/** Auto-translate one document's localized fields from a source locale into a target
+ *  locale via the configured provider, writing the results through the normal
+ *  access-checked update (merge — other locales preserved). See {@link Kernel.translateDocument}. */
+export interface TranslateDocumentOptions extends OperationBase {
+  collection: string
+  id: string
+  /** Source locale to read field values FROM (a configured locale). */
+  from: string
+  /** Target locale to write translations INTO (a configured locale, ≠ `from`). */
+  to: string
+  /** Restrict to these localized field names; omit to consider every localized field. */
+  fields?: string[]
+  /** Replace an existing `to` value too. Default false: only MISSING translations are filled. */
+  overwrite?: boolean
+}
+
+/** Batch-fill a collection's missing `to`-locale translations from a source locale. See
+ *  {@link Kernel.translateMissing}. */
+export interface TranslateMissingOptions extends OperationBase {
+  collection: string
+  /** Target locale to fill (a configured locale). */
+  to: string
+  /** Source locale to translate from. Defaults to the configured default locale. */
+  from?: string
+  /** Restrict to these localized field names; omit to consider every localized field. */
+  fields?: string[]
+  /** Max documents to translate in this call (bounded). Default 50. */
+  limit?: number
+}
+
+/** Result of {@link Kernel.translateMissing}: which document ids were translated vs skipped. */
+export interface TranslateMissingResult {
+  /** Ids of documents that had their `to` locale filled. */
+  translated: string[]
+  /** Ids of documents that were skipped (already complete, no source text, or not writable). */
+  skipped: string[]
 }
 
 export interface UpdateManyOptions extends OperationBase {
@@ -2462,6 +2524,17 @@ export interface Kernel {
    *  scoped by the caller's read access. Empty when the collection has no localized
    *  fields or localization is off. */
   translationStatusList(opts: TranslationStatusListOptions): Promise<{ docs: TranslationStatusItem[]; count: number }>
+  /** AI-assisted translation: read a document's localized field values in the `from` locale,
+   *  translate them to `to` via the configured provider, and write the results into the `to`
+   *  locale through the NORMAL access-checked update (merge — other locales preserved). Only
+   *  MISSING `to` values are filled unless `overwrite` is set. Access + strict per-locale
+   *  validation + the agent draft-only brake all apply (a translation never auto-publishes).
+   *  Requires `config.translation` and `config.localization`. */
+  translateDocument<T extends Doc = Doc>(opts: TranslateDocumentOptions): Promise<T | null>
+  /** Batch-fill a collection's missing `to`-locale translations from a source locale, bounded
+   *  by `limit`. Scoped by the caller's read/write access (no override widening); reports which
+   *  document ids were translated vs skipped. Requires `config.translation`. */
+  translateMissing(opts: TranslateMissingOptions): Promise<TranslateMissingResult>
   updateMany<T extends Doc = Doc>(opts: UpdateManyOptions): Promise<BulkResult<T>>
   delete<T extends Doc = Doc>(opts: DeleteOptions): Promise<T | null>
   deleteMany<T extends Doc = Doc>(opts: DeleteManyOptions): Promise<BulkResult<T>>

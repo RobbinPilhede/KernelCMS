@@ -20,6 +20,7 @@ import type {
   SanitizedRealtime,
   SanitizedSigningConfig,
   SanitizedTenancy,
+  TranslationConfig,
   WorkflowDefinition,
 } from './types'
 import { clampRetain } from './realtime'
@@ -487,6 +488,26 @@ function sanitizeSigning(signing: KernelConfig['signing']): SanitizedSigningConf
   const algorithm = signing.algorithm ?? 'ed25519'
   assert(algorithm === 'ed25519', `unsupported signing algorithm "${algorithm}" (only 'ed25519' is supported)`)
   return { enabled: true, algorithm: 'ed25519', privateKey: signing.privateKey, publicKey: signing.publicKey }
+}
+
+/**
+ * Resolve the AI-translation provider. OFF by default. When set, `translate` must be a
+ * function (the pluggable provider) AND `localization` must be configured — a translation
+ * targets a configured locale, so without localization there is nothing to translate.
+ * Shape-only validation; the closure may hold an API key and is carried through verbatim
+ * (never logged or returned). Disabled when unset.
+ */
+function sanitizeTranslation(
+  translation: KernelConfig['translation'],
+  hasLocalization: boolean,
+): TranslationConfig | undefined {
+  if (!translation) return undefined
+  assert(
+    typeof translation.translate === 'function',
+    'config.translation.translate must be a function ({ texts, from, to }) => Promise<string[]>',
+  )
+  assert(hasLocalization, 'config.translation requires `localization` to be configured (it fills configured locales)')
+  return { translate: translation.translate }
 }
 
 /** Validate the pre-publish eval rules: each needs a non-empty unique name and a
@@ -1019,6 +1040,10 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     if (Object.keys(semanticFields).length > 0 && !vector) vector = memoryVector()
   }
 
+  // AI-assisted translation (opt-in). Validate the provider is a function and that
+  // localization is configured (a translation targets a configured locale).
+  const translation = sanitizeTranslation(config.translation, Boolean(localization))
+
   // Granular RBAC (opt-in via config.rbac). Create the mutable runtime store, seed it
   // from config, and INJECT a default access rule for every collection×op / global×op
   // that has no explicit rule. Explicit rules are left untouched (they win). The
@@ -1101,6 +1126,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     ...(config.search ? { search: config.search } : {}),
     ...(config.embeddings ? { embeddings: config.embeddings } : {}),
     ...(vector ? { vector } : {}),
+    ...(translation ? { translation } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.image ? { image: config.image } : {}),
     ...(email ? { email } : {}),

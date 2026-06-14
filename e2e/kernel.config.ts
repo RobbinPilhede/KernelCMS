@@ -30,6 +30,8 @@ export default defineConfig({
   db: sqliteAdapter({ url: ':memory:' }),
   storage: localStorage({ rootDir: './.e2e-uploads', servePath: '/files' }),
   localization: { locales: ['en', 'es'], defaultLocale: 'en' },
+  // AI translation: a deterministic demo provider (a real app plugs in DeepL/OpenAI).
+  translation: { translate: ({ texts, to }) => Promise.resolve(texts.map((t) => `[${to}] ${t}`)) },
   // Personalization + A/B: audience-targeted content variants + deterministic bucketing.
   audiences: { segments: ['default', 'vip'], default: 'default' },
   experiments: [{ slug: 'hero', variants: ['default', 'vip'] }],

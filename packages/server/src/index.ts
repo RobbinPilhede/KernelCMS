@@ -1017,6 +1017,29 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       )
     }
 
+    // POST /_admin/translate-missing -> batch-fill a collection's missing target-locale
+    // translations from a source locale via the configured provider. REVIEWER-gated (admin
+    // OR editor; never an agent). Core scopes candidate docs by the reviewer's own read
+    // access AND enforces write access per doc, so it never widens what they could change
+    // directly; bounded by `limit`. 400 when translation/localization is not configured.
+    if (segments[1] === 'translate-missing' && segments.length === 2 && method === 'POST') {
+      if (!user) throw new UnauthorizedError()
+      if (!isReviewer(user)) throw new ForbiddenError('Translation requires an admin or editor role.')
+      const body = await readBody(request)
+      const collection = String(body.collection ?? '')
+      if (!collection) throw new BadRequestError('`collection` is required.')
+      return json(
+        await kernel.translateMissing({
+          collection,
+          to: String(body.to ?? ''),
+          ...(typeof body.from === 'string' ? { from: body.from } : {}),
+          ...(Array.isArray(body.fields) ? { fields: body.fields.map(String) } : {}),
+          ...(typeof body.limit === 'number' ? { limit: body.limit } : {}),
+          req: { user },
+        }),
+      )
+    }
+
     // POST /_admin/env -> persist chosen connector settings to the project .env.
     // Strictly first-run only (no admin yet = local operator) AND never in
     // production. Only whitelisted, single-line keys are written. Applies on the
@@ -1486,6 +1509,25 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       const doc = await kernel.unpublish({ collection, id, ...base })
       if (!doc) throw new NotFoundError()
       return json(doc)
+    }
+    // POST /:collection/:id/translate { from, to, fields?, overwrite? } -> AI-translate this
+    // document's localized fields from `from` into `to` via the configured provider, written
+    // through the normal access-checked update (the caller must be able to UPDATE the doc;
+    // the agent draft-only brake + strict per-locale validation still apply — a translation
+    // never auto-publishes). Unknown/illegal locales are rejected by core (400).
+    if (segments[2] === 'translate' && method === 'POST') {
+      const body = await readBody(request)
+      const doc = await kernel.translateDocument({
+        collection,
+        id,
+        from: String(body.from ?? ''),
+        to: String(body.to ?? ''),
+        ...(Array.isArray(body.fields) ? { fields: body.fields.map(String) } : {}),
+        ...(body.overwrite === true ? { overwrite: true } : {}),
+        ...base,
+      })
+      if (!doc) throw new NotFoundError()
+      return withConcurrencyHeaders(json(doc), doc)
     }
     // GET /:collection/:id/geo -> one published doc as GEO-optimized markdown. PUBLIC,
     // published-only: core resolves it as an anonymous principal, so a draft/private id
