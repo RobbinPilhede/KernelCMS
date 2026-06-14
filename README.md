@@ -561,6 +561,45 @@ read-gated by the collection, update/delete are owner-or-admin, `_views` is unre
 generic CRUD, and create/update/delete are audited. Red-teamed to Risk LOW. See the
 [saved views guide](docs/saved-views.md).
 
+### Field-level encryption at rest
+
+Mark any storage field `encrypted: true` and KernelCMS encrypts it **transparently** —
+encrypted on write, decrypted on read — so the plaintext lives only in the app layer while the
+storage column holds an opaque, authenticated `enc:1:<iv>:<tag>:<ciphertext>` envelope
+(**AES-256-GCM**, a fresh 96-bit IV per value, so the same secret stores differently every
+time). It is for the fields you don't want in cleartext in a backup or a leaked dump: a SSN, an
+API token, a private note. Supply a server-only key via `encryption.key` (read from the env,
+**never** hardcoded; any sufficiently-random secret ≥16 chars — a 256-bit AES key is
+SHA-256-derived from it).
+
+```ts
+export default defineConfig({
+  encryption: { key: process.env.FIELD_ENCRYPTION_KEY }, // server-only secret, ≥16 chars
+  collections: [{ slug: 'people', fields: [
+    { name: 'name', type: 'text' },
+    { name: 'ssn', type: 'text', encrypted: true },   // stored encrypted
+    { name: 'notes', type: 'json', encrypted: true }, // any storage field type works
+  ] }],
+})
+```
+
+- **The trade-off (rejected at config load).** Because the column holds opaque,
+  non-deterministic ciphertext, an `encrypted` field **cannot** be `unique`, `index`ed,
+  filtered/sorted on, full-text searched, `localized`, or `personalized` — each is caught at
+  config load. Reserve `encrypted: true` for pure payload you store and hand back, never query
+  by.
+- **Key management.** Treat the key like a database credential. Rotating it makes existing
+  ciphertext unreadable (there's **no built-in re-encryption** — rotation is a migration), and
+  field read-access still applies on top: a denied reader gets `null`, never the ciphertext.
+  Helpers `createFieldCipher(key)` and `DecryptionError` are exported from `@kernel/core`.
+
+**Authenticated, IV-per-value, server-only key:** AES-256-GCM verifies an authentication tag on
+every read, so a tampered envelope or the wrong key is a hard, detectable `DecryptionError` —
+never silently-decrypted garbage; the fresh per-value IV leaks no equality across rows; and the
+256-bit key (SHA-256-derived from `encryption.key`) is **never logged, returned, or put in an
+error message**. **Lose the key and the data is unrecoverable** — there is no backdoor. Red-teamed
+to Risk LOW. See the [field encryption guide](docs/field-encryption.md).
+
 ### Data and APIs
 
 - Collection-level and field-level access control that returns a boolean or a row-level

@@ -27,6 +27,8 @@ function demoEmbed(texts: string[]): Promise<number[][]> {
 // (no external frontend needed). Mirrors the demo content model.
 export default defineConfig({
   secret: 'e2e-secret',
+  // Field-level encryption at rest: the key that transparently encrypts `encrypted` fields.
+  encryption: { key: 'e2e-field-encryption-key-32-chars!!' },
   db: sqliteAdapter({ url: ':memory:' }),
   storage: localStorage({ rootDir: './.e2e-uploads', servePath: '/files' }),
   localization: { locales: ['en', 'es'], defaultLocale: 'en' },
@@ -117,6 +119,17 @@ export default defineConfig({
       access: { read: () => true },
       upload: { mimeTypes: ['image/*'], maxFileSize: 5 * 1024 * 1024 },
       fields: [{ name: 'alt', type: 'text', required: true }],
+    },
+    {
+      // Field-level encryption: `secret` is stored as AES-256-GCM ciphertext at rest and
+      // decrypted on read; it can't be filtered/sorted on (opaque ciphertext).
+      slug: 'vault_items',
+      access: { read: ({ req }) => Boolean(req.user), create: ({ req }) => Boolean(req.user) },
+      fields: [
+        { name: 'label', type: 'text' },
+        { name: 'secret', type: 'text', encrypted: true },
+        { name: 'meta', type: 'json', encrypted: true },
+      ],
     },
     {
       // Private uploads: only an authenticated user can read the doc (and thus the file via

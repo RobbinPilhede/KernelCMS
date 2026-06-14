@@ -9,6 +9,7 @@ import {
 } from '@kernel/richtext'
 import type { AnyField, ConfigField, OnDeleteAction, RequestContext, RichTextField, SelectOption } from './types'
 import type { FieldError } from './errors'
+import type { FieldCipher } from './encryption'
 import { isSafeSegmentKey, resolvePersonalized, segmentMapCopy } from './personalization'
 
 /** Resolve the allow-list schema for a richText field (cached per field object). */
@@ -105,6 +106,9 @@ export function optionLabel(opt: SelectOption): string {
 
 /** The physical storage type for a field, accounting for localization and arity. */
 export function storageTypeForField(field: AnyField): StorageType {
+  // An encrypted field stores the `enc:1:…` ciphertext envelope as text, whatever its
+  // logical type (the plaintext is JSON-serialized before encryption).
+  if (field.encrypted) return 'text'
   // A localized OR personalized field is stored as a `{ [key]: value }` JSON map.
   if (field.localized || field.personalized) return 'json'
   switch (field.type) {
@@ -410,6 +414,8 @@ export interface SerializeOptions {
    *  default segment when omitted (personalization disabled → unused). */
   segment?: string
   existingRow?: Row | null
+  /** When set, `encrypted` fields are encrypted with this cipher before storage. */
+  cipher?: FieldCipher
 }
 
 /** Merge a single value into an existing per-key (`{ [key]: value }`) JSON map without
@@ -451,8 +457,13 @@ export function serializeDoc(fieldsIn: ConfigField[], data: Row, opts: Serialize
             : {}
       }
     } else if (has) {
-      row[field.name] = normalizeWrite(field, data[field.name])
+      const normalized = normalizeWrite(field, data[field.name])
+      // Encrypt at the write boundary: the storage column holds authenticated ciphertext,
+      // plaintext never touches the adapter. (Encrypted fields can't be localized/personalized
+      // — enforced at config load — so only this plain branch encrypts.)
+      row[field.name] = field.encrypted && opts.cipher ? opts.cipher.encrypt(normalized) : normalized
     } else if (opts.existingRow && Object.prototype.hasOwnProperty.call(opts.existingRow, field.name)) {
+      // Carry the existing (already-encrypted) value forward untouched.
       row[field.name] = opts.existingRow[field.name]
     }
   }
@@ -477,6 +488,8 @@ export interface DeserializeOptions {
   segment?: string
   /** The configured default audience segment (the personalization fallback). */
   defaultSegment?: string
+  /** When set, `encrypted` fields are decrypted with this cipher after reading. */
+  cipher?: FieldCipher
 }
 
 function resolveLocale(raw: unknown, opts: DeserializeOptions): unknown {
@@ -514,6 +527,10 @@ export function deserializeDoc(fieldsIn: ConfigField[], row: Row, opts: Deserial
       doc[field.name] = opts.allLocales
         ? segmentMapCopy(raw)
         : resolvePersonalized(raw, { segment, defaultSegment: opts.defaultSegment ?? segment })
+    } else if (field.encrypted && opts.cipher) {
+      // Decrypt at the read boundary (after field-access stripping happens upstream). A
+      // wrong-key/tampered value throws (loud), never returns garbage.
+      doc[field.name] = opts.cipher.decrypt(raw)
     } else {
       doc[field.name] = raw === undefined ? null : raw
     }

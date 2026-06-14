@@ -166,6 +166,7 @@ import { mergeTemplateData, TemplateMergeError } from './templates'
 import { matchesWhere, mergeWhere, parseSort } from './query'
 import { deliverWebhook, type WebhookPayload } from './webhooks'
 import { signAssetUrl } from './asset-urls'
+import { createFieldCipher } from './encryption'
 import {
   AUDIT_TABLE,
   COMMENTS_TABLE,
@@ -482,6 +483,8 @@ export function createOperations(ctx: OperationCtx) {
   const loc = config.localization || false
   const strictLoc = loc ? loc.strict : false
   const audiences = config.audiences
+  // Field-level encryption cipher (undefined when no field is `encrypted`).
+  const fieldCipher = config.encryption ? createFieldCipher(config.encryption.key) : undefined
 
   // Prototype-pollution guard for an untrusted `audience` segment used as a map key.
   const FORBIDDEN_SEGMENT_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
@@ -569,6 +572,8 @@ export function createOperations(ctx: OperationCtx) {
       // Personalization: resolve personalized fields to the request's audience segment,
       // falling back to the configured default segment. Both are already-validated ids.
       ...(audiences.enabled ? { segment: req.audience ?? audiences.default, defaultSegment: audiences.default } : {}),
+      // Decrypt `encrypted` fields after read (no-op when encryption is unconfigured).
+      ...(fieldCipher ? { cipher: fieldCipher } : {}),
     }
   }
 
@@ -923,7 +928,9 @@ export function createOperations(ctx: OperationCtx) {
    *  (system columns + storage fields + draft columns). */
   function filterableFields(collection: CollectionConfig): Set<string> {
     const set = new Set<string>(['id', 'createdAt', 'updatedAt'])
-    for (const f of storageFields(collection.fields)) set.add(f.name)
+    // An encrypted field stores opaque, non-deterministic ciphertext — it can't be filtered
+    // or sorted on (that would only ever match the ciphertext, never the plaintext).
+    for (const f of storageFields(collection.fields)) if (!f.encrypted) set.add(f.name)
     if (draftsOn(collection)) {
       set.add('_status')
       set.add('_scheduled_at')
@@ -1011,6 +1018,39 @@ export function createOperations(ctx: OperationCtx) {
   /** Append a snapshot of `doc` to the collection's version table, trimming to maxPerDoc.
    *  On a publish transition, `approver` records who approved/published it (the publishing
    *  principal — which, for a review-approval, is the reviewer threaded through). */
+  /** Top-level storage fields of a collection marked `encrypted`. */
+  function encryptedFieldNames(collection: CollectionConfig): string[] {
+    if (!fieldCipher) return []
+    return storageFields(collection.fields)
+      .filter((f) => f.encrypted)
+      .map((f) => f.name)
+  }
+
+  /** A version-snapshot copy of a (decrypted) doc with its encrypted fields RE-ENCRYPTED, so
+   *  the `_versions` table stores ciphertext at rest just like the live row — never plaintext. */
+  function encodeVersionContent(collection: CollectionConfig, doc: Doc): Doc {
+    const names = encryptedFieldNames(collection)
+    if (!fieldCipher || names.length === 0) return doc
+    const out: Doc = { ...doc }
+    for (const name of names) {
+      if (name in out) out[name] = fieldCipher.encrypt(out[name])
+    }
+    return out
+  }
+
+  /** Decrypt the encrypted fields of a stored version snapshot back to plaintext on read.
+   *  Non-ciphertext values (legacy snapshots written before encryption) pass through. */
+  function decodeVersionContent(collection: CollectionConfig, version: unknown): Row {
+    const content = (version ?? {}) as Row
+    const names = encryptedFieldNames(collection)
+    if (!fieldCipher || names.length === 0) return content
+    const out: Row = { ...content }
+    for (const name of names) {
+      if (name in out) out[name] = fieldCipher.decrypt(out[name])
+    }
+    return out
+  }
+
   async function snapshotVersion(
     collection: CollectionConfig,
     doc: Doc,
@@ -1028,7 +1068,7 @@ export function createOperations(ctx: OperationCtx) {
       data: {
         id: versionId,
         parent: String(doc.id),
-        version: doc,
+        version: encodeVersionContent(collection, doc),
         status,
         autosave,
         createdBy: req.user?.id ?? null,
@@ -2117,11 +2157,12 @@ export function createOperations(ctx: OperationCtx) {
     })
     // Snapshots embed the full document; field-level read access must still apply
     // so a restricted field can't be read out of the version history.
-    if (!override) {
-      for (const v of result.docs) {
-        if (v.version && typeof v.version === 'object') {
-          await applyReadFieldAccess(collection.fields, v.version as Row, req, opts.id)
-        }
+    for (const v of result.docs) {
+      if (v.version && typeof v.version === 'object') {
+        // Decrypt encrypted fields (the snapshot stores them as ciphertext at rest), THEN
+        // apply field-access — so a denied reader gets null, never ciphertext or plaintext.
+        v.version = decodeVersionContent(collection, v.version)
+        if (!override) await applyReadFieldAccess(collection.fields, v.version as Row, req, opts.id)
       }
     }
     return { ...result, docs: result.docs as VersionDoc[] }
@@ -2146,7 +2187,7 @@ export function createOperations(ctx: OperationCtx) {
     }
     const vrow = await db.findByID({ collection: tableForVersions(collection.slug), id: opts.versionId })
     if (!vrow || String(vrow.parent) !== String(opts.id)) throw new NotFoundError('Version not found.')
-    const content = (vrow.version ?? {}) as Row
+    const content = decodeVersionContent(collection, vrow.version)
     const data: Row = {}
     for (const f of effectiveFields(collection.fields)) {
       if (Object.prototype.hasOwnProperty.call(content, f.name)) data[f.name] = content[f.name]
@@ -2240,7 +2281,7 @@ export function createOperations(ctx: OperationCtx) {
     req: RequestContext,
     override: boolean,
   ): Promise<Doc> {
-    const content = (snapshot.version ?? {}) as Row
+    const content = decodeVersionContent(collection, snapshot.version)
     const doc: Doc = { ...content, id: String(snapshot.parent) }
     // Read-field-access strip BEFORE computed (so a virtual field can't observe a sibling the
     // caller may not read), then strip again to honour any rule on the virtual fields.
@@ -2381,7 +2422,7 @@ export function createOperations(ctx: OperationCtx) {
     const entries: HistoryEntry[] = []
     let prev: Row | null = null
     for (const s of snapshots) {
-      const content = (s.version ?? {}) as Row
+      const content = decodeVersionContent(collection, s.version)
       const changedFields = prev === null ? [...fieldNames] : changedFieldNames(prev, content, fieldNames)
       entries.push({
         versionId: String(s.id),
@@ -2408,7 +2449,7 @@ export function createOperations(ctx: OperationCtx) {
   ): Promise<string[]> {
     const all = contentFieldNames(collection)
     if (override) return all
-    const sample = (snapshots.length ? (snapshots[snapshots.length - 1]!.version ?? {}) : {}) as Row
+    const sample = snapshots.length ? decodeVersionContent(collection, snapshots[snapshots.length - 1]!.version) : {}
     const readable: string[] = []
     for (const field of effectiveFields(collection.fields)) {
       if (!all.includes(field.name)) continue
@@ -2451,8 +2492,8 @@ export function createOperations(ctx: OperationCtx) {
     const toSnap = resolveSnapshotSelector(snapshots, opts.to)
     // A selector before the document existed yields no snapshot → treat its side as empty,
     // so a diff "from before creation to now" shows every field appearing.
-    const fromContent = (fromSnap?.version ?? {}) as Row
-    const toContent = (toSnap?.version ?? {}) as Row
+    const fromContent = decodeVersionContent(collection, fromSnap?.version)
+    const toContent = decodeVersionContent(collection, toSnap?.version)
     const fieldNames = await readableFieldNames(collection, snapshots, req, override)
     return diffDocs(fromContent, toContent, fieldNames)
   }
@@ -2471,7 +2512,7 @@ export function createOperations(ctx: OperationCtx) {
 
     const snapshot = pickAsOf(await snapshotsOf(collection, opts.id), asOfMs)
     if (!snapshot) return null
-    const content = (snapshot.version ?? {}) as Row
+    const content = decodeVersionContent(collection, snapshot.version)
     // Restore ONLY real schema fields (never system/auth columns or `_status`) — the as-of
     // state is content, not a publish action. Routing through update() means access control,
     // validation, the agent brake, and a fresh snapshot all apply with NO override bypass.
@@ -2881,7 +2922,11 @@ export function createOperations(ctx: OperationCtx) {
     if (errors.length) throw new ValidationError(errors)
 
     const localeWritten = writeLocale(req)
-    const row = serializeDoc(collection.fields, data, { locale: localeWritten, segment: writeSegment(req) })
+    const row = serializeDoc(collection.fields, data, {
+      locale: localeWritten,
+      segment: writeSegment(req),
+      ...(fieldCipher ? { cipher: fieldCipher } : {}),
+    })
     // Strict: a newly-written locale must satisfy required localized fields for itself.
     assertLocaleRequired(collection, row, [localeWritten])
     row.id = randomUUID()
@@ -3121,6 +3166,7 @@ export function createOperations(ctx: OperationCtx) {
       locale: localeWritten,
       segment: writeSegment(req),
       existingRow: existing,
+      ...(fieldCipher ? { cipher: fieldCipher } : {}),
     })
     // Strict: only the locale being written must satisfy its required localized fields;
     // locales already stored are never retroactively failed.
@@ -4444,6 +4490,7 @@ export function createOperations(ctx: OperationCtx) {
       locale: req.locale,
       segment: writeSegment(req),
       existingRow: existing,
+      ...(fieldCipher ? { cipher: fieldCipher } : {}),
     })
     let saved: Row | null
     if (existing) {

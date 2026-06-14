@@ -2,6 +2,7 @@ import type {
   AccessFn,
   AgentConfig,
   AnyField,
+  EncryptionConfig,
   SanitizedAnalytics,
   CollectionConfig,
   ConfigField,
@@ -495,6 +496,71 @@ function sanitizeSigning(signing: KernelConfig['signing']): SanitizedSigningConf
   return { enabled: true, algorithm: 'ed25519', privateKey: signing.privateKey, publicKey: signing.publicKey }
 }
 
+const MIN_ENCRYPTION_KEY_LENGTH = 16
+
+/**
+ * Validate field-level encryption. Every field marked `encrypted` is checked for an
+ * incompatible flag (ciphertext is opaque + non-deterministic, so it can't be unique,
+ * indexed, filtered/sorted, full-text searched, localized, or personalized), and the
+ * encryption key is required + length-checked whenever any field is encrypted. Returns the
+ * encryption config to thread into the cipher, or undefined when nothing is encrypted.
+ */
+function sanitizeEncryption(config: KernelConfig): EncryptionConfig | undefined {
+  let any = false
+  const checkField = (where: string, field: AnyField, searchFields: Set<string>): void => {
+    if (!field.encrypted) return
+    any = true
+    assert(!field.unique, `field "${where}" cannot be both encrypted and unique (ciphertext is non-deterministic)`)
+    assert(!field.index, `field "${where}" cannot be both encrypted and indexed (ciphertext is opaque)`)
+    assert(!field.localized, `field "${where}" cannot be both encrypted and localized`)
+    assert(!field.personalized, `field "${where}" cannot be both encrypted and personalized`)
+    assert(field.type !== 'relationship', `field "${where}" cannot be encrypted (relationships must stay queryable)`)
+    assert(!searchFields.has(field.name), `encrypted field "${where}" cannot be a search field (ciphertext is opaque)`)
+  }
+  // Reject `encrypted` on a field nested inside a group/array/blocks (or any non-top-level
+  // position): the encrypt/decrypt chokepoint operates on top-level storage columns only, so
+  // a nested `encrypted` flag would be a SILENT no-op storing plaintext. Fail loud instead.
+  const rejectNestedEncrypted = (where: string, fields: ConfigField[] | undefined, insideNesting: boolean): void => {
+    for (const field of fields ?? []) {
+      const f = field as AnyField & { fields?: ConfigField[]; blocks?: { slug: string; fields: ConfigField[] }[] }
+      const name = (f as AnyField).name ?? f.type
+      if (insideNesting && (f as AnyField).encrypted) {
+        assert(false, `field "${where}.${name}" cannot be encrypted (nested fields are not supported)`)
+      }
+      // group/array introduce a real nesting boundary; row/tabs/collapsible are presentational
+      // (their children are top-level storage fields, already validated by checkField).
+      const boundary = f.type === 'group' || f.type === 'array'
+      if (Array.isArray(f.fields)) rejectNestedEncrypted(`${where}.${name}`, f.fields, insideNesting || boundary)
+      if (Array.isArray(f.blocks)) {
+        for (const block of f.blocks) rejectNestedEncrypted(`${where}.${name}.${block.slug}`, block.fields, true)
+      }
+      // A `tabs` field carries its children under `tabs[].fields` (presentational like row/tabs —
+      // direct children are top-level, but a group/array INSIDE a tab is still a boundary).
+      const tabs = (f as { tabs?: { fields?: ConfigField[] }[] }).tabs
+      if (Array.isArray(tabs))
+        for (const tab of tabs) rejectNestedEncrypted(`${where}.${name}`, tab.fields, insideNesting)
+    }
+  }
+  for (const collection of config.collections ?? []) {
+    const search = (collection as { search?: { fields?: string[] } }).search
+    const searchFields = new Set(Array.isArray(search?.fields) ? search.fields : [])
+    for (const field of effectiveFields(collection.fields ?? []))
+      checkField(`${collection.slug}.${field.name}`, field, searchFields)
+    rejectNestedEncrypted(collection.slug, collection.fields, false)
+  }
+  for (const global of config.globals ?? []) {
+    for (const field of effectiveFields(global.fields ?? []))
+      checkField(`${global.slug}.${field.name}`, field, new Set())
+    rejectNestedEncrypted(global.slug, global.fields, false)
+  }
+  if (!any) return undefined
+  assert(
+    typeof config.encryption?.key === 'string' && config.encryption.key.length >= MIN_ENCRYPTION_KEY_LENGTH,
+    `config.encryption.key (at least ${MIN_ENCRYPTION_KEY_LENGTH} chars) is required when a field is \`encrypted\``,
+  )
+  return { key: config.encryption.key }
+}
+
 /**
  * Resolve the AI-translation provider. OFF by default. When set, `translate` must be a
  * function (the pluggable provider) AND `localization` must be configured — a translation
@@ -804,11 +870,21 @@ function sanitizeStructuredData(
     seen.add(entry.slug)
     let mapping: Record<string, string> | undefined
     if (entry.mapping) {
+      const encryptedNames = new Set(
+        effectiveFields(collectionsBySlug[entry.slug]?.fields ?? [])
+          .filter((f) => f.encrypted)
+          .map((f) => f.name),
+      )
       const clean: Record<string, string> = {}
       for (const [property, field] of Object.entries(entry.mapping)) {
         assert(
           !FORBIDDEN_JSONLD_KEYS.has(property),
           `structuredData mapping for "${entry.slug}" uses an illegal property key "${property}"`,
+        )
+        // An encrypted field's plaintext must never be published into anonymous JSON-LD.
+        assert(
+          !encryptedNames.has(field),
+          `structuredData mapping for "${entry.slug}" cannot map "${property}" to the encrypted field "${field}"`,
         )
         if (typeof field === 'string' && field.length > 0) clean[property] = field
       }
@@ -1320,6 +1396,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     releases: sanitizeReleases(config.releases),
     lifecycle: sanitizeLifecycle(config.lifecycle, collectionsBySlug, SYSTEM_SLUGS),
     signing: sanitizeSigning(config.signing),
+    ...(sanitizeEncryption(config) ? { encryption: sanitizeEncryption(config) } : {}),
     evals: sanitizeEvals(config.evals),
     workflows,
     discoverability: sanitizeDiscoverability(config, collections, collectionsBySlug),

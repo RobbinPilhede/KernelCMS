@@ -67,7 +67,9 @@ function anonReq(): FindOptions['req'] {
 
 function hasField(collection: CollectionConfig, name: string | undefined): name is string {
   if (!name) return false
-  return effectiveFields(collection.fields).some((f) => f.name === name)
+  // An `encrypted` field must NEVER be published to an anonymous discoverability surface
+  // (llms.txt / GEO) — its plaintext is decrypted on read, so treat it as not-a-field here.
+  return effectiveFields(collection.fields).some((f) => f.name === name && !f.encrypted)
 }
 
 /** Pick the title field: explicit override, then `admin.useAsTitle`, then a `title`/`name` field. */
@@ -84,7 +86,7 @@ function resolveTitleField(collection: CollectionConfig, entry: DiscoverabilityC
 /** Pick the body field: explicit override, then the first richText, then a textarea/text. */
 function resolveBodyField(collection: CollectionConfig, entry: DiscoverabilityCollectionConfig): string | null {
   if (hasField(collection, entry.bodyField)) return entry.bodyField
-  const fields = effectiveFields(collection.fields)
+  const fields = effectiveFields(collection.fields).filter((f) => !f.encrypted)
   const rich = fields.find((f) => f.type === 'richText')
   if (rich) return rich.name
   const textarea = fields.find((f) => f.type === 'textarea')

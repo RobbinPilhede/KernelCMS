@@ -209,7 +209,9 @@ function nameFromDoc(doc: Doc): string | null {
  */
 function defaultPlan(collection: CollectionConfig): Map<string, string> {
   const plan = new Map<string, string>()
-  const fields = effectiveFields(collection.fields)
+  // Encrypted fields are never auto-mapped into JSON-LD: their plaintext (decrypted on read)
+  // must not be published to an anonymous SEO/AI surface.
+  const fields = effectiveFields(collection.fields).filter((f) => !f.encrypted)
 
   // Title → name + headline.
   const titleField = resolveTitleField(collection)
@@ -266,7 +268,7 @@ function defaultPlan(collection: CollectionConfig): Map<string, string> {
 
 /** Pick the title field: `admin.useAsTitle`, then a `title`/`name`/`heading`/`label` field. */
 function resolveTitleField(collection: CollectionConfig): string | null {
-  const fields = effectiveFields(collection.fields)
+  const fields = effectiveFields(collection.fields).filter((f) => !f.encrypted)
   const has = (name: string | undefined): name is string => Boolean(name) && fields.some((f) => f.name === name)
   if (has(collection.admin?.useAsTitle)) return collection.admin!.useAsTitle!
   for (const candidate of ['title', 'name', 'heading', 'label']) {

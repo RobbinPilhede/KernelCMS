@@ -77,6 +77,8 @@ export type { DbCacheOptions, RedisCacheOptions } from './cache-backends'
 export { deliverWebhook, attachWebhooks } from './webhooks'
 export type { WebhookPayload } from './webhooks'
 export { signAssetUrl, verifyAssetUrl } from './asset-urls'
+export { createFieldCipher, DecryptionError } from './encryption'
+export type { FieldCipher } from './encryption'
 export {
   attachChangeFeed,
   createChangeBus,

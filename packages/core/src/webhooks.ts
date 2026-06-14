@@ -18,6 +18,7 @@
  */
 import { createHmac } from 'node:crypto'
 import type { Logger } from '@kernel/db'
+import { storageFields } from './fields'
 import type { CollectionConfig, Doc, SanitizedWebhook, WebhookConfig, WebhookEvent } from './types'
 
 export interface WebhookPayload {
@@ -121,10 +122,25 @@ export function attachWebhooks(
     if (relevant.length === 0) continue
 
     const hooks = (collection.hooks ??= {})
+    // Never deliver an encrypted field's plaintext to an external receiver (or persist it in the
+    // outbox): the encrypted value exists to keep that data inside the trust boundary. Use the
+    // flatten-aware `storageFields` so a field nested in a row/tabs is caught (it's a top-level
+    // storage column and IS encrypted at rest), mirroring `encryptedFieldNames` in operations.
+    const encryptedFields = storageFields(collection.fields)
+      .filter((f) => f.encrypted)
+      .map((f) => f.name)
 
     const fire = async (event: WebhookEvent, documentId: string, doc: Doc | undefined): Promise<void> => {
       const payload: WebhookPayload = { event, collection: slug, id: documentId, timestamp: Date.now() }
-      if (doc) payload.doc = doc
+      if (doc) {
+        if (encryptedFields.length > 0) {
+          const redacted: Doc = { ...doc }
+          for (const name of encryptedFields) delete redacted[name]
+          payload.doc = redacted
+        } else {
+          payload.doc = doc
+        }
+      }
       await Promise.all(
         relevant
           .filter((w) => matches(w, slug, event))

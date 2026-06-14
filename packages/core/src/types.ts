@@ -271,6 +271,13 @@ export interface FieldBase {
    *  (rejected at sanitize). Still subject to field read-access. */
   personalized?: boolean
   index?: boolean
+  /** Encrypt this field's value at rest with AES-256-GCM (transparent: encrypted on write,
+   *  decrypted on read). The storage column holds an authenticated `enc:1:…` ciphertext
+   *  envelope, never the plaintext. Requires `config.encryption`. Because ciphertext is
+   *  opaque and non-deterministic, an encrypted field can't be `unique`, `index`ed,
+   *  filtered/sorted on, full-text searched, `localized`, or `personalized` (all rejected at
+   *  config load). Field read-access still applies on top. */
+  encrypted?: boolean
   defaultValue?: unknown
   admin?: FieldAdmin
   access?: FieldAccess
@@ -1259,6 +1266,11 @@ export interface KernelConfig {
    *  signature + content hash. A shared HMAC `secret`, or an asymmetric key pair.
    *  Default OFF. Key material is server-only — never logged or returned. */
   signing?: SigningConfig
+  /** Field-level encryption at rest. Provides the key that transparently encrypts every
+   *  field marked `encrypted: true` (AES-256-GCM). Required when any field is encrypted.
+   *  The key is server-only — never logged or returned. Rotating it makes existing
+   *  ciphertext unreadable (a decrypt error), so treat it like a database credential. */
+  encryption?: EncryptionConfig
   /** Pre-publish evals ("content CI"). Each rule runs on the to-be-published document;
    *  a `blocking` rule that returns an `error` finding rejects the publish. Built-in
    *  factories (`a11yEval`, `seoEval`, `policyEval`, `brandEval`) can be dropped in. */
@@ -1555,6 +1567,8 @@ export interface SanitizedConfig {
    *  (no `_credentials` writes; verify reports no credential). Key material is
    *  server-only and never serialized into output. */
   signing: SanitizedSigningConfig
+  /** Field-level encryption key (server-only), or undefined when no field is encrypted. */
+  encryption?: EncryptionConfig
   /** Pre-publish eval rules, run at the publish chokepoint. Empty when unset. */
   evals: EvalRule[]
   /** Resolved AI-discoverability / GEO settings. `enabled:false` when unconfigured. */
@@ -2581,6 +2595,12 @@ export interface ProvenanceOptions {
  *  OFF (omit to disable content credentials). Key material is server-only and never
  *  appears in any manifest, credential, error, or log. */
 export type SigningConfig = { secret: string } | { privateKey: string; publicKey: string; algorithm?: 'ed25519' }
+
+/** Field-level encryption configuration. `key` is any sufficiently-random secret (a 256-bit
+ *  AES key is derived from it via SHA-256); read it from env, never hardcode. */
+export interface EncryptionConfig {
+  key: string
+}
 
 /** Resolved signing material — the enabled flag plus the key material + algorithm. */
 export interface SanitizedSigningConfig {
