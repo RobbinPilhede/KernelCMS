@@ -552,6 +552,16 @@ function sanitizeComments(comments: KernelConfig['comments']): { enabled: boolea
 }
 
 /**
+ * Resolve the saved-views setting. OPT-IN and disabled by default — `true` provisions the
+ * `_views` table and enables the view ops; anything else (absent / `false`) stays off,
+ * fully backward-compatible (no table, the ops throw a clean "disabled" error / return
+ * empty, exactly like comments/releases when off).
+ */
+function sanitizeViews(views: KernelConfig['views']): { enabled: boolean } {
+  return { enabled: views === true }
+}
+
+/**
  * Resolve the content-releases setting. OPT-IN and disabled by default — `true`
  * provisions the `_releases` + `_release_items` tables and the release ops; anything
  * else (absent / `false`) stays off, fully backward-compatible (no tables, ops throw a
@@ -1200,6 +1210,7 @@ export function sanitizeConfig(config: KernelConfig): SanitizedConfig {
     tenancy,
     review: sanitizeReview(config.review, agents.length > 0),
     comments: sanitizeComments(config.comments),
+    views: sanitizeViews(config.views),
     releases: sanitizeReleases(config.releases),
     lifecycle: sanitizeLifecycle(config.lifecycle, collectionsBySlug, SYSTEM_SLUGS),
     signing: sanitizeSigning(config.signing),

@@ -1132,6 +1132,17 @@ export interface KernelConfig {
    *  on. A caller can only comment on / see comments for a document they can READ; the
    *  author is recorded from the authenticated principal (never client input). */
   comments?: boolean
+  /** Saved views / smart collections: named, reusable query presets (a stored
+   *  `where` + `sort` + display `columns`) that editors save per collection and re-apply
+   *  in one click — "Published this month", "My drafts", "Out of stock". Provisions a
+   *  `_views` system table and enables the view ops (`saveView`/`listViews`/`applyView`/…)
+   *  + the `/api/_admin/views` routes. OPT-IN, disabled by default — `true` turns it on.
+   *  A view is owned by its creator (owner recorded from the principal, never client input)
+   *  and visible only to its owner unless `shared`; a shared view is visible only to those
+   *  who can READ its collection. Applying a view runs the NORMAL access-checked `find`, and
+   *  the stored `where`/`sort` are re-validated on every save AND apply — so a saved view can
+   *  only ever NARROW results within the caller's access, never bypass it. */
+  views?: boolean
   /** Content releases: stage a coordinated set of draft documents and publish them as
    *  one unit, optionally on a schedule. Provisions `_releases` + `_release_items` system
    *  tables and enables the release ops (`createRelease`/`publishRelease`/…) + the
@@ -1427,6 +1438,9 @@ export interface SanitizedConfig {
   /** Resolved editorial-comments setting. `enabled` provisions the `_comments` table and
    *  the comment ops; disabled by default (opt-in). */
   comments: { enabled: boolean }
+  /** Resolved saved-views setting. `enabled` provisions the `_views` table and the view
+   *  ops; disabled by default (opt-in). */
+  views: { enabled: boolean }
   /** Resolved content-releases setting. `enabled` provisions the `_releases` +
    *  `_release_items` tables and the release ops; disabled by default (opt-in). */
   releases: { enabled: boolean }
@@ -1911,6 +1925,9 @@ export type AuditAction =
   | 'comment.create'
   | 'comment.resolve'
   | 'comment.delete'
+  | 'view.create'
+  | 'view.update'
+  | 'view.delete'
 
 /** A single audit-log row as returned by `findAuditLog`. */
 export interface AuditDoc extends Row {
@@ -2094,6 +2111,98 @@ export interface CommentCountOptions {
   id: string
   /** Include resolved comments in the count (default false). */
   includeResolved?: boolean
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Saved views / smart collections
+//
+// A saved view is a named query preset — a stored `where` + `sort` + display `columns`
+// for one collection — that an editor saves and re-applies in one click. It is owned by
+// its creator and private unless `shared`. Applying a view runs the NORMAL access-checked
+// `find`, and the stored `where`/`sort` are re-validated on save AND apply, so a view can
+// only narrow results within the caller's access — never widen or bypass it.
+// ---------------------------------------------------------------------------
+
+export interface ViewDoc extends Row {
+  id: string
+  collection: string
+  name: string
+  /** The saved filter, or null for "all". Re-validated against the collection on apply. */
+  where: Where | null
+  /** The saved sort (a field name or `-field` list), or null for the default order. */
+  sort: string | string[] | null
+  /** Display column hints for the admin table, or null. Not security-bearing. */
+  columns: string[] | null
+  /** The principal id that owns the view — recorded from the authenticated principal,
+   *  never client input. Only the owner (or an admin) can update/delete it. */
+  ownerId: string | null
+  /** When true, the view is visible to anyone who can READ its collection; otherwise it
+   *  is private to its owner. */
+  shared: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SaveViewOptions {
+  collection: string
+  /** The view's display name (required, trimmed, length-bounded). */
+  name: string
+  /** The filter to store — validated against the collection's filterable fields. */
+  where?: Where
+  /** The sort to store — a field name or `-field`, or a list. Fields are validated. */
+  sort?: string | string[]
+  /** Display column hints for the admin table. */
+  columns?: string[]
+  /** Share the view with everyone who can read the collection (default false: private). */
+  shared?: boolean
+  /** Request context — its principal owns the view and gates collection read access. */
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface ListViewsOptions {
+  /** Narrow to views for a single collection (else every readable view). */
+  collection?: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface GetViewOptions {
+  viewId: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface UpdateViewOptions {
+  viewId: string
+  /** Any subset of the view's editable fields. Owner (or admin) only. */
+  name?: string
+  where?: Where | null
+  sort?: string | string[] | null
+  columns?: string[] | null
+  shared?: boolean
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface DeleteViewOptions {
+  viewId: string
+  req?: Partial<RequestContext>
+  overrideAccess?: boolean
+}
+
+export interface ApplyViewOptions {
+  viewId: string
+  /** An extra filter AND-combined with the view's stored `where` (further narrows). */
+  where?: Where
+  /** Override the stored sort for this application only. */
+  sort?: string | string[]
+  /** Include drafts (passed through to the underlying access-checked `find`). */
+  draft?: boolean
+  limit?: number
+  page?: number
   req?: Partial<RequestContext>
   overrideAccess?: boolean
 }
@@ -2931,6 +3040,26 @@ export interface Kernel {
   /** Count a document's comments (resolved excluded by default). The caller must be able to
    *  READ the document. Returns 0 when comments are disabled. */
   commentCount(opts: CommentCountOptions): Promise<number>
+  /** Save a named query preset (a `where` + `sort` + display `columns`) for a collection the
+   *  caller can READ. The owner is recorded from the authenticated principal (never client
+   *  input); the stored `where`/`sort` are validated against the collection. Private unless
+   *  `shared`. Requires `config.views`. */
+  saveView(opts: SaveViewOptions): Promise<ViewDoc>
+  /** List the caller's own saved views plus any `shared` views on collections they can READ,
+   *  newest-first. Optionally scoped to one `collection`. Returns `[]` when views are disabled. */
+  listViews(opts?: ListViewsOptions): Promise<ViewDoc[]>
+  /** Fetch a single saved view by id — its owner, or (when `shared`) anyone who can READ its
+   *  collection. Returns null when not found / not visible. */
+  getView(opts: GetViewOptions): Promise<ViewDoc | null>
+  /** Update a saved view's editable fields. Only the view's OWNER (or an admin) may update it;
+   *  any changed `where`/`sort` is re-validated against the collection. */
+  updateView(opts: UpdateViewOptions): Promise<ViewDoc>
+  /** Delete a saved view. Only the view's OWNER (or an admin) may delete it. */
+  deleteView(opts: DeleteViewOptions): Promise<{ id: string }>
+  /** Apply a saved view: run the NORMAL access-checked `find` with the view's stored
+   *  `where`+`sort` (re-validated), optionally narrowed by an extra `where`. The result can
+   *  only ever be within the caller's read access — a view never widens visibility. */
+  applyView<T extends Doc = Doc>(opts: ApplyViewOptions): Promise<PaginatedResult<T>>
   /** Create an empty, `open` content release — a named bundle of drafts to publish as a
    *  unit. Requires `config.releases`. The name is untrusted (length-bounded). */
   createRelease(opts: CreateReleaseOptions): Promise<Release>

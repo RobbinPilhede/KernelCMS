@@ -882,6 +882,99 @@ async function route(kernel: Kernel, options: HandlerOptions, request: Request, 
       return methodNotAllowed()
     }
 
+    // /_admin/views -> saved views / smart collections (named query presets). AUTH-REQUIRED
+    // (any authenticated principal manages THEIR OWN views; a shared view is visible to those
+    // who can read its collection). The acting/owner identity is the server-resolved `user`
+    // ONLY — the client body never names the owner. Applying a view runs the normal
+    // access-checked find, so it can never widen visibility. 404 when views are disabled.
+    if (segments[1] === 'views') {
+      if (!kernel.config.views.enabled) {
+        return json({ error: { code: 'NOT_FOUND', message: 'Saved views are not enabled.' } }, 404)
+      }
+      if (!user) throw new UnauthorizedError()
+      const q = url.searchParams
+      // A `where` from a JSON body must be a plain object (not array/primitive); the core op
+      // validates its fields/operators. We only gate the shape here to fail fast and cleanly.
+      const asWhere = (v: unknown): Where | undefined =>
+        v != null && typeof v === 'object' && !Array.isArray(v) ? (v as Where) : undefined
+
+      // GET /_admin/views?collection= , POST /_admin/views
+      if (segments.length === 2) {
+        if (method === 'GET') {
+          const collection = q.get('collection')
+          return json({
+            views: await kernel.listViews({ ...(collection ? { collection } : {}), req: { user } }),
+          })
+        }
+        if (method === 'POST') {
+          const body = await readBody(request)
+          const where = asWhere(body.where)
+          return json(
+            await kernel.saveView({
+              collection: String(body.collection ?? ''),
+              name: String(body.name ?? ''),
+              ...(where ? { where } : {}),
+              ...(body.sort !== undefined ? { sort: body.sort as string | string[] } : {}),
+              ...(Array.isArray(body.columns) ? { columns: body.columns as string[] } : {}),
+              ...(typeof body.shared === 'boolean' ? { shared: body.shared } : {}),
+              req: { user },
+            }),
+            201,
+          )
+        }
+        return methodNotAllowed()
+      }
+
+      const viewId = decodeURIComponent(segments[2]!)
+
+      // GET /_admin/views/:id , PATCH /_admin/views/:id , DELETE /_admin/views/:id
+      if (segments.length === 3) {
+        if (method === 'GET') {
+          const view = await kernel.getView({ viewId, req: { user } })
+          if (!view) throw new NotFoundError()
+          return json(view)
+        }
+        if (method === 'PATCH') {
+          const body = await readBody(request)
+          return json(
+            await kernel.updateView({
+              viewId,
+              ...(typeof body.name === 'string' ? { name: body.name } : {}),
+              ...('where' in body ? { where: asWhere(body.where) ?? null } : {}),
+              ...('sort' in body ? { sort: (body.sort ?? null) as string | string[] | null } : {}),
+              ...('columns' in body
+                ? { columns: (Array.isArray(body.columns) ? body.columns : null) as string[] | null }
+                : {}),
+              ...(typeof body.shared === 'boolean' ? { shared: body.shared } : {}),
+              req: { user },
+            }),
+          )
+        }
+        if (method === 'DELETE') {
+          return json(await kernel.deleteView({ viewId, req: { user } }))
+        }
+        return methodNotAllowed()
+      }
+
+      // POST /_admin/views/:id/apply -> run the view (the access-checked find).
+      if (segments.length === 4 && segments[3] === 'apply' && method === 'POST') {
+        const body = await readBody(request)
+        const where = asWhere(body.where)
+        return json(
+          await kernel.applyView({
+            viewId,
+            ...(where ? { where } : {}),
+            ...(body.sort !== undefined ? { sort: body.sort as string | string[] } : {}),
+            ...(typeof body.draft === 'boolean' ? { draft: body.draft } : {}),
+            ...(toNum(String(body.limit ?? '')) !== undefined ? { limit: toNum(String(body.limit)) } : {}),
+            ...(toNum(String(body.page ?? '')) !== undefined ? { page: toNum(String(body.page)) } : {}),
+            req: { user },
+          }),
+        )
+      }
+      return methodNotAllowed()
+    }
+
     // /_admin/releases -> content releases (a named bundle of drafts published as a unit).
     // REVIEWER-gated (admin OR editor; never an agent): the same trusted-human gate as the
     // review inbox. The acting identity is the server-resolved `user` ONLY — the client

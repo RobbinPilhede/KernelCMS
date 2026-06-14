@@ -68,6 +68,8 @@ export default defineConfig({
   ],
   // Editorial comments: threaded review annotations on documents, gated by doc read access.
   comments: true,
+  // Saved views / smart collections: named query presets (where+sort) per collection.
+  views: true,
   // Content releases: stage drafts into a named bundle and publish them atomically.
   releases: true,
   // Content lifecycle: articles auto-archive when their expire_at passes (cron-driven).

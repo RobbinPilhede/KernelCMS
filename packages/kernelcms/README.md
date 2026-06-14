@@ -520,6 +520,47 @@ before the author/role check; threading stays within one document; ids are
 prototype-pollution-guarded; create/resolve/delete are audited. Red-teamed to Risk LOW. See the
 [editorial comments guide](docs/content-comments.md).
 
+### Saved views (smart collections)
+
+Set `views: true` and editors can save a **named query preset** for a collection — a stored
+`where` + `sort` + display `columns` — and re-apply it in one click: "Published this month",
+"My drafts", "Out of stock". A view is **owned** by its creator (recorded from the
+**authenticated principal**, never the client body) and **private** unless `shared`; a shared
+view is visible only to those who can read its collection. Enabling it registers a private
+`_views` system table, unreachable through generic CRUD.
+
+```ts
+export default defineConfig({ views: true, collections: [/* … */] })
+```
+
+- **Save / read.** `kernel.saveView({ collection, name, where?, sort?, columns?, shared?, req })`
+  stores a preset (owner from `req`, returns the `ViewDoc`); `kernel.listViews({ collection?, req })`
+  lists your own plus shared views on collections you can read, and `kernel.getView({ viewId, req })`
+  reads one. REST: `GET/POST /api/_admin/views`, `GET /api/_admin/views/:id`.
+- **Update / delete.** `kernel.updateView({ viewId, name?, where?, sort?, columns?, shared?, req })`
+  and `kernel.deleteView({ viewId, req })` — **owner or admin only**. REST:
+  `PATCH/DELETE /api/_admin/views/:id`.
+- **Apply.** `kernel.applyView({ viewId, where?, sort?, draft?, limit?, page?, req })` runs the
+  stored query through the **normal access-checked `find`** (a per-call `where` is AND-ed on to
+  narrow further), returning a `PaginatedResult`. REST: `POST /api/_admin/views/:id/apply`.
+
+```bash
+curl -X POST "http://localhost:3000/api/_admin/views" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"collection":"products","name":"Out of stock","where":{"stock":{"equals":0}},"sort":"-updatedAt"}'
+curl -X POST "http://localhost:3000/api/_admin/views/$VIEW_ID/apply" \
+  -H "Authorization: Bearer $TOKEN" -d '{"where":{"price":{"greater_than":100}},"limit":20}'
+```
+
+**The narrowing guarantee:** applying a view is a **normal, access-checked `find`** — the
+collection's `access.read` rule and row-scope run every time, and the stored `where`/`sort` are
+validated against the collection on save **and** apply, so a view can only ever **narrow**
+results within the caller's access, never widen or bypass it. The owner is recorded from the
+principal (a forged `ownerId` is ignored), views are private unless `shared` and shared views are
+read-gated by the collection, update/delete are owner-or-admin, `_views` is unreachable via
+generic CRUD, and create/update/delete are audited. Red-teamed to Risk LOW. See the
+[saved views guide](docs/saved-views.md).
+
 ### Data and APIs
 
 - Collection-level and field-level access control that returns a boolean or a row-level

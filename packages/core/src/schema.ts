@@ -91,6 +91,14 @@ export const ANALYTICS_TABLE = '_analytics'
  *  the target DOCUMENT's read access, so a comment can't leak content a caller can't see. */
 export const COMMENTS_TABLE = '_comments'
 
+/** Storage table holding saved views / smart collections — one row per named query preset
+ *  (`collection`, `name`, JSON `where`/`sort`/`columns`, `ownerId`, `shared`). Provisioned
+ *  only when `config.views` is enabled. `ownerId` and `collection` are indexed for the list
+ *  scan (own + shared-by-collection). NEVER reachable via generic CRUD; the view ops gate on
+ *  ownership and on the target collection's read access, and applying a view runs the normal
+ *  access-checked `find`, so a stored filter can only narrow within the caller's access. */
+export const VIEWS_TABLE = '_views'
+
 /** Storage table holding the durable workflow run log — one row per workflow run,
  *  recording its status, trigger, and per-step status/log. Provisioned only when
  *  `config.workflows` is set. The engine reads/writes it via the trusted (overrideAccess)
@@ -425,6 +433,30 @@ export function compileSchema(config: SanitizedConfig): KernelSchema {
         { name: 'authorId', type: 'text', required: false, unique: false, indexed: true, localized: false },
         { name: 'authorType', type: 'text', required: false, unique: false, indexed: false, localized: false },
         { name: 'resolved', type: 'boolean', required: false, unique: false, indexed: true, localized: false },
+      ],
+      timestamps: true,
+      singleton: false,
+    })
+  }
+
+  // Saved views / smart collections, provisioned only when `config.views` is enabled. A flat
+  // row per named query preset: `collection` + `name`, the JSON `where`/`sort`/`columns`
+  // payload, the `ownerId` (recorded from the trusted principal at write time, indexed for the
+  // "my views" scan), and a `shared` flag. Never reachable via generic CRUD; the view ops gate
+  // on ownership + the target collection's read access, and applying re-validates the stored
+  // filter and runs the normal access-checked find.
+  if (config.views.enabled) {
+    tables.push({
+      table: VIEWS_TABLE,
+      slug: VIEWS_TABLE,
+      columns: [
+        { name: 'collection', type: 'text', required: true, unique: false, indexed: true, localized: false },
+        { name: 'name', type: 'text', required: true, unique: false, indexed: false, localized: false },
+        { name: 'where', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'sort', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'columns', type: 'json', required: false, unique: false, indexed: false, localized: false },
+        { name: 'ownerId', type: 'text', required: false, unique: false, indexed: true, localized: false },
+        { name: 'shared', type: 'boolean', required: false, unique: false, indexed: true, localized: false },
       ],
       timestamps: true,
       singleton: false,
