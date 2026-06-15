@@ -1,3 +1,5 @@
+"use client"
+
 // React bindings, exposed at the `@kernel/visual-editing/react` subpath so that
 // non-React consumers never pull React types. React is a peer dependency.
 import { useEffect, useState } from 'react'
