@@ -1,5 +1,11 @@
 # kernelcms
 
+## 0.44.1
+
+### Patch Changes
+
+- aa12acb: Fix the `kernelcms/visual-editing/react` entry so Next.js apps resolve React from the consuming app and keep the preview hook behind a client boundary.
+
 ## 0.44.0
 
 ### Minor Changes
