@@ -17,7 +17,7 @@
   "dependencies": {
     "@kernel/core": "workspace:*",
     "@kernel/db": "workspace:*",
-    "pg": "^8.13.1"
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/pg": "^8.11.10"
