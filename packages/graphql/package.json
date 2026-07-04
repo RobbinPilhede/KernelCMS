@@ -16,6 +16,6 @@
   },
   "dependencies": {
     "@kernel/core": "workspace:*",
-    "graphql": "^16.9.0"
+    "graphql": "^17.0.2"
   }
 }
