@@ -138,9 +138,9 @@
     "@kernel/visual-editing": "workspace:*",
     "@kernel/mcp": "workspace:*",
     "@kernel/cli": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@types/pg": "^8.11.10",
-    "@types/react": "^18.3.18",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/pg": "^8.20.4",
+    "@types/react": "^19.2.18",
     "tsup": "^8.3.5"
   }
 }
