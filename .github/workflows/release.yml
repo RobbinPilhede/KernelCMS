@@ -44,7 +44,7 @@ jobs:
       # When that PR merges (versions bumped, no changesets left), it publishes to
       # npm using OIDC Trusted Publishing - no token required.
       - name: Create release PR or publish
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           version: pnpm version-packages
           publish: pnpm release
